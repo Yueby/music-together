@@ -68,13 +68,26 @@ export function SearchDialog({ open, onOpenChange, onAddToQueue }: SearchDialogP
     setHasMore(data.hasMore ?? tracks.length >= PAGE_SIZE)
   }
 
-  const handleSearch = async () => {
-    if (!keyword.trim()) return
+  const handleSearch = async (overrideKeyword?: string) => {
+    const searchKeyword = overrideKeyword ?? keyword
+    if (!searchKeyword.trim()) return
+    if (overrideKeyword !== undefined) {
+      setKeyword(overrideKeyword)
+    }
     setLoading(true)
     setAddedIds(new Set())
     try {
-      await fetchResults(1, false)
-      // Scroll to top on new search
+      // Use overrideKeyword for this request since setKeyword is async
+      const serverUrl = import.meta.env.VITE_SERVER_URL || 'http://localhost:3001'
+      const res = await fetch(
+        `${serverUrl}/api/music/search?source=${source}&keyword=${encodeURIComponent(searchKeyword.trim())}&limit=${PAGE_SIZE}&page=1`,
+      )
+      if (!res.ok) throw new Error('Search failed')
+      const data = await res.json()
+      const tracks: Track[] = data.tracks || []
+      setResults(tracks)
+      setPage(1)
+      setHasMore(data.hasMore ?? tracks.length >= PAGE_SIZE)
       scrollRef.current?.scrollTo({ top: 0 })
     } catch {
       toast.error('搜索失败，请重试')
@@ -143,7 +156,7 @@ export function SearchDialog({ open, onOpenChange, onAddToQueue }: SearchDialogP
             className="flex-1"
             autoFocus
           />
-          <Button onClick={handleSearch} disabled={loading}>
+          <Button onClick={() => handleSearch()} disabled={loading}>
             {loading ? (
               <Loader2 className="h-4 w-4 animate-spin" />
             ) : (
@@ -198,7 +211,21 @@ export function SearchDialog({ open, onOpenChange, onAddToQueue }: SearchDialogP
                     <div className="min-w-0 flex-1">
                       <p className="truncate text-sm font-medium">{track.title}</p>
                       <p className="truncate text-xs text-muted-foreground">
-                        {track.artist.join(' / ')}
+                        {track.artist.map((a, ai) => (
+                          <span key={ai}>
+                            {ai > 0 && ' / '}
+                            <button
+                              type="button"
+                              className="hover:text-foreground hover:underline"
+                              onClick={(e) => {
+                                e.stopPropagation()
+                                handleSearch(a)
+                              }}
+                            >
+                              {a}
+                            </button>
+                          </span>
+                        ))}
                         {track.album ? ` · ${track.album}` : ''}
                       </p>
                     </div>

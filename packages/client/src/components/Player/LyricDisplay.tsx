@@ -49,7 +49,6 @@ function mergeLyrics(original: string, translated: string): LyricLine[] {
   // Build a map of time -> translation text for O(1) lookup
   const transMap = new Map<number, string>()
   for (const tl of transLines) {
-    // Round to 1 decimal to handle minor time differences
     transMap.set(Math.round(tl.time * 10) / 10, tl.text)
   }
 
@@ -102,14 +101,14 @@ export function LyricDisplay() {
   if (!lyric || lines.length === 0) {
     return (
       <div className="flex h-full items-center justify-center">
-        <p className="text-muted-foreground">暂无歌词</p>
+        <p className="text-lg text-muted-foreground/50">暂无歌词</p>
       </div>
     )
   }
 
   return (
     <ScrollArea className="h-full">
-      <div ref={lyricsRef} className="flex flex-col items-center gap-6 px-4 py-12">
+      <div ref={lyricsRef} className="flex flex-col gap-5 px-8 py-16">
         {lines.map((line, i) => {
           const isActive = i === currentIndex
           return (
@@ -117,8 +116,8 @@ export function LyricDisplay() {
               key={i}
               data-active={isActive}
               className={cn(
-                'text-center transition-all duration-300',
-                isActive ? 'scale-105' : '',
+                'transition-all duration-300',
+                isActive ? 'scale-[1.02] origin-left' : '',
               )}
             >
               {/* Original lyric */}
@@ -126,8 +125,8 @@ export function LyricDisplay() {
                 className={cn(
                   'leading-relaxed transition-colors duration-300',
                   isActive
-                    ? 'text-lg font-semibold text-foreground'
-                    : 'text-base text-muted-foreground/50',
+                    ? 'text-xl font-bold text-foreground lg:text-2xl xl:text-3xl'
+                    : 'text-lg font-medium text-muted-foreground/40 lg:text-xl xl:text-2xl',
                 )}
               >
                 {line.text}
@@ -138,8 +137,8 @@ export function LyricDisplay() {
                   className={cn(
                     'mt-1 leading-relaxed transition-colors duration-300',
                     isActive
-                      ? 'text-sm text-foreground/70'
-                      : 'text-xs text-muted-foreground/35',
+                      ? 'text-xs text-foreground/60 lg:text-sm'
+                      : 'text-xs text-muted-foreground/25 lg:text-sm',
                   )}
                 >
                   {line.translation}

@@ -47,7 +47,7 @@ export function registerQueueHandlers(io: Server, socket: Socket) {
     log(`Track added to queue: ${track.title} in room ${roomId}`)
   })
 
-  socket.on(EVENTS.QUEUE_REMOVE, ({ trackId }: { trackId: string }) => {
+  socket.on(EVENTS.QUEUE_REMOVE, async ({ trackId }: { trackId: string }) => {
     if (!roomManager.canUserControl(socket.id)) {
       socket.emit(EVENTS.ROOM_ERROR, { message: '无法操作：没有控制权限' })
       return
@@ -60,8 +60,24 @@ export function registerQueueHandlers(io: Server, socket: Socket) {
     }
     const { roomId, room } = mapping
 
+    const isCurrentTrack = room.currentTrack?.id === trackId
+
     roomManager.removeFromQueue(roomId, trackId)
     io.to(roomId).emit(EVENTS.QUEUE_UPDATED, { queue: room.queue })
+
+    // If the removed track was currently playing, skip to next or stop
+    if (isCurrentTrack) {
+      const nextTrack = roomManager.getNextTrack(roomId)
+      if (nextTrack) {
+        await playTrackInRoom(io, roomId, nextTrack)
+      } else {
+        // No more tracks — stop playback
+        roomManager.setCurrentTrack(roomId, null)
+        roomManager.updateRoomPlayState(roomId, { isPlaying: false, currentTime: 0 })
+        io.to(roomId).emit(EVENTS.PLAYER_PAUSE)
+      }
+    }
+
     log(`Track removed from queue in room ${roomId}`)
   })
 

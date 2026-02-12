@@ -1,15 +1,15 @@
-import { Trash2, Music, ChevronUp, ChevronDown } from 'lucide-react'
+import { Button } from '@/components/ui/button'
+import { ScrollArea } from '@/components/ui/scroll-area'
 import {
   Sheet,
   SheetContent,
   SheetHeader,
   SheetTitle,
 } from '@/components/ui/sheet'
-import { Button } from '@/components/ui/button'
 import { Tooltip, TooltipContent, TooltipTrigger } from '@/components/ui/tooltip'
-import { ScrollArea } from '@/components/ui/scroll-area'
-import { usePlayerStore } from '@/stores/playerStore'
 import { cn } from '@/lib/utils'
+import { usePlayerStore } from '@/stores/playerStore'
+import { ChevronDown, ChevronUp, Music, Trash2 } from 'lucide-react'
 
 interface QueueDrawerProps {
   open: boolean
@@ -38,7 +38,7 @@ export function QueueDrawer({ open, onOpenChange, onRemoveFromQueue, onReorderQu
 
   return (
     <Sheet open={open} onOpenChange={onOpenChange}>
-      <SheetContent side="right" showCloseButton={false} className="flex w-[400px] flex-col p-0">
+      <SheetContent side="right" showCloseButton={false} className="flex w-[380px] flex-col p-0">
         <SheetHeader className="shrink-0 border-b px-4 py-3">
           <SheetTitle className="flex items-center gap-2 text-base">
             <Music className="h-4 w-4" />
@@ -57,11 +57,12 @@ export function QueueDrawer({ open, onOpenChange, onRemoveFromQueue, onReorderQu
                 <div
                   key={track.id}
                   className={cn(
-                    'group flex items-center gap-3 rounded-lg px-3 py-2',
+                    'group relative flex items-center gap-2 rounded-lg px-2 py-2',
                     currentTrack?.id === track.id && 'bg-primary/10',
                   )}
                 >
-                  <span className="w-6 text-center text-xs tabular-nums text-muted-foreground">
+                  {/* Index */}
+                  <span className="w-5 shrink-0 text-center text-xs tabular-nums text-muted-foreground">
                     {i + 1}
                   </span>
 
@@ -78,6 +79,7 @@ export function QueueDrawer({ open, onOpenChange, onRemoveFromQueue, onReorderQu
                     </div>
                   )}
 
+                  {/* Track info */}
                   <div className="min-w-0 flex-1">
                     <p
                       className={cn(
@@ -92,21 +94,27 @@ export function QueueDrawer({ open, onOpenChange, onRemoveFromQueue, onReorderQu
                     </p>
                   </div>
 
-                  {/* Reorder + Delete buttons */}
-                  <div className="flex shrink-0 items-center gap-0.5 opacity-0 transition-opacity group-hover:opacity-100">
+                  {/* Actions — overlay on hover, positioned over right side */}
+                  <div
+                    className={cn(
+                      'absolute right-1 top-1/2 flex -translate-y-1/2 items-center gap-0.5',
+                      'rounded-md bg-background/90 px-1 py-0.5 shadow-sm backdrop-blur-sm',
+                      'opacity-0 transition-opacity group-hover:opacity-100',
+                    )}
+                  >
                     <Tooltip>
                       <TooltipTrigger asChild>
                         <Button
                           variant="ghost"
                           size="icon"
-                          className="h-7 w-7"
+                          className="h-6 w-6"
                           disabled={i === 0}
                           onClick={() => handleMoveUp(i)}
                         >
-                          <ChevronUp className="h-3.5 w-3.5" />
+                          <ChevronUp className="h-3 w-3" />
                         </Button>
                       </TooltipTrigger>
-                      <TooltipContent>上移</TooltipContent>
+                      <TooltipContent side="bottom">上移</TooltipContent>
                     </Tooltip>
 
                     <Tooltip>
@@ -114,14 +122,14 @@ export function QueueDrawer({ open, onOpenChange, onRemoveFromQueue, onReorderQu
                         <Button
                           variant="ghost"
                           size="icon"
-                          className="h-7 w-7"
+                          className="h-6 w-6"
                           disabled={i === queue.length - 1}
                           onClick={() => handleMoveDown(i)}
                         >
-                          <ChevronDown className="h-3.5 w-3.5" />
+                          <ChevronDown className="h-3 w-3" />
                         </Button>
                       </TooltipTrigger>
-                      <TooltipContent>下移</TooltipContent>
+                      <TooltipContent side="bottom">下移</TooltipContent>
                     </Tooltip>
 
                     <Tooltip>
@@ -129,13 +137,13 @@ export function QueueDrawer({ open, onOpenChange, onRemoveFromQueue, onReorderQu
                         <Button
                           variant="ghost"
                           size="icon"
-                          className="h-7 w-7 text-destructive hover:text-destructive"
+                          className="h-6 w-6 text-destructive hover:text-destructive"
                           onClick={() => onRemoveFromQueue(track.id)}
                         >
-                          <Trash2 className="h-3.5 w-3.5" />
+                          <Trash2 className="h-3 w-3" />
                         </Button>
                       </TooltipTrigger>
-                      <TooltipContent>移除</TooltipContent>
+                      <TooltipContent side="bottom">移除</TooltipContent>
                     </Tooltip>
                   </div>
                 </div>

@@ -10,16 +10,16 @@ import { toast } from 'sonner'
 export function useRoom(socket: Socket) {
   const navigate = useNavigate()
   const { setRoom, setCurrentUser, addUser, removeUser } = useRoomStore()
-  const { setCurrentTrack, setIsPlaying, setCurrentTime, setQueue } = usePlayerStore()
+  const { setQueue } = usePlayerStore()
   const { addMessage } = useChatStore()
 
   useEffect(() => {
     socket.on(EVENTS.ROOM_STATE, (roomState: RoomState) => {
       setRoom(roomState)
       setQueue(roomState.queue)
-      setCurrentTrack(roomState.currentTrack)
-      setIsPlaying(roomState.playState.isPlaying)
-      setCurrentTime(roomState.playState.currentTime)
+      // NOTE: currentTrack, isPlaying, currentTime are NOT set here.
+      // Audio playback state is exclusively owned by usePlayer via PLAYER_PLAY events.
+      // This prevents dual-write conflicts during room join.
 
       // Restore currentUser from room state (important after page refresh)
       const me = roomState.users.find((u) => u.id === socket.id)
@@ -71,7 +71,7 @@ export function useRoom(socket: Socket) {
       socket.off(EVENTS.ROOM_SETTINGS)
       socket.off(EVENTS.ROOM_ERROR)
     }
-  }, [socket, navigate, setRoom, setCurrentUser, addUser, removeUser, setCurrentTrack, setIsPlaying, setCurrentTime, setQueue, addMessage])
+  }, [socket, navigate, setRoom, setCurrentUser, addUser, removeUser, setQueue, addMessage])
 
   const createRoom = useCallback(
     (nickname: string) => {

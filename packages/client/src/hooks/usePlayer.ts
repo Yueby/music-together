@@ -12,8 +12,12 @@ export function usePlayer(socket: Socket) {
   // Guard: prevent duplicate PLAYER_PLAY processing (eliminates ghost audio)
   const loadingRef = useRef<{ trackId: string; ts: number } | null>(null)
 
-  // Guard: don't process SYNC_RESPONSE until the current track is fully loaded
-  const isLoadedRef = useRef(false)
+  // State-based sync guard: SYNC_RESPONSE is only processed when true.
+  // Set to true after the two-phase load has fully settled (seek done + unmute).
+  const syncReadyRef = useRef(false)
+
+  // Timer for the delayed unmute after seek settles
+  const unmuteTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null)
 
   const {
     setCurrentTrack,
@@ -42,12 +46,25 @@ export function usePlayer(socket: Socket) {
     cancelAnimationFrame(animFrameRef.current)
   }, [])
 
-  // --------------- Load track (core fix) ---------------
-  // Accepts optional `seekTo` so the correct sequence is: create → onload → seek → play.
-  // This avoids the old bug where play() and seek() were called before the audio was ready.
+  // --------------- Load track (two-phase strategy) ---------------
+  //
+  // Phase 1: Create Howl with volume=0 (silent). onload → play() (no seeking).
+  // Phase 2: onplay → seek to target + elapsed → 500ms delay → fade in volume.
+  //
+  // This avoids the HTML5 streaming audio bug where seek() during onload is
+  // unreliable because the target position hasn't been buffered yet.
+  // By waiting until onplay, the audio element is in a stable playable state.
+  //
+  // `autoPlay` controls whether to actually play (false = paused room join).
 
   const loadTrack = useCallback(
-    (track: Track, seekTo?: number) => {
+    (track: Track, seekTo?: number, autoPlay = true) => {
+      // Cancel any pending unmute from a previous load
+      if (unmuteTimerRef.current) {
+        clearTimeout(unmuteTimerRef.current)
+        unmuteTimerRef.current = null
+      }
+
       // Thoroughly clean up previous Howl instance
       if (howlRef.current) {
         try { howlRef.current.unload() } catch { /* ignore */ }
@@ -55,25 +72,45 @@ export function usePlayer(socket: Socket) {
         stopTimeUpdate()
       }
 
-      isLoadedRef.current = false
+      syncReadyRef.current = false
 
       if (!track.streamUrl) return
+
+      const loadStartTime = Date.now()
 
       const howl = new Howl({
         src: [track.streamUrl],
         html5: true,
         format: ['mp3'],
-        volume,
+        volume: 0, // Always start silent to avoid hearing wrong position / seek noise
         onload: () => {
-          // Mark as loaded — SYNC_RESPONSE handling is now allowed
-          isLoadedRef.current = true
           setDuration(howl.duration())
 
-          // Seek FIRST, then play — correct order prevents audio flash from position 0
-          if (seekTo && seekTo > 0) {
-            howl.seek(seekTo)
+          if (autoPlay) {
+            // Seek FIRST (before play) — more reliable for HTML5 streaming
+            if (seekTo && seekTo > 0) {
+              const elapsed = (Date.now() - loadStartTime) / 1000
+              howl.seek(seekTo + elapsed)
+            }
+            howl.play()
+
+            // Wait for seek to buffer and audio to stabilize, then unmute.
+            // Direct volume set (no fade) to avoid amplifying seek buffer noise.
+            unmuteTimerRef.current = setTimeout(() => {
+              if (howlRef.current === howl) {
+                howl.volume(volume)
+                syncReadyRef.current = true
+              }
+            }, seekTo && seekTo > 0 ? 1200 : 100)
+          } else {
+            // Paused room: seek to position without playing
+            if (seekTo && seekTo > 0) {
+              howl.seek(seekTo)
+            }
+            howl.volume(volume)
+            setCurrentTime(seekTo ?? 0)
+            syncReadyRef.current = true
           }
-          howl.play()
         },
         onplay: () => {
           setIsPlaying(true)
@@ -91,7 +128,6 @@ export function usePlayer(socket: Socket) {
         },
         onloaderror: (_id, msg) => {
           console.error('Howl load error:', msg)
-          isLoadedRef.current = false
         },
         onplayerror: function () {
           howl.once('unlock', () => {
@@ -103,7 +139,7 @@ export function usePlayer(socket: Socket) {
       howlRef.current = howl
       setCurrentTrack(track)
     },
-    [volume, socket, setCurrentTrack, setIsPlaying, setDuration, startTimeUpdate, stopTimeUpdate],
+    [volume, socket, setCurrentTrack, setIsPlaying, setCurrentTime, setDuration, startTimeUpdate, stopTimeUpdate],
   )
 
   // --------------- Fetch lyrics ---------------
@@ -132,7 +168,7 @@ export function usePlayer(socket: Socket) {
   // --------------- Socket event listeners ---------------
 
   useEffect(() => {
-    // --- PLAYER_PLAY: load track with correct seek position ---
+    // --- PLAYER_PLAY: two-phase load with seek ---
     socket.on(
       EVENTS.PLAYER_PLAY,
       (data: { track: Track; playState: PlayState }) => {
@@ -146,8 +182,8 @@ export function usePlayer(socket: Socket) {
         }
         loadingRef.current = { trackId: data.track.id, ts: now }
 
-        // Single call handles everything: create Howl → onload → seek → play
-        loadTrack(data.track, data.playState.currentTime)
+        // Pass isPlaying to control auto-play (handles paused room join)
+        loadTrack(data.track, data.playState.currentTime, data.playState.isPlaying)
         fetchLyric(data.track)
       },
     )
@@ -157,29 +193,36 @@ export function usePlayer(socket: Socket) {
       howlRef.current?.pause()
     })
 
-    // --- PLAYER_SEEK ---
+    // --- PLAYER_SEEK (explicit user action, always apply) ---
     socket.on(EVENTS.PLAYER_SEEK, (data: { currentTime: number }) => {
-      if (howlRef.current && isLoadedRef.current) {
+      if (howlRef.current) {
         howlRef.current.seek(data.currentTime)
+        // Briefly block sync to let seek settle
+        syncReadyRef.current = false
+        setTimeout(() => { syncReadyRef.current = true }, 1500)
       }
       setCurrentTime(data.currentTime)
     })
 
-    // --- PLAYER_SYNC_RESPONSE: only correct large drift, never control play/pause ---
+    // --- PLAYER_SYNC_RESPONSE: only correct large drift when sync is ready ---
     socket.on(
       EVENTS.PLAYER_SYNC_RESPONSE,
       (data: { currentTime: number; isPlaying: boolean; serverTimestamp: number }) => {
-        // Don't process sync while loading — prevents the seek-to-0 → seek-to-N bounce
-        if (!howlRef.current || !isLoadedRef.current) return
+        if (!howlRef.current || !syncReadyRef.current) return
+
+        // Only correct if actually playing
+        if (!howlRef.current.playing()) return
 
         const currentSeek = howlRef.current.seek() as number
         const drift = Math.abs(currentSeek - data.currentTime)
 
-        // Only correct drift > 3 seconds to avoid choppy audio
+        // Only correct drift > 3 seconds
         if (drift > 3) {
           howlRef.current.seek(data.currentTime)
+          // Briefly block sync after correction to let seek settle
+          syncReadyRef.current = false
+          setTimeout(() => { syncReadyRef.current = true }, 1500)
         }
-        // Do NOT control play/pause here — that's the job of PLAYER_PLAY/PLAYER_PAUSE events
       },
     )
 
@@ -208,8 +251,6 @@ export function usePlayer(socket: Socket) {
   }, [socket])
 
   // --------------- Host progress reporting (hybrid sync) ---------------
-  // The host reports its real Howler seek() position every 5 seconds.
-  // The server uses this to calibrate estimateCurrentTime() for all other clients.
 
   useEffect(() => {
     const interval = setInterval(() => {
@@ -226,9 +267,10 @@ export function usePlayer(socket: Socket) {
   }, [socket])
 
   // --------------- Volume sync ---------------
+  // Only apply volume changes when sync is ready (i.e., not during silent loading phase).
 
   useEffect(() => {
-    if (howlRef.current) {
+    if (howlRef.current && syncReadyRef.current) {
       howlRef.current.volume(volume)
     }
   }, [volume])

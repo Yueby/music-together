@@ -5,34 +5,32 @@ export function NowPlaying() {
   const currentTrack = usePlayerStore((s) => s.currentTrack)
 
   return (
-    <div className="flex items-start gap-6">
-      {/* Album Cover */}
-      <div className="shrink-0">
-        {currentTrack?.cover ? (
-          <img
-            src={currentTrack.cover}
-            alt={currentTrack.title}
-            className="h-48 w-48 rounded-2xl object-cover shadow-lg"
+    <div className="flex w-full flex-col items-center gap-5">
+      {/* Album Cover — responsive size based on viewport height */}
+      {currentTrack?.cover ? (
+        <img
+          src={currentTrack.cover}
+          alt={currentTrack.title}
+          className="aspect-square w-full max-w-[min(80%,45vh)] rounded-2xl object-cover shadow-xl"
+        />
+      ) : (
+        <div className="flex aspect-square w-full max-w-[min(80%,45vh)] items-center justify-center rounded-2xl bg-muted shadow-xl">
+          <Disc3
+            className={`h-1/4 w-1/4 text-muted-foreground ${!currentTrack ? 'animate-spin-slow' : ''}`}
           />
-        ) : (
-          <div className="flex h-48 w-48 items-center justify-center rounded-2xl bg-muted shadow-lg">
-            <Disc3
-              className={`h-20 w-20 text-muted-foreground ${!currentTrack ? 'animate-spin-slow' : ''}`}
-            />
-          </div>
-        )}
-      </div>
+        </div>
+      )}
 
       {/* Song Info */}
-      <div className="flex min-w-0 flex-col gap-1 pt-2">
-        <h2 className="truncate text-2xl font-bold">
+      <div className="flex w-full max-w-[min(80%,45vh)] flex-col gap-1.5">
+        <h2 className="truncate text-lg font-bold leading-tight lg:text-xl xl:text-2xl">
           {currentTrack?.title ?? '暂无歌曲'}
         </h2>
-        <p className="truncate text-lg text-muted-foreground">
+        <p className="truncate text-sm text-muted-foreground lg:text-base">
           {currentTrack ? currentTrack.artist.join(' / ') : '点击搜索添加歌曲到队列'}
         </p>
         {currentTrack?.album && (
-          <p className="truncate text-sm text-muted-foreground">
+          <p className="truncate text-xs text-muted-foreground/70 lg:text-sm">
             {currentTrack.album}
           </p>
         )}
