@@ -1,11 +1,11 @@
-import { useEffect, useCallback } from 'react'
+import { useChatStore } from '@/stores/chatStore'
+import { usePlayerStore } from '@/stores/playerStore'
+import { useRoomStore } from '@/stores/roomStore'
+import { EVENTS, type RoomState, type User } from '@music-together/shared'
+import { useCallback, useEffect } from 'react'
 import { useNavigate } from 'react-router-dom'
 import type { Socket } from 'socket.io-client'
 import { toast } from 'sonner'
-import { EVENTS, type RoomState, type User } from '@music-together/shared'
-import { useRoomStore } from '@/stores/roomStore'
-import { usePlayerStore } from '@/stores/playerStore'
-import { useChatStore } from '@/stores/chatStore'
 
 export function useRoom(socket: Socket) {
   const navigate = useNavigate()
