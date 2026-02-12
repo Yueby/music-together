@@ -1,0 +1,275 @@
+import type { MusicSource, Track } from '@music-together/shared'
+import { nanoid } from 'nanoid'
+import { log, logError } from '../utils/logger.js'
+
+// Dynamic import for @meting/core (ESM)
+let MetingClass: any = null
+
+async function getMeting() {
+  if (!MetingClass) {
+    const mod = await import('@meting/core')
+    MetingClass = mod.default
+  }
+  return MetingClass
+}
+
+// Path to song list in raw (non-formatted) API response per platform
+const SEARCH_PATHS: Record<MusicSource, string> = {
+  netease: 'result.songs',
+  tencent: 'data.song.list',
+  kugou: 'data.info',
+  kuwo: 'data.list',
+  baidu: 'result.song_info.song_list',
+}
+
+class MusicProvider {
+  // Shared instances with format(true) — used for url/lyric/cover operations
+  private instances = new Map<MusicSource, any>()
+
+  private async getInstance(source: MusicSource) {
+    if (!this.instances.has(source)) {
+      const Meting = await getMeting()
+      const m = new Meting(source)
+      m.format(true)
+      this.instances.set(source, m)
+    }
+    return this.instances.get(source)!
+  }
+
+  /**
+   * Search for tracks. Uses format(false) to get raw API data including duration,
+   * then batch-resolves cover URLs.
+   */
+  async search(source: MusicSource, keyword: string, limit = 20, page = 1): Promise<Track[]> {
+    try {
+      const Meting = await getMeting()
+      // Fresh instance without format — gets raw API response with all fields
+      const meting = new Meting(source)
+      const raw = await meting.search(keyword, { limit, page })
+
+      let rawData: any
+      try {
+        rawData = JSON.parse(raw)
+      } catch {
+        logError(`Search JSON parse failed for ${source}`, raw?.substring?.(0, 200))
+        return []
+      }
+
+      const songs = this.navigatePath(rawData, SEARCH_PATHS[source])
+      if (!Array.isArray(songs) || songs.length === 0) return []
+
+      const tracks = songs.map((song: any) => this.rawToTrack(song, source))
+
+      // Batch resolve cover URLs for tracks that don't already have one
+      await this.batchResolveCover(tracks, source)
+
+      log(`Search "${keyword}" on ${source}: ${tracks.length} results`)
+      return tracks
+    } catch (err) {
+      logError(`Search failed for ${source}:`, err)
+      return []
+    }
+  }
+
+  async getStreamUrl(source: MusicSource, urlId: string, bitrate = 320): Promise<string | null> {
+    try {
+      const meting = await this.getInstance(source)
+      const raw = await meting.url(urlId, bitrate)
+      const data = JSON.parse(raw)
+      return data.url || null
+    } catch (err) {
+      logError(`Get URL failed for ${source}:`, err)
+      return null
+    }
+  }
+
+  async getLyric(source: MusicSource, lyricId: string): Promise<{ lyric: string; tlyric: string }> {
+    try {
+      const meting = await this.getInstance(source)
+      const raw = await meting.lyric(lyricId)
+      const data = JSON.parse(raw)
+      return {
+        lyric: data.lyric || '',
+        tlyric: data.tlyric || '',
+      }
+    } catch (err) {
+      logError(`Get lyric failed for ${source}:`, err)
+      return { lyric: '', tlyric: '' }
+    }
+  }
+
+  async getCover(source: MusicSource, picId: string, size = 300): Promise<string> {
+    try {
+      const meting = await this.getInstance(source)
+      const raw = await meting.pic(picId, size)
+      const data = JSON.parse(raw)
+      return data.url || ''
+    } catch (err) {
+      logError(`Get cover failed for ${source}:`, err)
+      return ''
+    }
+  }
+
+  // ---------------------------------------------------------------------------
+  // Internal helpers
+  // ---------------------------------------------------------------------------
+
+  /** Navigate a dot-separated path in an object */
+  private navigatePath(data: any, path: string): any {
+    let result = data
+    for (const key of path.split('.')) {
+      result = result?.[key]
+    }
+    return result
+  }
+
+  /**
+   * Convert raw platform-specific song data to our Track format.
+   * Each platform returns different field names, so we need per-platform parsing.
+   */
+  private rawToTrack(song: any, source: MusicSource): Track {
+    switch (source) {
+      case 'netease':
+        return {
+          id: nanoid(),
+          title: song.name || 'Unknown',
+          artist: song.ar?.map((a: any) => a.name) || ['Unknown'],
+          album: song.al?.name || '',
+          duration: Math.round((song.dt || 0) / 1000), // ms -> seconds
+          cover: '', // resolved via pic()
+          source,
+          sourceId: String(song.id),
+          urlId: String(song.id),
+          lyricId: String(song.id),
+          picId: String(song.al?.pic_str || song.al?.pic || ''),
+        }
+
+      case 'tencent': {
+        // Tencent sometimes wraps data in musicData
+        const s = song.musicData || song
+        return {
+          id: nanoid(),
+          title: s.name || 'Unknown',
+          artist: (s.singer || []).map((a: any) => a.name),
+          album: (s.album?.title || '').trim(),
+          duration: s.interval || 0, // already in seconds
+          cover: '', // resolved via pic()
+          source,
+          sourceId: String(s.mid),
+          urlId: String(s.mid),
+          lyricId: String(s.mid),
+          picId: String(s.album?.mid || ''),
+        }
+      }
+
+      case 'kugou': {
+        // Kugou encodes artist/title in filename: "Artist - Title"
+        const filename = song.filename || song.fileName || ''
+        const parts = filename.split(' - ')
+        let trackName = filename
+        let artists: string[] = []
+        if (parts.length >= 2) {
+          artists = parts[0].split('、').map((s: string) => s.trim())
+          trackName = parts.slice(1).join(' - ')
+        }
+        return {
+          id: nanoid(),
+          title: trackName || 'Unknown',
+          artist: artists.length > 0 ? artists : ['Unknown'],
+          album: song.album_name || '',
+          duration: song.duration || 0, // seconds
+          cover: '', // resolved via pic() (requires API call)
+          source,
+          sourceId: String(song.hash),
+          urlId: String(song.hash),
+          lyricId: String(song.hash),
+          picId: String(song.hash),
+        }
+      }
+
+      case 'kuwo':
+        return {
+          id: nanoid(),
+          title: song.name || 'Unknown',
+          artist: song.artist
+            ? song.artist.split('&').map((s: string) => s.trim())
+            : ['Unknown'],
+          album: song.album || '',
+          duration: song.duration || 0, // seconds
+          cover: song.pic || song.albumpic || '', // often available in raw data
+          source,
+          sourceId: String(song.rid),
+          urlId: String(song.rid),
+          lyricId: String(song.rid),
+          picId: String(song.rid),
+        }
+
+      case 'baidu':
+        return {
+          id: nanoid(),
+          title: song.title || 'Unknown',
+          artist: song.author
+            ? song.author.split(',').map((s: string) => s.trim())
+            : ['Unknown'],
+          album: song.album_title || '',
+          duration: song.file_duration || 0, // seconds
+          cover: song.pic_small || song.pic_big || '', // often available in raw data
+          source,
+          sourceId: String(song.song_id),
+          urlId: String(song.song_id),
+          lyricId: String(song.song_id),
+          picId: String(song.song_id),
+        }
+
+      default:
+        return {
+          id: nanoid(),
+          title: 'Unknown',
+          artist: ['Unknown'],
+          album: '',
+          duration: 0,
+          cover: '',
+          source,
+          sourceId: '',
+          urlId: '',
+        }
+    }
+  }
+
+  /**
+   * Batch-resolve cover URLs for tracks that don't have one.
+   * - netease/tencent: pic() is pure URL generation (instant, no API call)
+   * - kugou/baidu/kuwo: pic() makes an API call per track (slower)
+   * - kuwo/baidu raw search usually includes covers, so few need resolution
+   *
+   * Each pic() call uses a fresh Meting instance to avoid race conditions.
+   */
+  private async batchResolveCover(tracks: Track[], source: MusicSource): Promise<void> {
+    const toResolve = tracks.filter((t) => !t.cover && t.picId)
+    if (toResolve.length === 0) return
+
+    const Meting = await getMeting()
+    // For platforms that need API calls, limit concurrency
+    const needsApiCall = source === 'kugou' || source === 'baidu' || source === 'kuwo'
+    const CONCURRENCY = needsApiCall ? 3 : toResolve.length
+
+    for (let i = 0; i < toResolve.length; i += CONCURRENCY) {
+      const batch = toResolve.slice(i, i + CONCURRENCY)
+      await Promise.allSettled(
+        batch.map(async (track) => {
+          try {
+            // Fresh instance per call to avoid shared state race conditions
+            const instance = new Meting(source)
+            const raw = await instance.pic(track.picId!, 300)
+            const data = JSON.parse(raw)
+            if (data.url) track.cover = data.url
+          } catch {
+            // Leave cover empty — frontend shows placeholder
+          }
+        }),
+      )
+    }
+  }
+}
+
+export const musicProvider = new MusicProvider()

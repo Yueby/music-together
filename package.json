@@ -1,0 +1,21 @@
+{
+  "name": "music-together",
+  "version": "1.0.0",
+  "private": true,
+  "description": "Online music listening together platform",
+  "scripts": {
+    "predev": "kill-port 3001 --silent || true",
+    "dev": "concurrently --kill-others --names server,client --prefix-colors blue,green \"pnpm run dev:server\" \"pnpm run dev:client\"",
+    "dev:client": "pnpm --filter @music-together/client dev",
+    "dev:server": "pnpm --filter @music-together/server dev",
+    "build": "pnpm -r run build"
+  },
+  "keywords": [],
+  "author": "",
+  "license": "ISC",
+  "packageManager": "pnpm@10.29.2",
+  "devDependencies": {
+    "concurrently": "^9.2.1",
+    "kill-port": "^2.0.1"
+  }
+}
