@@ -1,6 +1,6 @@
 import type { MusicSource, Track } from '@music-together/shared'
 import { nanoid } from 'nanoid'
-import { log, logError } from '../utils/logger.js'
+import { logger } from '../utils/logger.js'
 
 // Dynamic import for @meting/core (ESM)
 let MetingClass: any = null
@@ -51,7 +51,7 @@ class MusicProvider {
       try {
         rawData = JSON.parse(raw)
       } catch {
-        logError(`Search JSON parse failed for ${source}`, raw?.substring?.(0, 200))
+        logger.error(`Search JSON parse failed for ${source}`, raw?.substring?.(0, 200))
         return []
       }
 
@@ -63,10 +63,10 @@ class MusicProvider {
       // Batch resolve cover URLs for tracks that don't already have one
       await this.batchResolveCover(tracks, source)
 
-      log(`Search "${keyword}" on ${source}: ${tracks.length} results`)
+      logger.info(`Search "${keyword}" on ${source}: ${tracks.length} results`)
       return tracks
     } catch (err) {
-      logError(`Search failed for ${source}:`, err)
+      logger.error(`Search failed for ${source}:`, err)
       return []
     }
   }
@@ -78,7 +78,7 @@ class MusicProvider {
       const data = JSON.parse(raw)
       return data.url || null
     } catch (err) {
-      logError(`Get URL failed for ${source}:`, err)
+      logger.error(`Get URL failed for ${source}:`, err)
       return null
     }
   }
@@ -93,7 +93,7 @@ class MusicProvider {
         tlyric: data.tlyric || '',
       }
     } catch (err) {
-      logError(`Get lyric failed for ${source}:`, err)
+      logger.error(`Get lyric failed for ${source}:`, err)
       return { lyric: '', tlyric: '' }
     }
   }
@@ -105,7 +105,7 @@ class MusicProvider {
       const data = JSON.parse(raw)
       return data.url || ''
     } catch (err) {
-      logError(`Get cover failed for ${source}:`, err)
+      logger.error(`Get cover failed for ${source}:`, err)
       return ''
     }
   }

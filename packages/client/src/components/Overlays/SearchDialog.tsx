@@ -1,5 +1,4 @@
-import { useMemo, useRef, useState } from 'react'
-import { Check, Loader2, Music2, Plus, Search } from 'lucide-react'
+import { Button } from '@/components/ui/button'
 import {
   Dialog,
   DialogContent,
@@ -7,12 +6,16 @@ import {
   DialogTitle,
 } from '@/components/ui/dialog'
 import { Input } from '@/components/ui/input'
-import { Button } from '@/components/ui/button'
 import { Tabs, TabsList, TabsTrigger } from '@/components/ui/tabs'
-import type { Track, MusicSource } from '@music-together/shared'
-import { toast } from 'sonner'
+import { Tooltip, TooltipContent, TooltipTrigger } from '@/components/ui/tooltip'
 import { cn } from '@/lib/utils'
-import { usePlayerStore } from '@/stores/playerStore'
+import { useRoomStore } from '@/stores/roomStore'
+import type { MusicSource, Track } from '@music-together/shared'
+import { Check, Loader2, Music2, Plus, Search } from 'lucide-react'
+import { useMemo, useRef, useState } from 'react'
+import { toast } from 'sonner'
+
+const EMPTY_QUEUE: Track[] = []
 
 const SOURCES: { id: MusicSource; label: string }[] = [
   { id: 'netease', label: '网易云' },
@@ -46,12 +49,13 @@ export function SearchDialog({ open, onOpenChange, onAddToQueue }: SearchDialogP
   const [addedIds, setAddedIds] = useState<Set<string>>(new Set())
   const [page, setPage] = useState(1)
   const [hasMore, setHasMore] = useState(false)
+  const [hasSearched, setHasSearched] = useState(false)
   const scrollRef = useRef<HTMLDivElement>(null)
-  const queue = usePlayerStore((s) => s.queue)
+  const queue = useRoomStore((s) => s.room?.queue ?? EMPTY_QUEUE)
   const queueIds = useMemo(() => new Set(queue.map((t) => t.id)), [queue])
 
   const fetchResults = async (searchPage: number, append: boolean) => {
-    const serverUrl = import.meta.env.VITE_SERVER_URL || 'http://localhost:3001'
+    const { SERVER_URL: serverUrl } = await import('@/lib/config')
     const res = await fetch(
       `${serverUrl}/api/music/search?source=${source}&keyword=${encodeURIComponent(keyword.trim())}&limit=${PAGE_SIZE}&page=${searchPage}`,
     )
@@ -75,6 +79,7 @@ export function SearchDialog({ open, onOpenChange, onAddToQueue }: SearchDialogP
       setKeyword(overrideKeyword)
     }
     setLoading(true)
+    setHasSearched(true)
     setAddedIds(new Set())
     try {
       // Use overrideKeyword for this request since setKeyword is async
@@ -120,6 +125,7 @@ export function SearchDialog({ open, onOpenChange, onAddToQueue }: SearchDialogP
     setAddedIds(new Set())
     setPage(1)
     setHasMore(false)
+    setHasSearched(false)
   }
 
   return (
@@ -176,7 +182,7 @@ export function SearchDialog({ open, onOpenChange, onAddToQueue }: SearchDialogP
             <div className="flex h-48 flex-col items-center justify-center gap-2 text-muted-foreground">
               <Music2 className="h-8 w-8" />
               <span className="text-sm">
-                {keyword ? '暂无结果，换个关键词试试' : '输入关键词开始搜索'}
+                {hasSearched ? '暂无结果，换个关键词试试' : '输入关键词开始搜索'}
               </span>
             </div>
           ) : (
@@ -236,22 +242,27 @@ export function SearchDialog({ open, onOpenChange, onAddToQueue }: SearchDialogP
                     </span>
 
                     {/* Add button */}
-                    <Button
-                      variant={isAdded ? 'ghost' : 'outline'}
-                      size="icon"
-                      className={cn(
-                        'h-8 w-8 shrink-0',
-                        isAdded && 'text-green-500 hover:text-green-500',
-                      )}
-                      disabled={isAdded}
-                      onClick={() => handleAdd(track)}
-                    >
-                      {isAdded ? (
-                        <Check className="h-4 w-4" />
-                      ) : (
-                        <Plus className="h-4 w-4" />
-                      )}
-                    </Button>
+                    <Tooltip>
+                      <TooltipTrigger asChild>
+                        <Button
+                          variant={isAdded ? 'ghost' : 'outline'}
+                          size="icon"
+                          className={cn(
+                            'h-8 w-8 shrink-0',
+                            isAdded && 'text-green-500 hover:text-green-500',
+                          )}
+                          disabled={isAdded}
+                          onClick={() => handleAdd(track)}
+                        >
+                          {isAdded ? (
+                            <Check className="h-4 w-4" />
+                          ) : (
+                            <Plus className="h-4 w-4" />
+                          )}
+                        </Button>
+                      </TooltipTrigger>
+                      <TooltipContent>{isAdded ? '已添加' : '添加到播放列表'}</TooltipContent>
+                    </Tooltip>
                   </div>
                 )
               })}

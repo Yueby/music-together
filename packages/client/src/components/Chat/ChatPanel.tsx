@@ -1,44 +1,19 @@
 import { useState, useRef, useEffect } from 'react'
-import type { Socket } from 'socket.io-client'
 import { MessageSquare, Send } from 'lucide-react'
 import { Button } from '@/components/ui/button'
 import { Input } from '@/components/ui/input'
+import { Tooltip, TooltipContent, TooltipTrigger } from '@/components/ui/tooltip'
 import { ChatMessage } from './ChatMessage'
 import { useChatStore } from '@/stores/chatStore'
 import { useRoomStore } from '@/stores/roomStore'
-import { EVENTS, type ChatMessage as ChatMessageType } from '@music-together/shared'
+import { useChat } from '@/hooks/useChat'
 
-interface ChatPanelProps {
-  socket: Socket
-}
-
-export function ChatPanel({ socket }: ChatPanelProps) {
+export function ChatPanel() {
   const [input, setInput] = useState('')
   const messagesEndRef = useRef<HTMLDivElement>(null)
-  const { messages, addMessage, setMessages } = useChatStore()
+  const messages = useChatStore((s) => s.messages)
   const currentUser = useRoomStore((s) => s.currentUser)
-
-  // Listen for incoming messages
-  useEffect(() => {
-    const handler = (message: ChatMessageType) => {
-      addMessage(message)
-    }
-    socket.on(EVENTS.CHAT_MESSAGE, handler)
-    return () => {
-      socket.off(EVENTS.CHAT_MESSAGE, handler)
-    }
-  }, [socket, addMessage])
-
-  // Listen for chat history (received on room join)
-  useEffect(() => {
-    const handler = (history: ChatMessageType[]) => {
-      setMessages(history)
-    }
-    socket.on(EVENTS.CHAT_HISTORY, handler)
-    return () => {
-      socket.off(EVENTS.CHAT_HISTORY, handler)
-    }
-  }, [socket, setMessages])
+  const { sendMessage } = useChat()
 
   // Auto-scroll to bottom on new message
   useEffect(() => {
@@ -49,23 +24,23 @@ export function ChatPanel({ socket }: ChatPanelProps) {
 
   const handleSend = () => {
     if (!input.trim()) return
-    socket.emit(EVENTS.CHAT_MESSAGE, { content: input.trim() })
+    sendMessage(input)
     setInput('')
   }
 
   return (
-    <div className="flex h-full w-full flex-col border-l bg-card">
+    <div className="flex h-full w-full flex-col border-l border-border/50 bg-background/60 backdrop-blur-sm">
       {/* Header */}
-      <div className="flex shrink-0 items-center gap-2 border-b px-4 py-3">
-        <MessageSquare className="h-4 w-4" />
+      <div className="flex shrink-0 items-center gap-2 border-b border-border/50 px-4 py-3">
+        <MessageSquare className="h-4 w-4 text-muted-foreground" />
         <span className="text-sm font-medium">聊天</span>
       </div>
 
       {/* Messages */}
-      <div className="min-h-0 flex-1 overflow-y-auto px-4">
-        <div className="py-4">
+      <div className="min-h-0 flex-1 overflow-y-auto px-3">
+        <div className="py-3">
           {messages.length === 0 ? (
-            <p className="text-center text-sm text-muted-foreground">
+            <p className="text-center text-sm text-muted-foreground/30 py-8">
               还没有消息，开始聊天吧~
             </p>
           ) : (
@@ -82,7 +57,7 @@ export function ChatPanel({ socket }: ChatPanelProps) {
       </div>
 
       {/* Input */}
-      <div className="flex shrink-0 gap-2 border-t px-4 py-3">
+      <div className="flex shrink-0 gap-2 border-t border-border/50 px-3 py-3">
         <Input
           placeholder="输入消息..."
           value={input}
@@ -90,9 +65,19 @@ export function ChatPanel({ socket }: ChatPanelProps) {
           onKeyDown={(e) => e.key === 'Enter' && handleSend()}
           className="flex-1"
         />
-        <Button size="icon" onClick={handleSend} disabled={!input.trim()}>
-          <Send className="h-4 w-4" />
-        </Button>
+        <Tooltip>
+          <TooltipTrigger asChild>
+            <Button
+              size="icon"
+              variant="secondary"
+              onClick={handleSend}
+              disabled={!input.trim()}
+            >
+              <Send className="h-4 w-4" />
+            </Button>
+          </TooltipTrigger>
+          <TooltipContent>发送</TooltipContent>
+        </Tooltip>
       </div>
     </div>
   )

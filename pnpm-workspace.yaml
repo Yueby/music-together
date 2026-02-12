@@ -1,4 +1,10 @@
 packages:
   - packages/*
 
+ignoredBuiltDependencies:
+  - '@applemusic-like-lyrics/core'
+  - '@applemusic-like-lyrics/react'
+  - esbuild
+  - msw
+
 onlyBuiltDependencies: esbuild

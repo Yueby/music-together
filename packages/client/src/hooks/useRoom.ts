@@ -1,36 +1,32 @@
+import { useSocketContext } from '@/providers/SocketProvider'
 import { useChatStore } from '@/stores/chatStore'
 import { usePlayerStore } from '@/stores/playerStore'
 import { useRoomStore } from '@/stores/roomStore'
-import { EVENTS, type RoomState, type User } from '@music-together/shared'
-import { useCallback, useEffect } from 'react'
+import type { ChatMessage, RoomState, Track, User } from '@music-together/shared'
+import { EVENTS } from '@music-together/shared'
+import { useCallback, useEffect, useRef } from 'react'
 import { useNavigate } from 'react-router-dom'
-import type { Socket } from 'socket.io-client'
 import { toast } from 'sonner'
 
-export function useRoom(socket: Socket) {
+export function useRoom() {
   const navigate = useNavigate()
-  const { setRoom, setCurrentUser, addUser, removeUser } = useRoomStore()
-  const { setQueue } = usePlayerStore()
-  const { addMessage } = useChatStore()
+  const { socket } = useSocketContext()
+  const navigateRef = useRef(navigate)
+  navigateRef.current = navigate
 
   useEffect(() => {
-    socket.on(EVENTS.ROOM_STATE, (roomState: RoomState) => {
-      setRoom(roomState)
-      setQueue(roomState.queue)
-      // NOTE: currentTrack, isPlaying, currentTime are NOT set here.
-      // Audio playback state is exclusively owned by usePlayer via PLAYER_PLAY events.
-      // This prevents dual-write conflicts during room join.
-
-      // Restore currentUser from room state (important after page refresh)
+    // Named handlers — passed to both on() and off() so we only remove our own listeners
+    const onRoomState = (roomState: RoomState) => {
+      useRoomStore.getState().setRoom(roomState)
       const me = roomState.users.find((u) => u.id === socket.id)
       if (me) {
-        setCurrentUser({ ...me, isHost: roomState.hostId === socket.id })
+        useRoomStore.getState().setCurrentUser({ ...me, isHost: roomState.hostId === socket.id })
       }
-    })
+    }
 
-    socket.on(EVENTS.ROOM_USER_JOINED, (user: User) => {
-      addUser(user)
-      addMessage({
+    const onUserJoined = (user: User) => {
+      useRoomStore.getState().addUser(user)
+      useChatStore.getState().addMessage({
         id: crypto.randomUUID(),
         userId: 'system',
         nickname: 'system',
@@ -38,11 +34,11 @@ export function useRoom(socket: Socket) {
         timestamp: Date.now(),
         type: 'system',
       })
-    })
+    }
 
-    socket.on(EVENTS.ROOM_USER_LEFT, (user: User) => {
-      removeUser(user.id)
-      addMessage({
+    const onUserLeft = (user: User) => {
+      useRoomStore.getState().removeUser(user.id)
+      useChatStore.getState().addMessage({
         id: crypto.randomUUID(),
         userId: 'system',
         nickname: 'system',
@@ -50,53 +46,79 @@ export function useRoom(socket: Socket) {
         timestamp: Date.now(),
         type: 'system',
       })
-    })
+    }
 
-    socket.on(EVENTS.ROOM_SETTINGS, (settings: Partial<RoomState>) => {
+    const onSettings = (settings: { mode: RoomState['mode']; hasPassword: boolean }) => {
       useRoomStore.getState().updateRoom(settings)
-    })
+    }
 
-    socket.on(EVENTS.ROOM_ERROR, (error: { code?: string; message: string }) => {
+    const onError = (error: { code: string; message: string }) => {
       toast.error(error.message)
-      // Room not found — redirect to home
       if (error.code === 'ROOM_NOT_FOUND') {
-        navigate('/', { replace: true })
+        navigateRef.current('/', { replace: true })
       }
-    })
+    }
+
+    const onChatHistory = (messages: ChatMessage[]) => {
+      useChatStore.getState().setMessages(messages)
+    }
+
+    const onChatMessage = (message: ChatMessage) => {
+      useChatStore.getState().addMessage(message)
+    }
+
+    const onQueueUpdated = (data: { queue: Track[] }) => {
+      const room = useRoomStore.getState().room
+      if (room) {
+        useRoomStore.getState().updateRoom({ queue: data.queue })
+      }
+    }
+
+    const onDisconnect = () => {
+      useRoomStore.getState().reset()
+      usePlayerStore.getState().reset()
+      useChatStore.getState().reset()
+    }
+
+    // Re-join on reconnect is handled by RoomPage's auto-join effect
+    // which monitors isConnected and room state, so no onConnect handler needed here.
+
+    socket.on(EVENTS.ROOM_STATE, onRoomState)
+    socket.on(EVENTS.ROOM_USER_JOINED, onUserJoined)
+    socket.on(EVENTS.ROOM_USER_LEFT, onUserLeft)
+    socket.on(EVENTS.ROOM_SETTINGS, onSettings)
+    socket.on(EVENTS.ROOM_ERROR, onError)
+    socket.on(EVENTS.CHAT_HISTORY, onChatHistory)
+    socket.on(EVENTS.CHAT_MESSAGE, onChatMessage)
+    socket.on(EVENTS.QUEUE_UPDATED, onQueueUpdated)
+    socket.on('disconnect', onDisconnect)
 
     return () => {
-      socket.off(EVENTS.ROOM_STATE)
-      socket.off(EVENTS.ROOM_USER_JOINED)
-      socket.off(EVENTS.ROOM_USER_LEFT)
-      socket.off(EVENTS.ROOM_SETTINGS)
-      socket.off(EVENTS.ROOM_ERROR)
+      socket.off(EVENTS.ROOM_STATE, onRoomState)
+      socket.off(EVENTS.ROOM_USER_JOINED, onUserJoined)
+      socket.off(EVENTS.ROOM_USER_LEFT, onUserLeft)
+      socket.off(EVENTS.ROOM_SETTINGS, onSettings)
+      socket.off(EVENTS.ROOM_ERROR, onError)
+      socket.off(EVENTS.CHAT_HISTORY, onChatHistory)
+      socket.off(EVENTS.CHAT_MESSAGE, onChatMessage)
+      socket.off(EVENTS.QUEUE_UPDATED, onQueueUpdated)
+      socket.off('disconnect', onDisconnect)
     }
-  }, [socket, navigate, setRoom, setCurrentUser, addUser, removeUser, setQueue, addMessage])
-
-  const createRoom = useCallback(
-    (nickname: string) => {
-      socket.emit(EVENTS.ROOM_CREATE, { nickname })
-    },
-    [socket],
-  )
-
-  const joinRoom = useCallback(
-    (roomId: string, nickname: string) => {
-      socket.emit(EVENTS.ROOM_JOIN, { roomId, nickname })
-    },
-    [socket],
-  )
+  }, [socket])
 
   const leaveRoom = useCallback(() => {
     socket.emit(EVENTS.ROOM_LEAVE)
+    useRoomStore.getState().reset()
+    usePlayerStore.getState().reset()
+    useChatStore.getState().reset()
   }, [socket])
 
   const updateSettings = useCallback(
-    (settings: { mode: 'host-only' | 'collaborative' }) => {
+    (settings: { mode?: 'host-only' | 'collaborative'; password?: string | null }) => {
       socket.emit(EVENTS.ROOM_SETTINGS, settings)
     },
     [socket],
   )
 
-  return { createRoom, joinRoom, leaveRoom, updateSettings }
+  return { leaveRoom, updateSettings }
 }

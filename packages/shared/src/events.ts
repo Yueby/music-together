@@ -10,6 +10,10 @@ export const EVENTS = {
   ROOM_SETTINGS: 'room:settings',
   ROOM_ERROR: 'room:error',
 
+  // Room discovery
+  ROOM_LIST: 'room:list',
+  ROOM_LIST_UPDATE: 'room:list_update',
+
   // Player controls
   PLAYER_PLAY: 'player:play',
   PLAYER_PAUSE: 'player:pause',
