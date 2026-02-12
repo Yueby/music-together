@@ -13,6 +13,7 @@ interface ChatStore {
   setChatWidth: (width: number | ((prev: number) => number)) => void
   incrementUnread: () => void
   clearUnread: () => void
+  reset: () => void
 }
 
 export const useChatStore = create<ChatStore>((set) => ({
@@ -31,13 +32,13 @@ export const useChatStore = create<ChatStore>((set) => ({
       const newWidth = typeof width === 'function' ? width(state.chatWidth) : width
       return {
         chatWidth: newWidth,
-        // Clear unread when panel becomes visible
         unreadCount: newWidth > 0 && state.chatWidth === 0 ? 0 : state.unreadCount,
       }
     }),
   incrementUnread: () =>
     set((state) => ({ unreadCount: state.unreadCount + 1 })),
   clearUnread: () => set({ unreadCount: 0 }),
+  reset: () => set({ messages: [], unreadCount: 0 }),
 }))
 
 export { DEFAULT_CHAT_WIDTH }

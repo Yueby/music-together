@@ -1,5 +1,6 @@
-import type { Track } from '@music-together/shared'
 import { create } from 'zustand'
+import type { Track } from '@music-together/shared'
+import { storage } from '@/lib/storage'
 
 interface PlayerStore {
   currentTrack: Track | null
@@ -7,7 +8,6 @@ interface PlayerStore {
   currentTime: number
   duration: number
   volume: number
-  queue: Track[]
   lyric: string
   tlyric: string
 
@@ -16,8 +16,8 @@ interface PlayerStore {
   setCurrentTime: (time: number) => void
   setDuration: (duration: number) => void
   setVolume: (volume: number) => void
-  setQueue: (queue: Track[]) => void
   setLyric: (lyric: string, tlyric?: string) => void
+  reset: () => void
 }
 
 export const usePlayerStore = create<PlayerStore>((set) => ({
@@ -25,8 +25,7 @@ export const usePlayerStore = create<PlayerStore>((set) => ({
   isPlaying: false,
   currentTime: 0,
   duration: 0,
-  volume: parseFloat(localStorage.getItem('mt-volume') ?? '0.8'),
-  queue: [],
+  volume: storage.getVolume(),
   lyric: '',
   tlyric: '',
 
@@ -35,9 +34,9 @@ export const usePlayerStore = create<PlayerStore>((set) => ({
   setCurrentTime: (time) => set({ currentTime: time }),
   setDuration: (duration) => set({ duration }),
   setVolume: (volume) => {
-    localStorage.setItem('mt-volume', String(volume))
+    storage.setVolume(volume)
     set({ volume })
   },
-  setQueue: (queue) => set({ queue }),
   setLyric: (lyric, tlyric) => set({ lyric, tlyric: tlyric ?? '' }),
+  reset: () => set({ currentTrack: null, isPlaying: false, currentTime: 0, duration: 0, lyric: '', tlyric: '' }),
 }))
