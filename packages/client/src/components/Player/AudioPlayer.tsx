@@ -1,3 +1,5 @@
+import { useIsMobile } from '@/hooks/useIsMobile'
+import { cn } from '@/lib/utils'
 import { usePlayerStore } from '@/stores/playerStore'
 import { useSettingsStore } from '@/stores/settingsStore'
 import { BackgroundRender } from '@applemusic-like-lyrics/react'
@@ -5,20 +7,40 @@ import { LyricDisplay } from './LyricDisplay'
 import { NowPlaying } from './NowPlaying'
 import { PlayerControls } from './PlayerControls'
 
+const FULL_SIZE_STYLE = { width: '100%', height: '100%' } as const
+
 interface AudioPlayerProps {
   onPlay: () => void
   onPause: () => void
   onSeek: (time: number) => void
   onNext: () => void
+  onPrev: () => void
+  onOpenChat: () => void
   onOpenQueue: () => void
+  chatUnreadCount: number
 }
 
-export function AudioPlayer({ onPlay, onPause, onSeek, onNext, onOpenQueue }: AudioPlayerProps) {
+export function AudioPlayer({ onPlay, onPause, onSeek, onNext, onPrev, onOpenChat, onOpenQueue, chatUnreadCount }: AudioPlayerProps) {
   const currentTrack = usePlayerStore((s) => s.currentTrack)
-  const isPlaying = usePlayerStore((s) => s.isPlaying)
   const bgFps = useSettingsStore((s) => s.bgFps)
   const bgFlowSpeed = useSettingsStore((s) => s.bgFlowSpeed)
   const bgRenderScale = useSettingsStore((s) => s.bgRenderScale)
+  const mobileLyricPosition = useSettingsStore((s) => s.mobileLyricPosition)
+  const isMobile = useIsMobile()
+
+  const showLyricsAboveControls = isMobile && mobileLyricPosition === 'above'
+
+  const lyricsSection = (
+    <div
+      className={cn(
+        'min-h-0 w-full flex-1 overflow-hidden',
+        isMobile && 'px-4',
+      )}
+      style={{ maskImage: 'linear-gradient(to bottom, transparent 0%, black 8%, black 92%, transparent 100%)', WebkitMaskImage: 'linear-gradient(to bottom, transparent 0%, black 8%, black 92%, transparent 100%)' }}
+    >
+      <LyricDisplay />
+    </div>
+  )
 
   return (
     <div className="relative flex h-full flex-col overflow-hidden">
@@ -27,11 +49,11 @@ export function AudioPlayer({ onPlay, onPause, onSeek, onNext, onOpenQueue }: Au
         <div className="pointer-events-none absolute inset-0 z-0 opacity-80 saturate-[1.3]">
           <BackgroundRender
             album={currentTrack.cover}
-            playing={isPlaying}
+            playing
             fps={bgFps}
             flowSpeed={bgFlowSpeed}
             renderScale={bgRenderScale}
-            style={{ width: '100%', height: '100%' }}
+            style={FULL_SIZE_STYLE}
           />
         </div>
       )}
@@ -40,26 +62,48 @@ export function AudioPlayer({ onPlay, onPause, onSeek, onNext, onOpenQueue }: Au
       <div className="relative z-10 h-full p-[5%]">
         <div className="flex h-full flex-col md:flex-row">
           {/* Left: cover + song info + controls (Apple Music style) */}
-          <div className="flex flex-col items-center justify-center gap-4 md:w-[40%] lg:w-[38%]">
-            <NowPlaying />
-            <div className="relative z-10 w-full max-w-[min(90%,38vh)]">
-              <PlayerControls
-                onPlay={onPlay}
-                onPause={onPause}
-                onSeek={onSeek}
-                onNext={onNext}
-                onOpenQueue={onOpenQueue}
-              />
-            </div>
+          <div className={cn(
+            'flex flex-col items-center gap-4 md:gap-8 md:w-[40%] md:justify-center lg:w-[38%]',
+            showLyricsAboveControls ? 'flex-1' : 'justify-center',
+          )}>
+            {showLyricsAboveControls ? (
+              <>
+                <div className="w-full max-w-[min(90%,38vh)]">
+                  <NowPlaying />
+                </div>
+                {lyricsSection}
+                <div className="relative z-10 mt-auto w-full max-w-[min(90%,38vh)]">
+                  <PlayerControls
+                    onPlay={onPlay}
+                    onPause={onPause}
+                    onSeek={onSeek}
+                    onNext={onNext}
+                    onPrev={onPrev}
+                    onOpenChat={onOpenChat}
+                    onOpenQueue={onOpenQueue}
+                    chatUnreadCount={chatUnreadCount}
+                  />
+                </div>
+              </>
+            ) : (
+              <div className="flex w-full max-w-[min(90%,38vh)] flex-col gap-4 md:gap-8">
+                <NowPlaying />
+                <PlayerControls
+                  onPlay={onPlay}
+                  onPause={onPause}
+                  onSeek={onSeek}
+                  onNext={onNext}
+                  onPrev={onPrev}
+                  onOpenChat={onOpenChat}
+                  onOpenQueue={onOpenQueue}
+                  chatUnreadCount={chatUnreadCount}
+                />
+              </div>
+            )}
           </div>
 
-          {/* Right: AMLL lyrics full height with fade edges */}
-          <div
-            className="min-h-0 flex-1 overflow-hidden"
-            style={{ maskImage: 'linear-gradient(to bottom, transparent 0%, black 8%, black 92%, transparent 100%)', WebkitMaskImage: 'linear-gradient(to bottom, transparent 0%, black 8%, black 92%, transparent 100%)' }}
-          >
-            <LyricDisplay />
-          </div>
+          {/* Right / Below: AMLL lyrics full height with fade edges */}
+          {!showLyricsAboveControls && lyricsSection}
         </div>
       </div>
     </div>

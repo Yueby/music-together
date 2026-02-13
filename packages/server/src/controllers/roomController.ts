@@ -2,6 +2,7 @@ import { EVENTS, LIMITS } from '@music-together/shared'
 import { roomRepo } from '../repositories/roomRepository.js'
 import * as roomService from '../services/roomService.js'
 import * as chatService from '../services/chatService.js'
+import * as playerService from '../services/playerService.js'
 import { estimateCurrentTime } from '../services/syncService.js'
 import { createWithRoom } from '../middleware/withRoom.js'
 import { logger } from '../utils/logger.js'
@@ -95,16 +96,27 @@ export function registerRoomController(io: TypedServer, socket: TypedSocket) {
     socket.emit(EVENTS.ROOM_STATE, roomService.toPublicRoomState(updatedRoom))
     socket.emit(EVENTS.CHAT_HISTORY, chatService.getHistory(roomId))
 
-    // If there's a track currently playing, send PLAYER_PLAY for sync
+    // Sync playback state to the joining client
+    const isAloneInRoom = updatedRoom.users.length === 1
+
     if (updatedRoom.currentTrack?.streamUrl) {
+      // Alone in room + track was paused → auto-resume (host rejoining)
+      const shouldAutoPlay = isAloneInRoom || updatedRoom.playState.isPlaying
+      if (isAloneInRoom && !updatedRoom.playState.isPlaying) {
+        updatedRoom.playState = { ...updatedRoom.playState, isPlaying: true, serverTimestamp: Date.now() }
+      }
       socket.emit(EVENTS.PLAYER_PLAY, {
         track: updatedRoom.currentTrack,
         playState: {
-          isPlaying: updatedRoom.playState.isPlaying,
+          isPlaying: shouldAutoPlay,
           currentTime: estimateCurrentTime(roomId),
           serverTimestamp: Date.now(),
         },
       })
+    } else if (isAloneInRoom && updatedRoom.queue.length > 0) {
+      // No current track but queue has items → start playing from queue
+      const firstTrack = updatedRoom.queue[0]
+      playerService.playTrackInRoom(io, roomId, firstTrack)
     }
 
     // Notify others (skip for rejoin — they already know the user is in the room)

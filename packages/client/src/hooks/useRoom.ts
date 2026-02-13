@@ -1,7 +1,7 @@
 import { useSocketContext } from '@/providers/SocketProvider'
 import { useChatStore } from '@/stores/chatStore'
-import { usePlayerStore } from '@/stores/playerStore'
 import { useRoomStore } from '@/stores/roomStore'
+import { resetAllRoomState } from '@/lib/resetStores'
 import type { ChatMessage, RoomState, Track, User } from '@music-together/shared'
 import { EVENTS } from '@music-together/shared'
 import { useCallback, useEffect, useRef } from 'react'
@@ -75,9 +75,7 @@ export function useRoom() {
     }
 
     const onDisconnect = () => {
-      useRoomStore.getState().reset()
-      usePlayerStore.getState().reset()
-      useChatStore.getState().reset()
+      resetAllRoomState()
     }
 
     // Re-join on reconnect is handled by RoomPage's auto-join effect
@@ -108,9 +106,7 @@ export function useRoom() {
 
   const leaveRoom = useCallback(() => {
     socket.emit(EVENTS.ROOM_LEAVE)
-    useRoomStore.getState().reset()
-    usePlayerStore.getState().reset()
-    useChatStore.getState().reset()
+    resetAllRoomState()
   }, [socket])
 
   const updateSettings = useCallback(

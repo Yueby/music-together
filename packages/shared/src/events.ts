@@ -17,8 +17,10 @@ export const EVENTS = {
   // Player controls
   PLAYER_PLAY: 'player:play',
   PLAYER_PAUSE: 'player:pause',
+  PLAYER_RESUME: 'player:resume',
   PLAYER_SEEK: 'player:seek',
   PLAYER_NEXT: 'player:next',
+  PLAYER_PREV: 'player:prev',
   PLAYER_SYNC: 'player:sync',
   PLAYER_SYNC_REQUEST: 'player:sync_request',
   PLAYER_SYNC_RESPONSE: 'player:sync_response',

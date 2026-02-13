@@ -2,6 +2,11 @@ import { useCallback, useEffect, useRef } from 'react'
 import { Howl } from 'howler'
 import type { Track } from '@music-together/shared'
 import { usePlayerStore } from '@/stores/playerStore'
+import {
+  CURRENT_TIME_THROTTLE_MS,
+  HOWL_UNMUTE_DELAY_SEEK_MS,
+  HOWL_UNMUTE_DELAY_DEFAULT_MS,
+} from '@/lib/constants'
 
 /**
  * Manages a Howl audio instance with two-phase loading strategy:
@@ -13,26 +18,30 @@ export function useHowl(onTrackEnd: () => void) {
   const animFrameRef = useRef<number>(0)
   const syncReadyRef = useRef(false)
   const unmuteTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null)
+  const lastTimeUpdateRef = useRef(0)
 
-  const {
-    setCurrentTrack,
-    setIsPlaying,
-    setCurrentTime,
-    setDuration,
-    volume,
-  } = usePlayerStore()
+  // Use selectors for the one reactive value we need (volume sync effect)
+  const volume = usePlayerStore((s) => s.volume)
 
-  // Time update loop
+  // Get store actions once (stable references from zustand)
+  const storeActions = useRef(usePlayerStore.getState())
+  storeActions.current = usePlayerStore.getState()
+
+  // Throttled time update loop
   const startTimeUpdate = useCallback(() => {
     cancelAnimationFrame(animFrameRef.current)
     const update = () => {
       if (howlRef.current && howlRef.current.playing()) {
-        setCurrentTime(howlRef.current.seek() as number)
+        const now = performance.now()
+        if (now - lastTimeUpdateRef.current >= CURRENT_TIME_THROTTLE_MS) {
+          lastTimeUpdateRef.current = now
+          usePlayerStore.getState().setCurrentTime(howlRef.current.seek() as number)
+        }
       }
       animFrameRef.current = requestAnimationFrame(update)
     }
     animFrameRef.current = requestAnimationFrame(update)
-  }, [setCurrentTime])
+  }, [])
 
   const stopTimeUpdate = useCallback(() => {
     cancelAnimationFrame(animFrameRef.current)
@@ -57,6 +66,7 @@ export function useHowl(onTrackEnd: () => void) {
       if (!track.streamUrl) return
 
       const loadStartTime = Date.now()
+      const currentVolume = usePlayerStore.getState().volume
 
       const howl = new Howl({
         src: [track.streamUrl],
@@ -64,14 +74,12 @@ export function useHowl(onTrackEnd: () => void) {
         format: ['mp3'],
         volume: 0,
         onload: () => {
-          setDuration(howl.duration())
+          usePlayerStore.getState().setDuration(howl.duration())
           if (autoPlay) {
             if (seekTo && seekTo > 0) {
               // Update store immediately so AMLL lyrics jump to correct position
-              // before startTimeUpdate() kicks in via onplay.
-              setCurrentTime(seekTo)
+              usePlayerStore.getState().setCurrentTime(seekTo)
               // Play first (still muted at volume 0), then seek once audio is ready.
-              // HTML5 streaming audio may ignore seek() before play(), so we defer it.
               howl.play()
               howl.once('play', () => {
                 if (howlRef.current !== howl) return
@@ -83,41 +91,44 @@ export function useHowl(onTrackEnd: () => void) {
             }
             unmuteTimerRef.current = setTimeout(() => {
               if (howlRef.current === howl) {
-                howl.volume(volume)
+                howl.volume(currentVolume)
                 syncReadyRef.current = true
               }
-            }, seekTo && seekTo > 0 ? 1200 : 100)
+            }, seekTo && seekTo > 0 ? HOWL_UNMUTE_DELAY_SEEK_MS : HOWL_UNMUTE_DELAY_DEFAULT_MS)
           } else {
             if (seekTo && seekTo > 0) howl.seek(seekTo)
-            howl.volume(volume)
-            setCurrentTime(seekTo ?? 0)
+            howl.volume(currentVolume)
+            usePlayerStore.getState().setCurrentTime(seekTo ?? 0)
             syncReadyRef.current = true
           }
         },
         onplay: () => {
-          setIsPlaying(true)
-          setDuration(howl.duration())
+          usePlayerStore.getState().setIsPlaying(true)
+          usePlayerStore.getState().setDuration(howl.duration())
           startTimeUpdate()
         },
         onpause: () => {
-          setIsPlaying(false)
+          usePlayerStore.getState().setIsPlaying(false)
           stopTimeUpdate()
         },
         onend: () => {
-          setIsPlaying(false)
+          usePlayerStore.getState().setIsPlaying(false)
           stopTimeUpdate()
           onTrackEnd()
         },
-        onloaderror: (_id, msg) => console.error('Howl load error:', msg),
+        onloaderror: (_id, msg) => {
+          console.error('Howl load error:', msg)
+          onTrackEnd()
+        },
         onplayerror: function () {
           howl.once('unlock', () => howl.play())
         },
       })
 
       howlRef.current = howl
-      setCurrentTrack(track)
+      usePlayerStore.getState().setCurrentTrack(track)
     },
-    [volume, onTrackEnd, setCurrentTrack, setIsPlaying, setCurrentTime, setDuration, startTimeUpdate, stopTimeUpdate],
+    [onTrackEnd, startTimeUpdate, stopTimeUpdate],
   )
 
   // Volume sync

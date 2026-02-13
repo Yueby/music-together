@@ -2,6 +2,7 @@ import type { PlayState, Track } from '@music-together/shared'
 import { EVENTS } from '@music-together/shared'
 import { roomRepo } from '../repositories/roomRepository.js'
 import { musicProvider } from './musicProvider.js'
+import { estimateCurrentTime } from './syncService.js'
 import { logger } from '../utils/logger.js'
 import type { TypedServer } from '../middleware/types.js'
 
@@ -65,11 +66,21 @@ export async function playTrackInRoom(
   return true
 }
 
+export function resumeTrack(io: TypedServer, roomId: string): void {
+  const room = roomRepo.get(roomId)
+  if (!room || !room.currentTrack) return
+
+  room.playState = { ...room.playState, isPlaying: true, serverTimestamp: Date.now() }
+  io.to(roomId).emit(EVENTS.PLAYER_RESUME, { playState: room.playState })
+}
+
 export function pauseTrack(io: TypedServer, roomId: string): void {
   const room = roomRepo.get(roomId)
   if (!room) return
 
-  room.playState = { ...room.playState, isPlaying: false, serverTimestamp: Date.now() }
+  // Snapshot estimated position before pausing so resume starts from the correct point
+  const snapshotTime = estimateCurrentTime(roomId)
+  room.playState = { isPlaying: false, currentTime: snapshotTime, serverTimestamp: Date.now() }
   io.to(roomId).emit(EVENTS.PLAYER_PAUSE, { playState: room.playState })
 }
 

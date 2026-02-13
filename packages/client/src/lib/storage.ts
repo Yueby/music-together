@@ -16,18 +16,54 @@ function safeSet(key: string, value: string): void {
   }
 }
 
+/** Parse a float from storage, returning the fallback if invalid */
+function safeFloat(key: string, fallback: number): number {
+  const raw = safeGet(key)
+  if (raw === null) return fallback
+  const parsed = parseFloat(raw)
+  return Number.isFinite(parsed) ? parsed : fallback
+}
+
+/** Parse an int from storage, returning the fallback if invalid */
+function safeInt(key: string, fallback: number): number {
+  const raw = safeGet(key)
+  if (raw === null) return fallback
+  const parsed = parseInt(raw, 10)
+  return Number.isFinite(parsed) ? parsed : fallback
+}
+
+/** Validate a string value is one of the allowed options */
+function safeEnum<T extends string>(key: string, allowed: readonly T[], fallback: T): T {
+  const raw = safeGet(key) as T | null
+  if (raw !== null && allowed.includes(raw)) return raw
+  return fallback
+}
+
+const LYRIC_ANCHORS = ['top', 'center', 'bottom'] as const
+const MOBILE_LYRIC_POSITIONS = ['below', 'above'] as const
+const LYRIC_FONT_SIZES = [75, 90, 100, 110, 125, 150] as const
+
 export const storage = {
   getNickname: () => safeGet('nickname') ?? '',
   setNickname: (v: string) => safeSet('nickname', v),
 
-  getVolume: () => parseFloat(safeGet('volume') ?? '0.8'),
+  getVolume: () => {
+    const vol = safeFloat('volume', 0.8)
+    return Math.max(0, Math.min(1, vol))
+  },
   setVolume: (v: number) => safeSet('volume', String(v)),
 
   // Lyric settings
-  getLyricAlignAnchor: () => (safeGet('lyricAlignAnchor') as 'top' | 'center' | 'bottom') ?? 'center',
+  getMobileLyricPosition: () => safeEnum('mobileLyricPosition', MOBILE_LYRIC_POSITIONS, 'below'),
+  setMobileLyricPosition: (v: string) => safeSet('mobileLyricPosition', v),
+
+  getLyricAlignAnchor: () => safeEnum('lyricAlignAnchor', LYRIC_ANCHORS, 'center'),
   setLyricAlignAnchor: (v: string) => safeSet('lyricAlignAnchor', v),
 
-  getLyricAlignPosition: () => parseFloat(safeGet('lyricAlignPosition') ?? '0.4'),
+  getLyricAlignPosition: () => {
+    const pos = safeFloat('lyricAlignPosition', 0.4)
+    return Math.max(0, Math.min(1, pos))
+  },
   setLyricAlignPosition: (v: number) => safeSet('lyricAlignPosition', String(v)),
 
   getLyricEnableSpring: () => safeGet('lyricEnableSpring') !== 'false',
@@ -39,16 +75,34 @@ export const storage = {
   getLyricEnableScale: () => safeGet('lyricEnableScale') !== 'false',
   setLyricEnableScale: (v: boolean) => safeSet('lyricEnableScale', String(v)),
 
-  getLyricFontWeight: () => parseInt(safeGet('lyricFontWeight') ?? '600', 10),
+  getLyricFontWeight: () => {
+    const w = safeInt('lyricFontWeight', 600)
+    return [400, 500, 600, 700].includes(w) ? w : 600
+  },
   setLyricFontWeight: (v: number) => safeSet('lyricFontWeight', String(v)),
 
+  getLyricFontSize: () => {
+    const size = safeInt('lyricFontSize', 100)
+    return (LYRIC_FONT_SIZES as readonly number[]).includes(size) ? size : 100
+  },
+  setLyricFontSize: (v: number) => safeSet('lyricFontSize', String(v)),
+
   // Background settings
-  getBgFps: () => parseInt(safeGet('bgFps') ?? '30', 10),
+  getBgFps: () => {
+    const fps = safeInt('bgFps', 30)
+    return [15, 30, 60].includes(fps) ? fps : 30
+  },
   setBgFps: (v: number) => safeSet('bgFps', String(v)),
 
-  getBgFlowSpeed: () => parseFloat(safeGet('bgFlowSpeed') ?? '2'),
+  getBgFlowSpeed: () => {
+    const speed = safeFloat('bgFlowSpeed', 2)
+    return Math.max(0.5, Math.min(5, speed))
+  },
   setBgFlowSpeed: (v: number) => safeSet('bgFlowSpeed', String(v)),
 
-  getBgRenderScale: () => parseFloat(safeGet('bgRenderScale') ?? '0.5'),
+  getBgRenderScale: () => {
+    const scale = safeFloat('bgRenderScale', 0.5)
+    return [0.25, 0.5, 0.75, 1].includes(scale) ? scale : 0.5
+  },
   setBgRenderScale: (v: number) => safeSet('bgRenderScale', String(v)),
 }

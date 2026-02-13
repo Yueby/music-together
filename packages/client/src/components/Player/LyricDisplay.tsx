@@ -1,9 +1,11 @@
-import { LyricPlayer } from '@applemusic-like-lyrics/react'
-import type { LyricLine as AMLLLyricLine } from '@applemusic-like-lyrics/core'
-import '@applemusic-like-lyrics/core/style.css'
 import { usePlayerStore } from '@/stores/playerStore'
 import { useSettingsStore } from '@/stores/settingsStore'
+import type { LyricLine as AMLLLyricLine } from '@applemusic-like-lyrics/core'
+import '@applemusic-like-lyrics/core/style.css'
+import { LyricPlayer } from '@applemusic-like-lyrics/react'
 import { useMemo } from 'react'
+
+const FULL_SIZE_STYLE = { width: '100%', height: '100%' } as const
 
 interface LyricLine {
   time: number
@@ -104,6 +106,7 @@ export function LyricDisplay() {
   const enableBlur = useSettingsStore((s) => s.lyricEnableBlur)
   const enableScale = useSettingsStore((s) => s.lyricEnableScale)
   const fontWeight = useSettingsStore((s) => s.lyricFontWeight)
+  const fontSize = useSettingsStore((s) => s.lyricFontSize)
 
   const lines = useMemo(() => mergeLyrics(lyric, tlyric), [lyric, tlyric])
   const amllLines = useMemo(() => toAMLLLines(lines), [lines])
@@ -119,7 +122,7 @@ export function LyricDisplay() {
   return (
     <div
       className="amll-container h-full w-full"
-      style={{ fontWeight }}
+      style={{ fontWeight, fontSize: `${fontSize}%` }}
     >
       <LyricPlayer
         lyricLines={amllLines}
@@ -130,7 +133,7 @@ export function LyricDisplay() {
         enableSpring={enableSpring}
         enableBlur={enableBlur}
         enableScale={enableScale}
-        style={{ width: '100%', height: '100%' }}
+        style={FULL_SIZE_STYLE}
       />
     </div>
   )

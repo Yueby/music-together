@@ -6,9 +6,9 @@ export function NowPlaying() {
   const currentTrack = usePlayerStore((s) => s.currentTrack)
 
   return (
-    <div className="relative z-0 flex w-full flex-col items-center gap-4 md:gap-5">
+    <div className="relative z-0 flex w-full flex-col gap-4 md:gap-6">
       {/* Album Cover — rectangular with soft shadow */}
-      <div className="relative aspect-square w-full max-w-[min(90%,38vh)]">
+      <div className="relative aspect-square w-full">
         <motion.div
           className="relative h-full w-full overflow-hidden rounded-3xl shadow-lg shadow-black/15"
           initial={{ opacity: 0, scale: 0.95 }}
@@ -30,16 +30,16 @@ export function NowPlaying() {
       </div>
 
       {/* Song Info — title + artist only (Apple Music style) */}
-      <div className="flex w-full max-w-[min(90%,38vh)] flex-col items-start gap-1 md:gap-1.5">
+      <div className="flex w-full flex-col items-start gap-1 md:gap-1.5">
         <motion.h2
           key={currentTrack?.id ?? 'empty'}
           initial={{ opacity: 0, y: 8 }}
           animate={{ opacity: 1, y: 0 }}
-          className="w-full truncate text-xl font-bold leading-tight text-white/90 md:text-2xl lg:text-3xl"
+          className="w-full truncate text-2xl font-bold leading-tight text-white/90 md:text-2xl lg:text-3xl"
         >
           {currentTrack?.title ?? '暂无歌曲'}
         </motion.h2>
-        <p className="w-full truncate text-sm text-white/50 md:text-base lg:text-lg">
+        <p className="w-full truncate text-base text-white/50 md:text-base lg:text-lg">
           {currentTrack ? currentTrack.artist.join(' / ') : '点击搜索添加歌曲到队列'}
         </p>
       </div>
