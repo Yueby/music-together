@@ -1,8 +1,10 @@
 import { useIsMobile } from '@/hooks/useIsMobile'
+import { useVote } from '@/hooks/useVote'
 import { cn } from '@/lib/utils'
 import { usePlayerStore } from '@/stores/playerStore'
 import { useSettingsStore } from '@/stores/settingsStore'
 import { BackgroundRender } from '@applemusic-like-lyrics/react'
+import { VoteBanner } from '../Vote/VoteBanner'
 import { LyricDisplay } from './LyricDisplay'
 import { NowPlaying } from './NowPlaying'
 import { PlayerControls } from './PlayerControls'
@@ -22,6 +24,7 @@ interface AudioPlayerProps {
 
 export function AudioPlayer({ onPlay, onPause, onSeek, onNext, onPrev, onOpenChat, onOpenQueue, chatUnreadCount }: AudioPlayerProps) {
   const currentTrack = usePlayerStore((s) => s.currentTrack)
+  const { activeVote, castVote, startVote } = useVote()
   const bgFps = useSettingsStore((s) => s.bgFps)
   const bgFlowSpeed = useSettingsStore((s) => s.bgFlowSpeed)
   const bgRenderScale = useSettingsStore((s) => s.bgRenderScale)
@@ -73,6 +76,7 @@ export function AudioPlayer({ onPlay, onPause, onSeek, onNext, onPrev, onOpenCha
                 </div>
                 {lyricsSection}
                 <div className="relative z-10 mt-auto w-full max-w-[min(90%,38vh)]">
+                  {activeVote && <div className="mb-2"><VoteBanner vote={activeVote} onCastVote={castVote} /></div>}
                   <PlayerControls
                     onPlay={onPlay}
                     onPause={onPause}
@@ -82,12 +86,14 @@ export function AudioPlayer({ onPlay, onPause, onSeek, onNext, onPrev, onOpenCha
                     onOpenChat={onOpenChat}
                     onOpenQueue={onOpenQueue}
                     chatUnreadCount={chatUnreadCount}
+                    onStartVote={startVote}
                   />
                 </div>
               </>
             ) : (
               <div className="flex w-full max-w-[min(90%,38vh)] flex-col gap-4 md:gap-8">
                 <NowPlaying />
+                {activeVote && <VoteBanner vote={activeVote} onCastVote={castVote} />}
                 <PlayerControls
                   onPlay={onPlay}
                   onPause={onPause}
@@ -97,6 +103,7 @@ export function AudioPlayer({ onPlay, onPause, onSeek, onNext, onPrev, onOpenCha
                   onOpenChat={onOpenChat}
                   onOpenQueue={onOpenQueue}
                   chatUnreadCount={chatUnreadCount}
+                  onStartVote={startVote}
                 />
               </div>
             )}

@@ -6,7 +6,6 @@ export interface RoomData {
   name: string
   password: string | null
   hostId: string
-  mode: 'host-only' | 'collaborative'
   users: User[]
   queue: Track[]
   currentTrack: Track | null
@@ -22,12 +21,18 @@ export interface RoomRepository {
   get(roomId: string): RoomData | undefined
   set(roomId: string, room: RoomData): void
   delete(roomId: string): void
-  getAll(): Map<string, RoomData>
+  getAll(): ReadonlyMap<string, RoomData>
   getAllIds(): string[]
   getAllAsList(): RoomListItem[]
   setSocketMapping(socketId: string, roomId: string, userId: string): void
   getSocketMapping(socketId: string): SocketMapping | undefined
   deleteSocketMapping(socketId: string): void
+  /** Store a smoothed RTT measurement for a given socket */
+  setSocketRTT(socketId: string, rttMs: number): void
+  /** Retrieve the current smoothed RTT for a socket (default 0) */
+  getSocketRTT(socketId: string): number
+  /** Get the maximum RTT among all sockets in a room */
+  getMaxRTT(roomId: string): number
 }
 
 export interface ChatRepository {

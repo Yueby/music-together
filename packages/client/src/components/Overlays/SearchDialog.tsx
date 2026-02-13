@@ -9,10 +9,11 @@ import {
 import { Input } from '@/components/ui/input'
 import { Skeleton } from '@/components/ui/skeleton'
 import { Tabs, TabsList, TabsTrigger } from '@/components/ui/tabs'
+import { SERVER_URL } from '@/lib/config'
 import { useRoomStore } from '@/stores/roomStore'
 import type { MusicSource, Track } from '@music-together/shared'
 import { Loader2, Music2, Search } from 'lucide-react'
-import { useMemo, useRef, useState } from 'react'
+import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import { toast } from 'sonner'
 import { SearchResultItem } from './Search/SearchResultItem'
 
@@ -22,8 +23,6 @@ const SOURCES: { id: MusicSource; label: string }[] = [
   { id: 'netease', label: '网易云' },
   { id: 'tencent', label: 'QQ音乐' },
   { id: 'kugou', label: '酷狗' },
-  { id: 'kuwo', label: '酷我' },
-  { id: 'baidu', label: '百度' },
 ]
 
 const PAGE_SIZE = 20
@@ -45,65 +44,91 @@ export function SearchDialog({ open, onOpenChange, onAddToQueue }: SearchDialogP
   const [hasMore, setHasMore] = useState(false)
   const [hasSearched, setHasSearched] = useState(false)
   const scrollRef = useRef<HTMLDivElement>(null)
+  const abortRef = useRef<AbortController | null>(null)
+  const searchIdRef = useRef(0)
   const queue = useRoomStore((s) => s.room?.queue ?? EMPTY_QUEUE)
   const queueIds = useMemo(() => new Set(queue.map((t) => t.id)), [queue])
 
-  const fetchResults = async (searchPage: number, append: boolean) => {
-    const { SERVER_URL: serverUrl } = await import('@/lib/config')
+  // Cancel any in-flight request on unmount
+  useEffect(() => {
+    return () => {
+      abortRef.current?.abort()
+    }
+  }, [])
+
+  /** Shared fetch logic for both initial search and load-more */
+  const fetchPage = useCallback(async (
+    searchSource: MusicSource,
+    searchKeyword: string,
+    searchPage: number,
+    signal: AbortSignal,
+  ): Promise<{ tracks: Track[]; hasMore: boolean }> => {
     const res = await fetch(
-      `${serverUrl}/api/music/search?source=${source}&keyword=${encodeURIComponent(keyword.trim())}&limit=${PAGE_SIZE}&page=${searchPage}`,
+      `${SERVER_URL}/api/music/search?source=${searchSource}&keyword=${encodeURIComponent(searchKeyword)}&limit=${PAGE_SIZE}&page=${searchPage}`,
+      { signal },
     )
     if (!res.ok) throw new Error('Search failed')
     const data = await res.json()
     const tracks: Track[] = data.tracks || []
-
-    if (append) {
-      setResults((prev) => [...prev, ...tracks])
-    } else {
-      setResults(tracks)
-    }
-    setPage(searchPage)
-    setHasMore(data.hasMore ?? tracks.length >= PAGE_SIZE)
-  }
+    return { tracks, hasMore: data.hasMore ?? tracks.length >= PAGE_SIZE }
+  }, [])
 
   const handleSearch = async (overrideKeyword?: string) => {
-    const searchKeyword = overrideKeyword ?? keyword
-    if (!searchKeyword.trim()) return
+    const searchKeyword = (overrideKeyword ?? keyword).trim()
+    if (!searchKeyword) return
     if (overrideKeyword !== undefined) {
       setKeyword(overrideKeyword)
     }
+
+    // Abort previous request
+    abortRef.current?.abort()
+    const controller = new AbortController()
+    abortRef.current = controller
+    const currentSearchId = ++searchIdRef.current
+
     setLoading(true)
     setHasSearched(true)
     setAddedIds(new Set())
     try {
-      const { SERVER_URL: serverUrl } = await import('@/lib/config')
-      const res = await fetch(
-        `${serverUrl}/api/music/search?source=${source}&keyword=${encodeURIComponent(searchKeyword.trim())}&limit=${PAGE_SIZE}&page=1`,
-      )
-      if (!res.ok) throw new Error('Search failed')
-      const data = await res.json()
-      const tracks: Track[] = data.tracks || []
-      setResults(tracks)
+      const data = await fetchPage(source, searchKeyword, 1, controller.signal)
+      // Stale response guard
+      if (searchIdRef.current !== currentSearchId) return
+      setResults(data.tracks)
       setPage(1)
-      setHasMore(data.hasMore ?? tracks.length >= PAGE_SIZE)
+      setHasMore(data.hasMore)
       scrollRef.current?.scrollTo({ top: 0 })
-    } catch {
+    } catch (err) {
+      if (err instanceof DOMException && err.name === 'AbortError') return
+      if (searchIdRef.current !== currentSearchId) return
       toast.error('搜索失败，请重试')
       setResults([])
       setHasMore(false)
     } finally {
-      setLoading(false)
+      if (searchIdRef.current === currentSearchId) {
+        setLoading(false)
+      }
     }
   }
 
   const handleLoadMore = async () => {
+    const currentSearchId = searchIdRef.current
     setLoadingMore(true)
     try {
-      await fetchResults(page + 1, true)
-    } catch {
+      const nextPage = page + 1
+      const data = await fetchPage(source, keyword.trim(), nextPage, AbortSignal.timeout(30_000))
+      // Stale response guard
+      if (searchIdRef.current !== currentSearchId) return
+      setResults((prev) => [...prev, ...data.tracks])
+      setPage(nextPage)
+      setHasMore(data.hasMore)
+    } catch (err) {
+      if (err instanceof DOMException && err.name === 'AbortError') return
+      if (searchIdRef.current !== currentSearchId) return
       toast.error('加载失败，请重试')
     } finally {
-      setLoadingMore(false)
+      if (searchIdRef.current === currentSearchId) {
+        setLoadingMore(false)
+      }
     }
   }
 
@@ -121,8 +146,13 @@ export function SearchDialog({ open, onOpenChange, onAddToQueue }: SearchDialogP
     setHasSearched(false)
   }
 
+  const handleOpenChange = (nextOpen: boolean) => {
+    onOpenChange(nextOpen)
+    if (!nextOpen) resetState()
+  }
+
   return (
-    <ResponsiveDialog open={open} onOpenChange={onOpenChange}>
+    <ResponsiveDialog open={open} onOpenChange={handleOpenChange}>
       <ResponsiveDialogContent className="flex max-h-[85vh] flex-col overflow-hidden sm:max-h-[80vh] sm:max-w-2xl">
         <ResponsiveDialogHeader>
           <ResponsiveDialogTitle>搜索点歌</ResponsiveDialogTitle>

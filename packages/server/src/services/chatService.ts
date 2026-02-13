@@ -1,4 +1,5 @@
 import type { ChatMessage, User } from '@music-together/shared'
+import escapeHtml from 'escape-html'
 import { chatRepo } from '../repositories/chatRepository.js'
 
 /** 创建用户聊天消息，含 HTML 转义 */
@@ -35,15 +36,3 @@ export function getHistory(roomId: string): ChatMessage[] {
   return chatRepo.getHistory(roomId)
 }
 
-// ---------------------------------------------------------------------------
-// Helpers
-// ---------------------------------------------------------------------------
-
-function escapeHtml(text: string): string {
-  return text
-    .replace(/&/g, '&amp;')
-    .replace(/</g, '&lt;')
-    .replace(/>/g, '&gt;')
-    .replace(/"/g, '&quot;')
-    .replace(/'/g, '&#039;')
-}

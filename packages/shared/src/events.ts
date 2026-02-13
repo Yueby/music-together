@@ -34,6 +34,32 @@ export const EVENTS = {
   // Chat
   CHAT_MESSAGE: 'chat:message',
   CHAT_HISTORY: 'chat:history',
+
+  // Role management
+  ROOM_SET_ROLE: 'room:set_role',
+  ROOM_ROLE_CHANGED: 'room:role_changed',
+
+  // Voting
+  VOTE_START: 'vote:start',
+  VOTE_STARTED: 'vote:started',
+  VOTE_CAST: 'vote:cast',
+  VOTE_RESULT: 'vote:result',
+
+  // NTP clock synchronisation
+  NTP_PING: 'ntp:ping',
+  NTP_PONG: 'ntp:pong',
+
+  // Platform authentication
+  AUTH_REQUEST_QR: 'auth:request_qr',
+  AUTH_QR_GENERATED: 'auth:qr_generated',
+  AUTH_CHECK_QR: 'auth:check_qr',
+  AUTH_QR_STATUS: 'auth:qr_status',
+  AUTH_SET_COOKIE: 'auth:set_cookie',
+  AUTH_SET_COOKIE_RESULT: 'auth:set_cookie_result',
+  AUTH_LOGOUT: 'auth:logout',
+  AUTH_STATUS_UPDATE: 'auth:status_update',
+  AUTH_MY_STATUS: 'auth:my_status',
+  AUTH_GET_STATUS: 'auth:get_status',
 } as const
 
 export type EventName = (typeof EVENTS)[keyof typeof EVENTS]

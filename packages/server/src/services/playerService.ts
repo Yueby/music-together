@@ -1,10 +1,37 @@
-import type { PlayState, Track } from '@music-together/shared'
-import { EVENTS } from '@music-together/shared'
+import type { PlayState, ScheduledPlayState, Track } from '@music-together/shared'
+import { EVENTS, ERROR_CODE, NTP } from '@music-together/shared'
 import { roomRepo } from '../repositories/roomRepository.js'
 import { musicProvider } from './musicProvider.js'
+import * as queueService from './queueService.js'
+import * as authService from './authService.js'
 import { estimateCurrentTime } from './syncService.js'
+import { broadcastRoomList } from './roomService.js'
 import { logger } from '../utils/logger.js'
-import type { TypedServer } from '../middleware/types.js'
+import type { TypedServer, TypedSocket } from '../middleware/types.js'
+
+// ---------------------------------------------------------------------------
+// Scheduled execution helpers
+// ---------------------------------------------------------------------------
+
+/**
+ * Compute the future server-time at which all clients should execute an
+ * action, based on the maximum RTT in the room.
+ */
+function getScheduleTime(roomId: string): number {
+  const maxRTT = roomRepo.getMaxRTT(roomId)
+  const delay = Math.min(
+    Math.max(maxRTT * 1.5 + 100, NTP.MIN_SCHEDULE_DELAY_MS),
+    NTP.MAX_SCHEDULE_DELAY_MS,
+  )
+  return Date.now() + delay
+}
+
+/** Build a ScheduledPlayState from a plain PlayState.
+ *  Accepts an optional pre-computed scheduleTime to keep room state and
+ *  broadcast payload consistent (same timestamp for both). */
+function scheduled(ps: PlayState, roomId: string, scheduleTime?: number): ScheduledPlayState {
+  return { ...ps, serverTimeToExecute: scheduleTime ?? getScheduleTime(roomId) }
+}
 
 /**
  * Resolve stream URL / cover, set current track, and broadcast PLAYER_PLAY.
@@ -23,18 +50,33 @@ export async function playTrackInRoom(
   // Fetch stream URL if missing
   if (!resolved.streamUrl) {
     try {
-      const url = await musicProvider.getStreamUrl(resolved.source, resolved.urlId)
+      // Get cookie from the room's pool for this platform (enables VIP access)
+      const cookie = authService.getAnyCookie(resolved.source, roomId)
+      const url = await musicProvider.getStreamUrl(resolved.source, resolved.urlId, 320, cookie ?? undefined)
+
       if (!url) {
-        logger.warn(`Cannot get stream URL for "${resolved.title}", skipping`, { roomId })
+        const isVip = resolved.vip
+        const hint = isVip && !cookie
+          ? '（VIP 歌曲，需要有用户登录 VIP 账号）'
+          : ''
+        logger.warn(`Cannot get stream URL for "${resolved.title}"${hint}, removing from queue`, { roomId })
+        // Auto-remove the invalid track from the queue
+        queueService.removeTrack(roomId, resolved.id)
+        const room2 = roomRepo.get(roomId)
+        if (room2) io.to(roomId).emit(EVENTS.QUEUE_UPDATED, { queue: room2.queue })
         io.to(roomId).emit(EVENTS.ROOM_ERROR, {
-          code: 'STREAM_FAILED',
-          message: `无法获取「${resolved.title}」的播放链接，已跳过`,
+          code: ERROR_CODE.STREAM_FAILED,
+          message: `无法获取「${resolved.title}」的播放链接${hint}，已从列表移除`,
         })
         return false
       }
       resolved.streamUrl = url
     } catch (err) {
       logger.error(`getStreamUrl failed for ${resolved.urlId}`, err, { roomId })
+      // Auto-remove on unexpected failure too
+      queueService.removeTrack(roomId, resolved.id)
+      const room2 = roomRepo.get(roomId)
+      if (room2) io.to(roomId).emit(EVENTS.QUEUE_UPDATED, { queue: room2.queue })
       return false
     }
   }
@@ -49,47 +91,62 @@ export async function playTrackInRoom(
     }
   }
 
-  // Update room state
+  // Update room state — align serverTimestamp with the scheduled execution time
+  // so that estimateCurrentTime() is accurate before the first host report.
   room.currentTrack = resolved
+  const scheduleTime = getScheduleTime(roomId)
   room.playState = {
     isPlaying: true,
     currentTime: 0,
-    serverTimestamp: Date.now(),
+    serverTimestamp: scheduleTime,
   }
 
   io.to(roomId).emit(EVENTS.PLAYER_PLAY, {
     track: resolved,
-    playState: room.playState,
+    playState: scheduled(room.playState, roomId, scheduleTime),
   })
+
+  // 通知大厅用户当前播放曲目变化
+  broadcastRoomList(io)
 
   logger.info(`Playing: ${resolved.title} in room ${roomId}`, { roomId })
   return true
 }
 
-export function resumeTrack(io: TypedServer, roomId: string): void {
+export function resumeTrack(io: TypedServer, roomId: string, _initiatorSocket?: TypedSocket): void {
   const room = roomRepo.get(roomId)
   if (!room || !room.currentTrack) return
 
-  room.playState = { ...room.playState, isPlaying: true, serverTimestamp: Date.now() }
-  io.to(roomId).emit(EVENTS.PLAYER_RESUME, { playState: room.playState })
+  const scheduleTime = getScheduleTime(roomId)
+  room.playState = { ...room.playState, isPlaying: true, serverTimestamp: scheduleTime }
+  // All clients (including initiator) must execute at the same scheduled moment
+  io.to(roomId).emit(EVENTS.PLAYER_RESUME, { playState: scheduled(room.playState, roomId, scheduleTime) })
 }
 
-export function pauseTrack(io: TypedServer, roomId: string): void {
+export function pauseTrack(io: TypedServer, roomId: string, _initiatorSocket?: TypedSocket): void {
   const room = roomRepo.get(roomId)
   if (!room) return
 
   // Snapshot estimated position before pausing so resume starts from the correct point
   const snapshotTime = estimateCurrentTime(roomId)
   room.playState = { isPlaying: false, currentTime: snapshotTime, serverTimestamp: Date.now() }
-  io.to(roomId).emit(EVENTS.PLAYER_PAUSE, { playState: room.playState })
+  // All clients must pause at the same scheduled moment
+  io.to(roomId).emit(EVENTS.PLAYER_PAUSE, { playState: scheduled(room.playState, roomId) })
 }
 
-export function seekTrack(io: TypedServer, roomId: string, currentTime: number): void {
+export function seekTrack(io: TypedServer, roomId: string, currentTime: number, _initiatorSocket?: TypedSocket): void {
   const room = roomRepo.get(roomId)
   if (!room) return
 
-  room.playState = { ...room.playState, currentTime, serverTimestamp: Date.now() }
-  io.to(roomId).emit(EVENTS.PLAYER_SEEK, { playState: room.playState })
+  const scheduleTime = getScheduleTime(roomId)
+  // When playing, align serverTimestamp with scheduled time so estimateCurrentTime() is accurate
+  room.playState = {
+    ...room.playState,
+    currentTime,
+    serverTimestamp: room.playState.isPlaying ? scheduleTime : Date.now(),
+  }
+  // All clients must seek at the same scheduled moment
+  io.to(roomId).emit(EVENTS.PLAYER_SEEK, { playState: scheduled(room.playState, roomId, scheduleTime) })
 }
 
 export function updatePlayState(roomId: string, update: Partial<PlayState>): void {

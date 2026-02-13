@@ -1,4 +1,4 @@
-import { useState } from 'react'
+import { useEffect, useState } from 'react'
 import { AnimatePresence, motion } from 'motion/react'
 import { Lock, Music, Loader2 } from 'lucide-react'
 import { LIMITS } from '@music-together/shared'
@@ -34,9 +34,18 @@ export function CreateRoomDialog({
   const [passwordEnabled, setPasswordEnabled] = useState(false)
   const [password, setPassword] = useState('')
 
+  // Sync nickname from defaultNickname when the dialog opens
+  useEffect(() => {
+    if (open) {
+      setNickname(defaultNickname)
+    }
+  }, [open, defaultNickname])
+
+  const canSubmit = nickname.trim() && !(passwordEnabled && !password.trim())
+
   const handleSubmit = (e: React.FormEvent) => {
     e.preventDefault()
-    if (!nickname.trim()) return
+    if (!canSubmit) return
     onCreateRoom(
       nickname.trim(),
       roomName.trim() || undefined,
@@ -118,7 +127,7 @@ export function CreateRoomDialog({
             type="submit"
             className="w-full"
             size="lg"
-            disabled={isLoading || !nickname.trim()}
+            disabled={isLoading || !canSubmit}
           >
             {isLoading ? (
               <Loader2 className="mr-2 h-4 w-4 animate-spin" />

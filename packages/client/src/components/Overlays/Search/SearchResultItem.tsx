@@ -1,16 +1,11 @@
+import { memo } from 'react'
 import { Button } from '@/components/ui/button'
 import { Tooltip, TooltipContent, TooltipTrigger } from '@/components/ui/tooltip'
+import { formatDuration } from '@/lib/format'
 import { cn } from '@/lib/utils'
 import type { Track } from '@music-together/shared'
 import { Check, Music2, Plus } from 'lucide-react'
 import { motion } from 'motion/react'
-
-function formatDuration(seconds: number): string {
-  if (!seconds || seconds <= 0) return '--:--'
-  const m = Math.floor(seconds / 60)
-  const s = Math.floor(seconds % 60)
-  return `${m}:${s.toString().padStart(2, '0')}`
-}
 
 interface SearchResultItemProps {
   track: Track
@@ -20,7 +15,7 @@ interface SearchResultItemProps {
   onSearchArtist: (artist: string) => void
 }
 
-export function SearchResultItem({ track, index, isAdded, onAdd, onSearchArtist }: SearchResultItemProps) {
+export const SearchResultItem = memo(function SearchResultItem({ track, index, isAdded, onAdd, onSearchArtist }: SearchResultItemProps) {
   return (
     <motion.div
       initial={{ opacity: 0, y: 8 }}
@@ -49,7 +44,14 @@ export function SearchResultItem({ track, index, isAdded, onAdd, onSearchArtist 
 
       {/* Track info */}
       <div className="min-w-0 flex-1">
-        <p className="truncate text-sm font-medium">{track.title}</p>
+        <p className="flex items-center gap-1.5 truncate text-sm font-medium">
+          <span className="truncate">{track.title}</span>
+          {track.vip && (
+            <span className="inline-flex shrink-0 items-center rounded px-1 py-0.5 text-[10px] font-bold leading-none text-amber-500 ring-1 ring-amber-500/30 bg-amber-500/10">
+              VIP
+            </span>
+          )}
+        </p>
         <p className="truncate text-xs text-muted-foreground">
           {track.artist.map((a, ai) => (
             <span key={ai}>
@@ -100,4 +102,4 @@ export function SearchResultItem({ track, index, isAdded, onAdd, onSearchArtist 
       </Tooltip>
     </motion.div>
   )
-}
+})

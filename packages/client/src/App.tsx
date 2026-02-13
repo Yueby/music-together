@@ -1,21 +1,55 @@
+import { lazy, Suspense } from 'react'
+import { ErrorBoundary } from 'react-error-boundary'
 import { TooltipProvider } from '@/components/ui/tooltip'
+import { Button } from '@/components/ui/button'
 import { SocketProvider } from '@/providers/SocketProvider'
 import HomePage from '@/pages/HomePage'
-import RoomPage from '@/pages/RoomPage'
-import NotFoundPage from '@/pages/NotFoundPage'
 import { BrowserRouter, Route, Routes, useLocation } from 'react-router-dom'
 import { Toaster } from 'sonner'
 import { AnimatePresence } from 'motion/react'
+import { AlertTriangle } from 'lucide-react'
+
+// Lazy-loaded routes (keep HomePage sync for fast first paint)
+const RoomPage = lazy(() => import('@/pages/RoomPage'))
+const NotFoundPage = lazy(() => import('@/pages/NotFoundPage'))
+
+function ErrorFallback({ error, resetErrorBoundary }: { error: unknown; resetErrorBoundary: () => void }) {
+  const message = error instanceof Error ? error.message : '应用遇到了意外错误'
+  return (
+    <div className="flex min-h-screen items-center justify-center p-6">
+      <div className="flex max-w-md flex-col items-center gap-4 rounded-xl border bg-card p-8 text-center shadow-lg">
+        <AlertTriangle className="h-12 w-12 text-destructive" />
+        <h2 className="text-xl font-semibold">出了点问题</h2>
+        <p className="text-sm text-muted-foreground">
+          {message}
+        </p>
+        <Button onClick={resetErrorBoundary} variant="default">
+          重试
+        </Button>
+      </div>
+    </div>
+  )
+}
+
+function RouteFallback() {
+  return (
+    <div className="flex min-h-screen items-center justify-center">
+      <div className="h-8 w-8 animate-spin rounded-full border-4 border-primary border-t-transparent" />
+    </div>
+  )
+}
 
 function AnimatedRoutes() {
   const location = useLocation()
   return (
     <AnimatePresence mode="wait">
-      <Routes location={location} key={location.pathname}>
-        <Route path="/" element={<HomePage />} />
-        <Route path="/room/:roomId" element={<RoomPage />} />
-        <Route path="*" element={<NotFoundPage />} />
-      </Routes>
+      <Suspense fallback={<RouteFallback />}>
+        <Routes location={location} key={location.pathname}>
+          <Route path="/" element={<HomePage />} />
+          <Route path="/room/:roomId" element={<RoomPage />} />
+          <Route path="*" element={<NotFoundPage />} />
+        </Routes>
+      </Suspense>
     </AnimatePresence>
   )
 }
@@ -25,7 +59,9 @@ export default function App() {
     <BrowserRouter>
       <SocketProvider>
         <TooltipProvider>
-          <AnimatedRoutes />
+          <ErrorBoundary FallbackComponent={ErrorFallback} onReset={() => window.location.reload()}>
+            <AnimatedRoutes />
+          </ErrorBoundary>
           <Toaster position="top-center" richColors />
         </TooltipProvider>
       </SocketProvider>
