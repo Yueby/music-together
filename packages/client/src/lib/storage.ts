@@ -1,3 +1,5 @@
+import type { MusicSource } from '@music-together/shared'
+
 const PREFIX = 'mt-'
 
 function safeGet(key: string): string | null {
@@ -14,6 +16,24 @@ function safeSet(key: string, value: string): void {
   } catch {
     // quota exceeded or blocked
   }
+}
+
+// ---------------------------------------------------------------------------
+// JSON helpers (safe parse / stringify through the PREFIX system)
+// ---------------------------------------------------------------------------
+
+function safeGetJSON<T>(key: string): T | null {
+  const raw = safeGet(key)
+  if (!raw) return null
+  try {
+    return JSON.parse(raw) as T
+  } catch {
+    return null
+  }
+}
+
+function safeSetJSON(key: string, value: unknown): void {
+  safeSet(key, JSON.stringify(value))
 }
 
 /** Parse a float from storage, returning the fallback if invalid */
@@ -105,4 +125,29 @@ export const storage = {
     return [0.25, 0.5, 0.75, 1].includes(scale) ? scale : 0.5
   },
   setBgRenderScale: (v: number) => safeSet('bgRenderScale', String(v)),
+
+  // Auth cookie persistence
+  getAuthCookies: (): StoredCookie[] => safeGetJSON<StoredCookie[]>('auth-cookies') ?? [],
+  setAuthCookies: (cookies: StoredCookie[]) => safeSetJSON('auth-cookies', cookies),
+
+  upsertAuthCookie: (platform: MusicSource, cookie: string) => {
+    const list = (safeGetJSON<StoredCookie[]>('auth-cookies') ?? []).filter(
+      (c) => c.platform !== platform,
+    )
+    list.push({ platform, cookie })
+    safeSetJSON('auth-cookies', list)
+  },
+
+  removeAuthCookie: (platform: MusicSource) => {
+    const list = (safeGetJSON<StoredCookie[]>('auth-cookies') ?? []).filter(
+      (c) => c.platform !== platform,
+    )
+    safeSetJSON('auth-cookies', list)
+  },
+}
+
+/** Shape stored in localStorage for auth cookies */
+export interface StoredCookie {
+  platform: MusicSource
+  cookie: string
 }

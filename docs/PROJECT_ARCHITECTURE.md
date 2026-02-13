@@ -11,10 +11,12 @@
 | 功能 | 说明 |
 |------|------|
 | 房间系统 | 创建/加入房间，房间号邀请，可选密码保护 |
-| 多音源搜索 | 网易云、QQ音乐、酷狗、酷我、百度 |
+| 多音源搜索 | 网易云、QQ音乐、酷狗 |
 | 同步播放 | 房间内播放进度实时同步 |
 | 实时聊天 | 房间内文字聊天 |
-| 权限控制 | 房主模式 (`host-only`) / 协作模式 (`collaborative`) |
+| 权限控制 | RBAC 三级权限（host > admin > member）基于 @casl/ability |
+| 投票系统 | 普通成员通过投票控制播放（暂停/恢复/切歌） |
+| VIP 认证 | 平台账号登录（网易云/QQ/酷狗），房间级 Cookie 池 |
 | 歌词展示 | Apple Music 风格歌词动画 (AMLL) |
 
 ### 技术栈
@@ -35,13 +37,14 @@ music-together/
 │   ├── client/          # React 前端
 │   ├── server/          # Node.js 后端
 │   └── shared/          # 共享类型与常量
-├── docs/                # 项目文档
+├── docs/                # 项目文档（含本文件 PROJECT_ARCHITECTURE.md）
 ├── .cursor/skills/      # Cursor IDE 技能配置
+├── .agents/             # AI Agent 配置
 ├── package.json         # 根 package（工作区编排）
 ├── pnpm-workspace.yaml  # pnpm 工作区定义
 ├── pnpm-lock.yaml
 ├── README.md
-├── CLAUDE.md            # 本文件
+├── .env.example         # 环境变量示例
 ├── .gitignore
 └── .gitattributes
 ```
@@ -51,7 +54,7 @@ music-together/
 ```
 src/
 ├── main.tsx                    # 入口：ReactDOM.createRoot
-├── App.tsx                     # 根组件：Router + Provider 嵌套
+├── App.tsx                     # 根组件：Router + Provider + ErrorBoundary + Suspense 懒加载
 ├── index.css                   # 全局样式：Tailwind + 主题变量 + 自定义动画
 │
 ├── pages/                      # 页面级组件
@@ -74,23 +77,28 @@ src/
 │   │   └── RoomListSection.tsx #     活跃房间列表区域
 │   ├── Overlays/
 │   │   ├── QueueDrawer.tsx     #     播放队列抽屉（vaul Drawer，移动端底部/桌面端右侧）
-│   │   ├── SearchDialog.tsx    #     音乐搜索弹窗（壳）
+│   │   ├── SearchDialog.tsx    #     音乐搜索弹窗（AbortController 竞态防护 + 共享 fetchPage）
 │   │   ├── Search/
 │   │   │   └── SearchResultItem.tsx # 搜索结果单项
-│   │   ├── SettingsDialog.tsx  #     设置弹窗（壳）
+│   │   ├── SettingsDialog.tsx  #     设置弹窗（壳，Tab 导航：房间/成员/账号/个人/外观）
 │   │   └── Settings/
-│   │       ├── SettingRow.tsx        # 设置行共享组件
-│   │       ├── RoomSettingsSection.tsx
-│   │       ├── LyricsSettingsSection.tsx
-│   │       ├── ProfileSettingsSection.tsx
-│   │       └── OtherSettingsSection.tsx
+│   │       ├── SettingRow.tsx              # 设置行共享组件
+│   │       ├── RoomSettingsSection.tsx     # 房间设置（名称、密码）
+│   │       ├── MembersSection.tsx          # 成员列表（角色管理）
+│   │       ├── PlatformAuthSection.tsx     # 平台账号认证（VIP Cookie）
+│   │       ├── ProfileSettingsSection.tsx  # 个人设置（昵称）
+│   │       ├── AppearanceSection.tsx       # 外观设置（歌词 + 背景 + 布局）
+│   │       ├── ManualCookieDialog.tsx      # 手动输入 Cookie 弹窗
+│   │       └── NeteaseQrDialog.tsx         # 网易云 QR 扫码登录弹窗
 │   ├── Player/
 │   │   ├── AudioPlayer.tsx     #     主播放器布局（封面+控件+歌词）
-│   │   ├── LyricDisplay.tsx    #     AMLL 歌词渲染
+│   │   ├── LyricDisplay.tsx    #     AMLL 歌词渲染（LRC 正则支持 [mm:ss] / [mm:ss.x] / [mm:ss.xx] / [mm:ss.xxx]）
 │   │   ├── NowPlaying.tsx      #     当前曲目信息展示
 │   │   └── PlayerControls.tsx  #     进度条+播放控制+音量
 │   ├── Room/
 │   │   └── RoomHeader.tsx      #     房间头部（房间名/人数/连接状态/操作按钮）
+│   ├── Vote/
+│   │   └── VoteBanner.tsx      #     投票横幅（进行中的投票显示 + 投票按钮）
 │   ├── InteractionGate.tsx     #   浏览器交互解锁（点击后才能播放音频）
 │   └── ui/                     #   shadcn/ui 基础组件
 │       ├── avatar.tsx
@@ -116,13 +124,23 @@ src/
 │       └── tooltip.tsx
 │
 ├── hooks/                      # 自定义 Hooks
+│   ├── useSocketEvent.ts       #   通用 Socket 事件订阅工具 Hook（自动 on/off，ref 稳定）
 │   ├── usePlayer.ts            #   播放器主 hook（组合 useHowl + useLyric + usePlayerSync）
 │   ├── useHowl.ts              #   Howler.js 音频实例管理
 │   ├── useLyric.ts             #   歌词加载与解析
-│   ├── usePlayerSync.ts        #   播放进度同步（Socket 事件）
-│   ├── useRoom.ts              #   房间状态管理（Socket 事件 ↔ Store）
+│   ├── usePlayerSync.ts        #   播放同步（Scheduled Execution + Rate-based Drift Correction）
+│   ├── useClockSync.ts         #   NTP 时钟同步 hook（校准客户端时钟与服务器对齐）
+│   ├── useRoom.ts              #   房间组合 hook（编排 5 个子 hook，对外 API 不变）
+│   ├── room/                   #   useRoom 子 hook（按职责拆分）
+│   │   ├── useRoomState.ts     #     ROOM_STATE / JOIN / LEFT / SETTINGS / ROLE_CHANGED / ERROR
+│   │   ├── useChatSync.ts      #     CHAT_HISTORY / CHAT_MESSAGE
+│   │   ├── useQueueSync.ts     #     QUEUE_UPDATED
+│   │   ├── useAuthSync.ts      #     AUTH_SET_COOKIE_RESULT + localStorage 持久化
+│   │   └── useConnectionGuard.ts #   disconnect → resetAllRoomState
+│   ├── useAuth.ts              #   平台认证 UI & Socket 事件
+│   ├── useVote.ts              #   投票（使用 useSocketEvent）
 │   ├── useChat.ts              #   聊天消息收发
-│   ├── useLobby.ts             #   大厅房间列表与操作
+│   ├── useLobby.ts             #   大厅房间列表与操作（使用 useSocketEvent）
 │   ├── useQueue.ts             #   播放队列操作
 │   └── useIsMobile.ts          #   视口宽度检测（匹配 Tailwind sm: 断点）
 │
@@ -134,11 +152,13 @@ src/
 │   └── settingsStore.ts        #   设置（移动端布局、歌词参数、背景参数，持久化到 localStorage）
 │
 ├── providers/                  # React Context Provider
-│   └── SocketProvider.tsx      #   Socket.IO 连接管理，提供 socket + isConnected
+│   ├── SocketProvider.tsx      #   Socket.IO 连接管理 + NTP 时钟同步（ClockSyncRunner），提供 socket + isConnected + 断线/重连 Toast
+│   └── AbilityProvider.tsx     #   CASL 权限上下文（基于 currentUser.role）
 │
 └── lib/                        # 工具库
     ├── config.ts               #   配置常量（SERVER_URL）
     ├── constants.ts            #   命名常量（定时器、阈值、布局尺寸）
+    ├── clockSync.ts            #   NTP 时钟同步引擎（采样、offset 计算、getServerTime）
     ├── resetStores.ts          #   全局 store 重置工具
     ├── socket.ts               #   Socket.IO 客户端实例
     ├── storage.ts              #   localStorage 封装（带类型校验）
@@ -156,22 +176,27 @@ src/
 │
 ├── controllers/                # 控制器：注册 Socket 事件处理器
 │   ├── index.ts                #   统一注册入口
-│   ├── roomController.ts       #   房间生命周期（创建/加入/离开/发现/设置）
-│   ├── playerController.ts     #   播放控制（play/pause/seek/next/sync）
+│   ├── roomController.ts       #   房间生命周期（创建/加入/离开/发现/设置/角色）
+│   ├── playerController.ts     #   播放控制（play/pause/seek/next/prev/sync）+ NTP ping/pong
 │   ├── queueController.ts      #   队列管理（add/remove/reorder）
-│   └── chatController.ts       #   聊天消息
+│   ├── chatController.ts       #   聊天消息（含限流反馈）
+│   ├── voteController.ts       #   投票系统（发起/投票/超时/执行）
+│   └── authController.ts       #   平台认证（QR 登录/Cookie 管理/状态查询）
 │
 ├── services/                   # 服务层：业务逻辑
 │   ├── roomService.ts          #   房间 CRUD + 广播
 │   ├── playerService.ts        #   播放状态管理 + 流 URL 解析
-│   ├── queueService.ts         #   队列操作
-│   ├── chatService.ts          #   聊天消息处理 + HTML 转义
+│   ├── queueService.ts         #   队列操作（reorder 保留未包含曲目防丢歌）
+│   ├── chatService.ts          #   聊天消息处理 + HTML 转义（含系统消息）
 │   ├── syncService.ts          #   周期性播放同步广播
-│   └── musicProvider.ts        #   @meting/core 音乐数据聚合
+│   ├── musicProvider.ts        #   @meting/core 音乐数据聚合（外部 API 15s 超时保护）
+│   ├── authService.ts          #   Cookie 池管理（房间级作用域）
+│   ├── neteaseAuthService.ts   #   网易云 API 认证（QR / Cookie 验证 / 用户信息）
+│   └── voteService.ts          #   投票状态管理
 │
 ├── repositories/               # 数据仓库：内存存储
 │   ├── types.ts                #   接口定义（RoomRepository, ChatRepository）
-│   ├── roomRepository.ts       #   房间数据 + Socket 映射（Map<string, RoomData>）
+│   ├── roomRepository.ts       #   房间数据 + Socket 映射 + per-socket RTT（Map<string, RoomData>）
 │   └── chatRepository.ts       #   聊天记录（Map<string, ChatMessage[]>）
 │
 ├── middleware/                  # Socket.IO 中间件
@@ -186,7 +211,7 @@ src/
 │   └── meting.d.ts             #   @meting/core 类型声明
 │
 └── utils/
-    └── logger.ts               #   结构化日志（info/warn/error + JSON context）
+    └── logger.ts               #   结构化日志（基于 pino，info/warn/error + JSON context）
 ```
 
 ### packages/shared/src/ — 共享代码
@@ -194,10 +219,12 @@ src/
 ```
 src/
 ├── index.ts           # 统一导出（re-export 所有模块）
-├── types.ts           # 核心类型：Track, RoomState, PlayState, User, ChatMessage, RoomListItem
-├── events.ts          # 事件常量：EVENTS 对象（room:*, player:*, queue:*, chat:*）
+├── types.ts           # 核心类型：ERROR_CODE, Track, RoomState, PlayState, ScheduledPlayState, User, ChatMessage, RoomListItem
+├── events.ts          # 事件常量：EVENTS 对象（room:*, player:*, queue:*, chat:*, auth:*, ntp:*）
 ├── socket-types.ts    # Socket.IO 类型：ServerToClientEvents, ClientToServerEvents
-└── constants.ts       # 业务常量：LIMITS（长度/数量限制）, TIMING（同步间隔/宽限期）
+├── constants.ts       # 业务常量：LIMITS（长度/数量限制）, TIMING（同步间隔/宽限期）, NTP（时钟同步参数）
+├── schemas.ts         # Zod 验证 schema
+└── abilities.ts       # CASL 权限定义（Actions, Subjects, defineAbilityFor）
 ```
 
 ---
@@ -245,10 +272,13 @@ graph TB
 
 | 分类 | 客户端 → 服务端 | 服务端 → 客户端 |
 |------|-----------------|-----------------|
-| **Room** | `room:create`, `room:join`, `room:leave`, `room:list`, `room:settings` | `room:created`, `room:state`, `room:user_joined`, `room:user_left`, `room:settings`, `room:error`, `room:list_update` |
+| **Room** | `room:create`, `room:join`, `room:leave`, `room:list`, `room:settings`, `room:set_role` | `room:created`, `room:state`, `room:user_joined`, `room:user_left`, `room:settings`, `room:error`, `room:list_update`, `room:role_changed` |
 | **Player** | `player:play`, `player:pause`, `player:seek`, `player:next`, `player:prev`, `player:sync`, `player:sync_request` | `player:play`, `player:pause`, `player:resume`, `player:seek`, `player:sync_response` |
 | **Queue** | `queue:add`, `queue:remove`, `queue:reorder` | `queue:updated` |
 | **Chat** | `chat:message` | `chat:message`, `chat:history` |
+| **Vote** | `vote:start`, `vote:cast` | `vote:started`, `vote:result` |
+| **Auth** | `auth:request_qr`, `auth:check_qr`, `auth:set_cookie`, `auth:logout`, `auth:get_status` | `auth:qr_generated`, `auth:qr_status`, `auth:set_cookie_result`, `auth:status_update`, `auth:my_status` |
+| **NTP** | `ntp:ping` | `ntp:pong` |
 
 ### 关键数据模型
 
@@ -257,16 +287,16 @@ graph TB
 interface Track {
   id: string; title: string; artist: string[]; album: string
   duration: number; cover: string
-  source: 'netease' | 'tencent' | 'kugou' | 'kuwo' | 'baidu'
+  source: 'netease' | 'tencent' | 'kugou'
   sourceId: string; urlId: string
   lyricId?: string; picId?: string; streamUrl?: string
   requestedBy?: string  // 点歌人昵称
+  vip?: boolean         // 是否为 VIP / 付费歌曲（可能无法播放或仅试听）
 }
 
 // 客户端可见的房间状态
 interface RoomState {
   id: string; name: string; hostId: string
-  mode: 'host-only' | 'collaborative'
   hasPassword: boolean; users: User[]; queue: Track[]
   currentTrack: Track | null; playState: PlayState
 }
@@ -276,8 +306,14 @@ interface PlayState {
   isPlaying: boolean; currentTime: number; serverTimestamp: number
 }
 
-// 用户
-interface User { id: string; nickname: string; isHost: boolean }
+// 预定执行播放状态（play/pause/seek/resume 广播时使用）
+interface ScheduledPlayState extends PlayState {
+  serverTimeToExecute: number  // 客户端应在此服务器时间点执行动作
+}
+
+// 用户（RBAC: host > admin > member）
+interface User { id: string; nickname: string; role: UserRole }
+type UserRole = 'host' | 'admin' | 'member'
 
 // 聊天消息
 interface ChatMessage {
@@ -288,19 +324,53 @@ interface ChatMessage {
 
 ### 播放同步机制
 
-采用**周期广播 + 主动上报 + 网络延迟补偿**混合模式：
+采用**三层同步架构**：NTP 时钟同步 + Scheduled Execution + Playback Rate Drift Correction。
 
-1. **周期广播**：`syncService` 每 5 秒 (`SYNC_BROADCAST_INTERVAL_MS`) 向有活跃播放的房间广播 `player:sync_response`，包含估算的 `currentTime` 和 `serverTimestamp`
-2. **主动上报**：房主每 3 秒 (`HOST_REPORT_INTERVAL_MS`) 通过 `player:sync` 上报当前播放位置
-3. **主动请求**：客户端每 30 秒 (`SYNC_REQUEST_INTERVAL_MS`) 发送 `player:sync_request` 作为兜底机制
-4. **网络延迟补偿**：客户端收到同步数据后，利用 `serverTimestamp` 计算单程网络延迟并补偿到 `currentTime`（延迟限幅 `[0, 5s]` 防止时钟偏差）
-5. **漂移校正**：客户端检测到本地播放位置与补偿后服务端位置偏差超过 0.5 秒 (`SYNC_DRIFT_THRESHOLD_S`) 时执行 seek 校正
-6. **暂停快照**：服务端 `pauseTrack()` 在暂停前调用 `estimateCurrentTime()` 快照准确位置，确保 resume 从正确位置恢复
-7. **恢复播放**：暂停后点击播放，服务端检测同一首歌时发 `player:resume`，客户端从暂停处继续（不创建新 Howl 实例）
-8. **自动续播**：房主独自重新加入时，若有歌曲暂停/排队中，自动恢复播放
-9. **加入房间补偿**：新加入/刷新/重连的客户端收到 `PLAYER_PLAY` 时，对 `currentTime > 0` 的中途加入场景执行网络延迟补偿（`currentTime === 0` 的新歌不补偿，避免触发 Howl 慢路径）
-10. **宽限期**：房间空置 30 秒 (`ROOM_GRACE_PERIOD_MS`) 后自动清理
-11. **切歌防抖**：500ms (`PLAYER_NEXT_DEBOUNCE_MS`) 内不重复触发下一首
+#### Layer 1：NTP 时钟同步 + RTT 回报
+
+客户端与服务器通过 `ntp:ping` / `ntp:pong` 事件交换时间戳，计算 `clockOffset`（客户端与服务端时钟差值），使 `getServerTime()` 返回与服务端对齐的时间。
+
+- 初始阶段：快速采样（每 50ms）收集 30 个样本，使用 `switchedRef` 保证仅在首次校准完成时切换到稳定阶段
+- 稳定阶段：每 2.5 秒一次心跳
+- 取中位数作为 offset（对 GC 暂停/网络抖动鲁棒）
+- **RTT 回报**：每次 `ntp:ping` 附带 `lastRttMs`（客户端中位 RTT），服务端在 `NTP_PING` handler 中调用 `roomRepo.setSocketRTT()` 存储，用于自适应调度延迟计算
+- 核心模块：`clockSync.ts`（采样引擎 + `getServerTime()` + `getMedianRTT()`）、`useClockSync.ts`（React Hook，在 SocketProvider 中运行）
+
+#### Layer 2：Scheduled Execution（预定执行）
+
+所有多客户端同步动作（play、pause、seek、resume）由服务端广播 `ScheduledPlayState`，包含 `serverTimeToExecute` 字段。客户端收到后通过 `setTimeout(execute, serverTimeToExecute - getServerTime())` 在同一时刻执行，消除网络延迟差异。
+
+- 服务端根据房间最大 RTT 动态计算调度延迟：`max(maxRTT * 1.5 + 100, 300ms)`，上限 3000ms
+- RTT 由客户端 NTP 测量后通过 `ntp:ping` 事件回报，服务端以指数移动平均（alpha=0.2）平滑存储在 `roomRepository` 的 per-socket RTT map
+- 全部客户端（含操作发起者）统一收到广播并在预定时刻执行
+- **serverTimestamp 对齐**：播放中的动作（play/resume/seek）将 `room.playState.serverTimestamp` 设为 `serverTimeToExecute` 而非 `Date.now()`，确保 `estimateCurrentTime()` 在下一次 Host 上报前也能准确估算位置
+
+#### Layer 3：Playback Rate Drift Correction
+
+废弃硬 seek 校正，改用三档播放速率微调策略：
+
+| drift 范围 | 动作 | 用户感知 |
+|---|---|---|
+| < 15ms | 不处理 | 无 |
+| 15ms - 300ms | `playbackRate = 1.02` 或 `0.98` | 不可感知 |
+| > 300ms | hard seek（兜底） | 极少发生 |
+
+- `syncService` 每 5 秒广播 `player:sync_response`（排除 Host）
+- Host 每 2 秒上报当前位置校准服务端状态
+- 客户端使用 NTP 校准后的 `getServerTime()` 精确计算 drift
+
+#### 其他同步机制
+
+1. **暂停快照**：服务端 `pauseTrack()` 在暂停前调用 `estimateCurrentTime()` 快照准确位置
+2. **恢复播放**：暂停后点击播放，服务端检测同一首歌时发 `player:resume`（所有客户端预定时刻恢复）
+3. **自动续播**：房主独自重新加入时，若有歌曲暂停/排队中，自动恢复播放
+4. **加入房间补偿**：中途加入的客户端使用 `getServerTime()` 计算当前应处的播放位置
+5. **Host 不收自身同步广播**：`syncService` 使用 `io.to(roomId).except(hostId)` 排除 Host，避免回弹 seek
+6. **宽限期**：房间空置 30 秒 (`ROOM_GRACE_PERIOD_MS`) 后自动清理（重复调用 `scheduleDeletion` 不会创建重复 timer）
+7. **切歌防抖**：500ms (`PLAYER_NEXT_DEBOUNCE_MS`) 内不重复触发下一首
+8. **队列曲目移除**：移除当前播放曲目且无下一首时，额外广播 `ROOM_STATE` 使客户端清除 `currentTrack`
+9. **大厅重连刷新**：`useLobby` 监听 socket `connect` 事件，断线重连后自动重新拉取房间列表
+10. **投票执行**：`VOTE_CAST` / `VOTE_START` 中 `executeAction` 使用 `await` 确保动作完成后才广播 `VOTE_RESULT`
 
 ### REST API
 
@@ -327,6 +397,8 @@ interface ChatMessage {
 | | class-variance-authority | ^0.7.1 | 组件变体样式 |
 | | tailwind-merge | ^3.4.0 | class 合并去重 |
 | | clsx | ^2.1.1 | 条件 class 拼接 |
+| **权限** | @casl/react | ^5.0.1 | RBAC 权限（配合 @casl/ability） |
+| **错误边界** | react-error-boundary | ^6.1.0 | React Error Boundary |
 | **状态管理** | zustand | ^5.0.11 | 轻量全局状态 |
 | **路由** | react-router-dom | ^7.13.0 | 客户端路由 |
 | **实时通信** | socket.io-client | ^4.8.3 | WebSocket 客户端 |
@@ -354,21 +426,35 @@ interface ChatMessage {
 | nanoid | ^5.0.9 | 房间 ID 生成 |
 | cors | ^2.8.5 | 跨域 |
 | dotenv | ^16.4.5 | 环境变量 |
+| zod | ^4.3.6 | 请求数据验证（配合 shared schemas） |
+| pino | ^10.3.1 | 结构化日志 |
+| rate-limiter-flexible | ^9.1.1 | 聊天限流 |
+| @neteasecloudmusicapienhanced/api | ^4.30.1 | 网易云 QR 登录 / Cookie 验证 / 用户信息 |
+| escape-html | ^1.0.3 | HTML 转义（防注入） |
+| p-limit | ^7.3.0 | 并发控制（封面批量解析） |
 
-### 开发工具
+### Shared 核心依赖
 
 | 库 | 版本 | 用途 |
 |----|------|------|
-| vite | ^7.3.1 | 前端构建 |
-| @vitejs/plugin-react | ^5.1.1 | Vite React 插件 |
-| @tailwindcss/vite | ^4.1.18 | Vite Tailwind 插件 |
-| typescript | ~5.9.3 | 类型系统 |
-| tsx | ^4.19.0 | 服务端 TS 运行/热重载 |
-| eslint | ^9.39.1 | 代码检查 |
-| eslint-plugin-react-hooks | ^7.0.1 | React Hooks 规则 |
-| eslint-plugin-react-refresh | ^0.4.24 | React Fast Refresh 规则 |
-| concurrently | ^9.2.1 | 并行运行前后端 |
-| kill-port | ^2.0.1 | 端口清理 |
+| @casl/ability | ^6.8.0 | RBAC 权限定义（前后端共用） |
+| zod | ^4.3.6 | 数据验证 Schema |
+
+### 开发工具
+
+| 库 | 版本 | 包 | 用途 |
+|----|------|-----|------|
+| vite | ^7.3.1 | client | 前端构建 |
+| @vitejs/plugin-react | ^5.1.1 | client | Vite React 插件 |
+| @tailwindcss/vite | ^4.1.18 | client | Vite Tailwind 插件 |
+| typescript | ~5.9.3 | all | 类型系统 |
+| tsx | ^4.19.0 | server | 服务端 TS 运行/热重载 |
+| pino-pretty | ^13.1.3 | server | 开发环境日志美化 |
+| eslint | ^9.39.1 | client | 代码检查 |
+| eslint-plugin-react-hooks | ^7.0.1 | client | React Hooks 规则 |
+| eslint-plugin-react-refresh | ^0.4.24 | client | React Fast Refresh 规则 |
+| concurrently | ^9.2.1 | root | 并行运行前后端 |
+| kill-port | ^2.0.1 | root | 端口清理 |
 
 ---
 
@@ -402,16 +488,23 @@ const room = useRoomStore.getState().room
 
 #### 自定义 Hooks 组合模式
 
-`usePlayer` 是典型的组合 hook，内部编排多个子 hook：
+两个核心组合 hook 各自编排多个子 hook：
 
 ```
-usePlayer
-├── useHowl          — Howler.js 实例管理（加载/播放/暂停/seek）
-├── useLyric         — 歌词加载、LRC 解析
-└── usePlayerSync    — Socket 播放同步事件收发
+usePlayer                             useRoom
+├── useHowl (Howler.js 实例)          ├── useRoomState (核心房间事件)
+├── useLyric (歌词解析)                ├── useChatSync (聊天事件)
+└── usePlayerSync                     ├── useQueueSync (队列事件)
+    ├── Scheduled Execution           ├── useAuthSync (Cookie 持久化)
+    └── Rate-based Drift Correction   └── useConnectionGuard (断线重置)
+
+SocketProvider
+└── ClockSyncRunner → useClockSync (NTP 时钟同步)
 ```
 
-其他独立 hook：`useRoom`、`useChat`、`useLobby`、`useQueue`，每个 hook 负责将 Socket 事件绑定到对应 Store。
+通用工具 Hook：`useSocketEvent(event, handler)` 封装 `socket.on/off` 样板代码，已在 `useLobby` 和 `useVote` 中使用。
+
+其他独立 hook：`useChat`、`useLobby`、`useQueue`、`useVote`、`useAuth`，每个 hook 负责将 Socket 事件绑定到对应 Store。
 
 #### 受控 Dialog 模式
 
@@ -438,11 +531,13 @@ interface DialogProps {
 
 #### Context Provider 模式
 
-`SocketProvider` 通过 React Context 提供 Socket.IO 实例和连接状态：
+`SocketProvider` 通过 React Context 提供 Socket.IO 实例和连接状态，并内置断线/重连 Toast 提示：
 
 ```typescript
 const { socket, isConnected } = useSocketContext()
 ```
+
+`AbilityProvider` 通过 React Context 提供 CASL ability 实例，组件可通过 `useContext(AbilityContext)` 查询权限。
 
 #### 组件组合模式
 
@@ -479,15 +574,19 @@ interface RoomRepository {
 #### Socket.IO 中间件链
 
 ```
-withControl(io)  →  withRoom(io)  →  Handler
+withPermission(action, subject)  →  withRoom(io)  →  Handler
+withHostOnly(io)                 →  withRoom(io)  →  Handler
 ```
 
 - `withRoom`：校验 Socket 是否在房间中，构建 `HandlerContext`（io, socket, roomId, room, user）
-- `withControl`：在 `withRoom` 基础上增加操作权限检查（`host-only` 模式下仅房主可操作）
+- `withPermission`：在 `withRoom` 基础上用 CASL `defineAbilityFor(role)` 检查 `(action, subject)` 权限
+- `withHostOnly`：在 `withRoom` 基础上仅允许房主（`room.hostId === user.id`），用于设置和角色管理
 
-错误统一通过 `ROOM_ERROR` 事件回传给客户端，错误码包括：`NOT_IN_ROOM`、`ROOM_NOT_FOUND`、`NO_PERMISSION`、`INVALID_DATA`、`QUEUE_FULL`、`INTERNAL` 等。
+错误统一通过 `ROOM_ERROR` 事件回传给客户端，错误码使用 `ERROR_CODE` 枚举（`shared/types.ts`），包括：`NOT_IN_ROOM`、`ROOM_NOT_FOUND`、`NO_PERMISSION`、`INVALID_DATA`、`QUEUE_FULL`、`RATE_LIMITED`、`INTERNAL` 等。
 
-#### 结构化日志
+#### 结构化日志（pino）
+
+基于 [pino](https://github.com/pinojs/pino) 的薄封装，开发环境使用 `pino-pretty` 美化输出：
 
 ```typescript
 logger.info('Room created', { roomId, socketId: socket.id })
@@ -502,6 +601,13 @@ logger.error('Failed to resolve stream URL', err, { roomId, trackId })
 
 `EVENTS` 常量对象定义所有事件名，`ClientToServerEvents` / `ServerToClientEvents` 接口为每个事件定义精确的负载类型，确保前后端通信的类型安全。
 
+#### 构建优化
+
+- **路由级懒加载**：`RoomPage` 和 `NotFoundPage` 使用 `React.lazy` + `Suspense`（`HomePage` 保持同步加载以保证首屏速度）
+- **Vite manualChunks 分包**：react、socket.io、motion、radix-ui、pixi.js 分别打包为独立 chunk，利用浏览器长期缓存
+- **React.memo**：列表项组件（`RoomCard`、`ChatMessage`、`SearchResultItem`）和高频更新组件（`PlayerControls`）均使用 `React.memo` 避免不必要的 re-render
+- **Zustand 细粒度 selector**：避免 `useRoomStore((s) => s.room)` 的粗粒度订阅，改用 `s.room?.name` 等精确字段
+
 #### 常量集中管理
 
 `LIMITS` 和 `TIMING` 在 shared 包中统一定义，前后端共用：
@@ -509,8 +615,13 @@ logger.error('Failed to resolve stream URL', err, { roomId, trackId })
 ```typescript
 LIMITS.QUEUE_MAX_SIZE       // 100
 LIMITS.CHAT_HISTORY_MAX     // 200
-TIMING.SYNC_BROADCAST_INTERVAL_MS  // 10_000
+TIMING.SYNC_BROADCAST_INTERVAL_MS  // 5_000
 TIMING.ROOM_GRACE_PERIOD_MS        // 30_000
+NTP.INITIAL_INTERVAL_MS            // 50
+NTP.STEADY_STATE_INTERVAL_MS       // 2_500
+NTP.MAX_INITIAL_SAMPLES            // 30
+NTP.MIN_SCHEDULE_DELAY_MS          // 300
+NTP.MAX_SCHEDULE_DELAY_MS          // 3_000
 ```
 
 ---
@@ -560,8 +671,13 @@ updateRoom: (partial) =>
 ### 错误处理
 
 - **REST 路由**：每个 handler 使用 `try/catch`，返回适当的 HTTP 状态码
-- **Socket.IO**：中间件统一捕获异步错误，通过 `ROOM_ERROR` 事件回传错误码和消息
-- **客户端**：hook 中处理 Socket 错误事件，使用 `sonner` toast 提示用户
+- **Socket.IO**：中间件统一捕获异步错误，通过 `ROOM_ERROR` 事件回传 `ERROR_CODE` 枚举和消息
+- **客户端 Hook**：hook 中处理 Socket 错误事件，使用 `sonner` toast 提示用户（含限流反馈）
+- **客户端 ErrorBoundary**：`react-error-boundary` 包裹路由，提供 fallback UI + 重试按钮
+- **客户端连接状态**：`SocketProvider` 监听 disconnect/reconnect，显示持久化 warning toast
+- **搜索竞态防护**：`SearchDialog` 使用 `AbortController` 取消上一次请求 + `searchIdRef` 忽略过时响应
+- **外部 API 超时保护**：`musicProvider` 所有 `@meting/core` 调用使用 `Promise.race` 包裹 15s 超时
+- **Timer 泄漏防护**：`usePlayer`/`useHowl`/`usePlayerSync`/`PlayerControls` 中所有 `setTimeout` 均存入 ref 并在组件卸载时清理
 
 ### ESLint 配置
 
@@ -746,6 +862,7 @@ npx shadcn@latest add <component-name>
 ### 注意事项
 
 - 服务端数据全部存储在内存中，重启后丢失
-- 无数据库、无持久化、无用户认证系统
-- 用户身份基于 Socket ID + 昵称
+- 无数据库、无服务端持久化（客户端 Cookie 通过 localStorage 持久化）
+- 用户身份基于 Socket ID + 昵称（无注册/登录账号系统）
+- 平台认证（网易云 QR 登录等）用于 VIP 歌曲访问，Cookie 作用域为房间级
 - `shared` 包修改后前后端会自动热重载（pnpm workspace 链接）

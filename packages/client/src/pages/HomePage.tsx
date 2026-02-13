@@ -1,18 +1,18 @@
+import { ActionCards } from '@/components/Lobby/ActionCards'
 import { CreateRoomDialog } from '@/components/Lobby/CreateRoomDialog'
+import { HeroSection } from '@/components/Lobby/HeroSection'
 import { NicknameDialog } from '@/components/Lobby/NicknameDialog'
 import { PasswordDialog } from '@/components/Lobby/PasswordDialog'
-import { UserPopover } from '@/components/Lobby/UserPopover'
-import { HeroSection } from '@/components/Lobby/HeroSection'
-import { ActionCards } from '@/components/Lobby/ActionCards'
 import { RoomListSection } from '@/components/Lobby/RoomListSection'
+import { UserPopover } from '@/components/Lobby/UserPopover'
 import { Separator } from '@/components/ui/separator'
 import { useLobby } from '@/hooks/useLobby'
 import { unlockAudio } from '@/lib/audioUnlock'
+import { ACTION_LOADING_TIMEOUT_MS } from '@/lib/constants'
 import { storage } from '@/lib/storage'
 import { useSocketContext } from '@/providers/SocketProvider'
 import { useRoomStore } from '@/stores/roomStore'
-import { EVENTS, type RoomListItem } from '@music-together/shared'
-import { ACTION_LOADING_TIMEOUT_MS } from '@/lib/constants'
+import { EVENTS, ERROR_CODE, type RoomListItem } from '@music-together/shared'
 import { Github, Headphones } from 'lucide-react'
 import { motion } from 'motion/react'
 import { useCallback, useEffect, useRef, useState } from 'react'
@@ -37,6 +37,12 @@ export default function HomePage() {
 
   // Stores the pending join action while waiting for nickname input
   const pendingJoinRef = useRef<{ type: 'room'; room: RoomListItem } | { type: 'direct'; roomId: string } | null>(null)
+
+  // Refs for onError closure to always read the latest values
+  const passwordDialogRef = useRef(passwordDialog)
+  passwordDialogRef.current = passwordDialog
+  const directRoomIdRef = useRef(directRoomId)
+  directRoomIdRef.current = directRoomId
 
   const setCurrentUser = useRoomStore((s) => s.setCurrentUser)
   const savedNickname = storage.getNickname()
@@ -66,7 +72,7 @@ export default function HomePage() {
   useEffect(() => {
     const onCreated = (data: { roomId: string; userId: string }) => {
       const nickname = storage.getNickname()
-      setCurrentUser({ id: data.userId, nickname, isHost: true })
+      setCurrentUser({ id: data.userId, nickname, role: 'host' })
       setActionLoading(false)
       setCreateDialogOpen(false)
       navigate(`/room/${data.roomId}`)
@@ -81,8 +87,23 @@ export default function HomePage() {
 
     const onError = (error: { code: string; message: string }) => {
       setActionLoading(false)
-      if (error.code === 'WRONG_PASSWORD') {
-        setPasswordError('密码错误，请重试')
+      if (error.code === ERROR_CODE.WRONG_PASSWORD) {
+        // If password dialog is already open, show error
+        if (passwordDialogRef.current.open) {
+          setPasswordError('密码错误，请重试')
+        } else {
+          // Direct join hit a password-protected room — open password dialog
+          const targetRoomId = directRoomIdRef.current.trim()
+          if (targetRoomId) {
+            setPasswordDialog({
+              open: true,
+              room: { id: targetRoomId, name: targetRoomId, hasPassword: true, userCount: 0, currentTrackTitle: null, currentTrackArtist: null },
+            })
+            setPasswordError(null)
+          } else {
+            toast.error(error.message)
+          }
+        }
       } else {
         toast.error(error.message)
       }
@@ -250,8 +271,8 @@ export default function HomePage() {
 
       <PasswordDialog
         open={passwordDialog.open}
-        onOpenChange={(open) => {
-          setPasswordDialog({ ...passwordDialog, open })
+        onOpenChange={(open: boolean) => {
+          setPasswordDialog((prev) => ({ ...prev, open }))
           if (!open) setPasswordError(null)
         }}
         roomName={passwordDialog.room?.name ?? ''}

@@ -7,31 +7,35 @@ import {
 import { ScrollArea } from '@/components/ui/scroll-area'
 import { cn } from '@/lib/utils'
 import {
-  Music,
+  KeyRound,
   Palette,
   Settings2,
   UserCog,
+  Users,
   type LucideIcon,
 } from 'lucide-react'
-import { useState } from 'react'
+import { useEffect, useState } from 'react'
 import { RoomSettingsSection } from './Settings/RoomSettingsSection'
+import { MembersSection } from './Settings/MembersSection'
 import { ProfileSettingsSection } from './Settings/ProfileSettingsSection'
-import { LyricsSettingsSection } from './Settings/LyricsSettingsSection'
-import { OtherSettingsSection } from './Settings/OtherSettingsSection'
+import { AppearanceSection } from './Settings/AppearanceSection'
+import { PlatformAuthSection } from './Settings/PlatformAuthSection'
 
 // ---------------------------------------------------------------------------
 // Types
 // ---------------------------------------------------------------------------
 
-type Tab = 'room' | 'profile' | 'lyrics' | 'other'
+export type SettingsTab = 'room' | 'members' | 'profile' | 'appearance' | 'accounts'
 
 interface SettingsDialogProps {
   open: boolean
   onOpenChange: (open: boolean) => void
   onUpdateSettings: (settings: {
-    mode?: 'host-only' | 'collaborative'
+    name?: string
     password?: string | null
   }) => void
+  onSetUserRole?: (userId: string, role: 'admin' | 'member') => void
+  initialTab?: SettingsTab
 }
 
 // ---------------------------------------------------------------------------
@@ -71,11 +75,12 @@ function NavItem({
 // Tab config
 // ---------------------------------------------------------------------------
 
-const TABS: { id: Tab; icon: LucideIcon; label: string }[] = [
+const TABS: { id: SettingsTab; icon: LucideIcon; label: string }[] = [
   { id: 'room', icon: Settings2, label: '房间' },
+  { id: 'members', icon: Users, label: '成员' },
+  { id: 'accounts', icon: KeyRound, label: '账号' },
   { id: 'profile', icon: UserCog, label: '个人' },
-  { id: 'lyrics', icon: Music, label: '歌词' },
-  { id: 'other', icon: Palette, label: '其他' },
+  { id: 'appearance', icon: Palette, label: '外观' },
 ]
 
 // ---------------------------------------------------------------------------
@@ -86,8 +91,17 @@ export function SettingsDialog({
   open,
   onOpenChange,
   onUpdateSettings,
+  onSetUserRole,
+  initialTab,
 }: SettingsDialogProps) {
-  const [tab, setTab] = useState<Tab>('room')
+  const [tab, setTab] = useState<SettingsTab>('room')
+
+  // When dialog opens with an initialTab, jump to it
+  useEffect(() => {
+    if (open && initialTab) {
+      setTab(initialTab)
+    }
+  }, [open, initialTab])
 
   return (
     <ResponsiveDialog open={open} onOpenChange={onOpenChange}>
@@ -146,9 +160,12 @@ export function SettingsDialog({
               {tab === 'room' && (
                 <RoomSettingsSection onUpdateSettings={onUpdateSettings} />
               )}
+              {tab === 'members' && (
+                <MembersSection onSetUserRole={onSetUserRole} />
+              )}
+              {tab === 'accounts' && <PlatformAuthSection />}
               {tab === 'profile' && <ProfileSettingsSection />}
-              {tab === 'lyrics' && <LyricsSettingsSection />}
-              {tab === 'other' && <OtherSettingsSection />}
+              {tab === 'appearance' && <AppearanceSection />}
             </div>
           </ScrollArea>
         </div>

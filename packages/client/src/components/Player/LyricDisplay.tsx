@@ -15,13 +15,14 @@ interface LyricLine {
 
 function parseLRC(lrc: string): { time: number; text: string }[] {
   const lines: { time: number; text: string }[] = []
-  const regex = /\[(\d{2}):(\d{2})\.(\d{2,3})\](.*)/g
+  // Supports [mm:ss], [mm:ss.x], [mm:ss.xx], [mm:ss.xxx]
+  const regex = /\[(\d{2}):(\d{2})(?:\.(\d{1,3}))?\](.*)/g
   let match
 
   while ((match = regex.exec(lrc)) !== null) {
     const minutes = parseInt(match[1], 10)
     const seconds = parseInt(match[2], 10)
-    const ms = parseInt(match[3].padEnd(3, '0'), 10)
+    const ms = match[3] ? parseInt(match[3].padEnd(3, '0'), 10) : 0
     const time = minutes * 60 + seconds + ms / 1000
     const text = match[4].trim()
     if (text) {

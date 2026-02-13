@@ -1,38 +1,36 @@
-type LogLevel = 'info' | 'warn' | 'error'
+import pino from 'pino'
 
-interface LogContext {
-  roomId?: string
-  socketId?: string
-  event?: string
-  [key: string]: unknown
-}
+const isDev = process.env.NODE_ENV !== 'production'
 
-function formatLog(level: LogLevel, message: string, context?: LogContext): string {
-  const ts = new Date().toISOString()
-  const ctx = context ? ` ${JSON.stringify(context)}` : ''
-  return `[${ts}] ${level.toUpperCase()} ${message}${ctx}`
-}
+const baseLogger = pino({
+  level: process.env.LOG_LEVEL || 'info',
+  ...(isDev && {
+    transport: {
+      target: 'pino-pretty',
+      options: { colorize: true, translateTime: 'SYS:HH:MM:ss' },
+    },
+  }),
+})
 
+/**
+ * Logger wrapper that keeps the same call signature as our previous hand-rolled logger.
+ * All existing call sites (10+ files) need zero changes.
+ *
+ * Signatures:
+ *   logger.info(message, context?)
+ *   logger.warn(message, context?)
+ *   logger.error(message, err?, context?)
+ */
 export const logger = {
-  info(message: string, context?: LogContext) {
-    console.log(formatLog('info', message, context))
+  info(message: string, context?: Record<string, unknown>) {
+    baseLogger.info(context ?? {}, message)
   },
-  warn(message: string, context?: LogContext) {
-    console.warn(formatLog('warn', message, context))
+  warn(message: string, context?: Record<string, unknown>) {
+    baseLogger.warn(context ?? {}, message)
   },
-  error(message: string, err?: unknown, context?: LogContext) {
-    const errMsg = err instanceof Error ? err.message : String(err ?? '')
-    const errCtx = err instanceof Error ? { ...context, error: errMsg, stack: err.stack } : { ...context, error: errMsg }
-    console.error(formatLog('error', message, errCtx))
+  error(message: string, err?: unknown, context?: Record<string, unknown>) {
+    const errObj = err instanceof Error ? err : undefined
+    const extra = { ...context, ...(err && !(err instanceof Error) ? { error: String(err) } : {}) }
+    baseLogger.error({ ...extra, err: errObj }, message)
   },
-}
-
-/** @deprecated Use logger.info / logger.error instead */
-export function log(message: string, ...args: unknown[]) {
-  console.log(`[${new Date().toISOString()}] ${message}`, ...args)
-}
-
-/** @deprecated Use logger.error instead */
-export function logError(message: string, ...args: unknown[]) {
-  console.error(`[${new Date().toISOString()}] ERROR: ${message}`, ...args)
 }

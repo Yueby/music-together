@@ -8,16 +8,20 @@ import { toast } from 'sonner'
 interface RoomHeaderProps {
   onOpenSearch: () => void
   onOpenSettings: () => void
+  onOpenMembers: () => void
   onLeaveRoom: () => void
 }
 
-export function RoomHeader({ onOpenSearch, onOpenSettings, onLeaveRoom }: RoomHeaderProps) {
-  const room = useRoomStore((s) => s.room)
+export function RoomHeader({ onOpenSearch, onOpenSettings, onOpenMembers, onLeaveRoom }: RoomHeaderProps) {
+  // Fine-grained selectors to avoid re-renders from queue/playState changes
+  const roomName = useRoomStore((s) => s.room?.name)
+  const roomId = useRoomStore((s) => s.room?.id)
+  const userCount = useRoomStore((s) => s.room?.users.length ?? 0)
   const { isConnected } = useSocketContext()
 
   const copyRoomId = () => {
-    if (room?.id) {
-      navigator.clipboard.writeText(room.id)
+    if (roomId) {
+      navigator.clipboard.writeText(roomId)
       toast.success('房间号已复制')
     }
   }
@@ -25,9 +29,11 @@ export function RoomHeader({ onOpenSearch, onOpenSettings, onLeaveRoom }: RoomHe
   return (
     <header className="flex items-center justify-between border-b border-border/50 bg-background/95 px-2 py-2 backdrop-blur-sm sm:px-4">
       <div className="flex min-w-0 items-center gap-1.5 sm:gap-3">
-        <h1 className="hidden text-lg font-bold text-foreground sm:block">Music Together</h1>
-        {room && (
+        {roomId && (
           <>
+            <span className="max-w-[120px] truncate text-sm font-semibold text-foreground sm:max-w-[200px]">
+              {roomName}
+            </span>
             <Tooltip>
               <TooltipTrigger asChild>
                 <Button
@@ -37,16 +43,27 @@ export function RoomHeader({ onOpenSearch, onOpenSettings, onLeaveRoom }: RoomHe
                   onClick={copyRoomId}
                   aria-label="复制房间号"
                 >
-                  {room.id}
+                  {roomId}
                   <Copy className="h-3 w-3" />
                 </Button>
               </TooltipTrigger>
               <TooltipContent>复制房间号</TooltipContent>
             </Tooltip>
-            <span className="flex items-center gap-1 text-sm text-muted-foreground">
-              <Users className="h-3.5 w-3.5" />
-              {room.users.length}
-            </span>
+            <Tooltip>
+              <TooltipTrigger asChild>
+                <Button
+                  variant="ghost"
+                  size="sm"
+                  className="h-7 gap-1 px-1.5 text-sm text-muted-foreground"
+                  onClick={onOpenMembers}
+                  aria-label="查看成员"
+                >
+                  <Users className="h-3.5 w-3.5" />
+                  {userCount}
+                </Button>
+              </TooltipTrigger>
+              <TooltipContent>查看成员</TooltipContent>
+            </Tooltip>
           </>
         )}
         {/* Connection status indicator */}

@@ -3,6 +3,7 @@ declare module '@meting/core' {
     constructor(site: string)
     format(enable: boolean): this
     site(site: string): this
+    cookie(cookie: string): this
     search(keyword: string, options?: { limit?: number; page?: number }): Promise<string>
     song(id: string): Promise<string>
     album(id: string): Promise<string>

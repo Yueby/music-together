@@ -15,7 +15,14 @@ export function start(io: TypedServer): void {
       const room = roomRepo.get(roomId)
       if (!room || !room.playState.isPlaying || !room.currentTrack) continue
 
-      io.to(roomId).emit(EVENTS.PLAYER_SYNC_RESPONSE, {
+      // Exclude the host — the host is the ground truth and doesn't need
+      // to sync with itself.  This eliminates the "seek bounce-back" that
+      // previously caused the host to stutter.
+      const broadcastTarget = room.hostId
+        ? (io.to(roomId) as ReturnType<typeof io.to>).except(room.hostId)
+        : io.to(roomId)
+
+      broadcastTarget.emit(EVENTS.PLAYER_SYNC_RESPONSE, {
         currentTime: estimateCurrentTime(roomId),
         isPlaying: room.playState.isPlaying,
         serverTimestamp: Date.now(),

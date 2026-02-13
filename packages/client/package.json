@@ -13,6 +13,7 @@
   "dependencies": {
     "@applemusic-like-lyrics/core": "^0.2.0",
     "@applemusic-like-lyrics/react": "^0.2.0",
+    "@casl/react": "^5.0.1",
     "@music-together/shared": "workspace:*",
     "@pixi/app": "^7.4.3",
     "@pixi/core": "^7.4.3",
@@ -33,6 +34,7 @@
     "radix-ui": "^1.4.3",
     "react": "^19.2.0",
     "react-dom": "^19.2.0",
+    "react-error-boundary": "^6.1.0",
     "react-router-dom": "^7.13.0",
     "socket.io-client": "^4.8.3",
     "sonner": "^2.0.7",

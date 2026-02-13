@@ -1,3 +1,4 @@
+import { memo } from 'react'
 import { Lock, LockOpen, Music, Users } from 'lucide-react'
 import { motion, useReducedMotion } from 'motion/react'
 import type { RoomListItem } from '@music-together/shared'
@@ -9,7 +10,7 @@ interface RoomCardProps {
   onClick: () => void
 }
 
-export function RoomCard({ room, index, onClick }: RoomCardProps) {
+export const RoomCard = memo(function RoomCard({ room, index, onClick }: RoomCardProps) {
   const prefersReducedMotion = useReducedMotion()
   return (
     <motion.button
@@ -20,7 +21,7 @@ export function RoomCard({ room, index, onClick }: RoomCardProps) {
       whileTap={{ scale: 0.98 }}
       onClick={onClick}
       className={cn(
-        'group relative flex w-full flex-col gap-3 rounded-xl p-5 text-left',
+        'group relative flex w-full flex-col gap-3 overflow-hidden rounded-xl p-5 text-left',
         'border border-border bg-card transition-all duration-300',
         'hover:shadow-md hover:border-primary/20',
       )}
@@ -42,8 +43,26 @@ export function RoomCard({ room, index, onClick }: RoomCardProps) {
           )}
         </div>
 
-        {/* Lock icon */}
-        <div className="ml-3 shrink-0">
+        {/* Right side: playing animation + lock icon */}
+        <div className="ml-3 flex shrink-0 items-center gap-2">
+          {/* Subtle playing animation for rooms with active tracks */}
+          {room.currentTrackTitle && (
+            <div className="flex items-end gap-0.5">
+              {[0, 1, 2].map((i) => (
+                <motion.div
+                  key={i}
+                  className="w-0.5 rounded-full bg-primary/40"
+                  animate={prefersReducedMotion ? { height: 8 } : { height: [4, 12, 6, 10, 4] }}
+                  transition={prefersReducedMotion ? {} : {
+                    duration: 1.2,
+                    repeat: Infinity,
+                    delay: i * 0.15,
+                    ease: 'easeInOut',
+                  }}
+                />
+              ))}
+            </div>
+          )}
           {room.hasPassword ? (
             <Lock className="h-4 w-4 text-muted-foreground/60" />
           ) : (
@@ -62,25 +81,6 @@ export function RoomCard({ room, index, onClick }: RoomCardProps) {
           {room.id}
         </span>
       </div>
-
-      {/* Subtle playing animation for rooms with active tracks */}
-      {room.currentTrackTitle && (
-        <div className="absolute right-4 top-4 flex items-end gap-0.5">
-          {[0, 1, 2].map((i) => (
-            <motion.div
-              key={i}
-              className="w-0.5 rounded-full bg-primary/40"
-              animate={prefersReducedMotion ? { height: 8 } : { height: [4, 12, 6, 10, 4] }}
-              transition={prefersReducedMotion ? {} : {
-                duration: 1.2,
-                repeat: Infinity,
-                delay: i * 0.15,
-                ease: 'easeInOut',
-              }}
-            />
-          ))}
-        </div>
-      )}
     </motion.button>
   )
-}
+})

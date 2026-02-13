@@ -1,16 +1,23 @@
+import Meting from '@meting/core'
 import type { MusicSource, Track } from '@music-together/shared'
 import { nanoid } from 'nanoid'
+import pLimit from 'p-limit'
 import { logger } from '../utils/logger.js'
 
-// Dynamic import for @meting/core (ESM)
-let MetingClass: any = null
+/** External API timeout (ms) */
+const API_TIMEOUT_MS = 15_000
 
-async function getMeting() {
-  if (!MetingClass) {
-    const mod = await import('@meting/core')
-    MetingClass = mod.default
+/** Race a promise against a timeout. Returns null on timeout. */
+async function withTimeout<T>(promise: Promise<T>, ms = API_TIMEOUT_MS): Promise<T | null> {
+  let timer: ReturnType<typeof setTimeout>
+  const timeout = new Promise<null>((resolve) => {
+    timer = setTimeout(() => resolve(null), ms)
+  })
+  try {
+    return await Promise.race([promise, timeout])
+  } finally {
+    clearTimeout(timer!)
   }
-  return MetingClass
 }
 
 // Path to song list in raw (non-formatted) API response per platform
@@ -18,17 +25,14 @@ const SEARCH_PATHS: Record<MusicSource, string> = {
   netease: 'result.songs',
   tencent: 'data.song.list',
   kugou: 'data.info',
-  kuwo: 'data.list',
-  baidu: 'result.song_info.song_list',
 }
 
 class MusicProvider {
-  // Shared instances with format(true) — used for url/lyric/cover operations
+  // Shared instances with format(true) — used for url/lyric/cover operations (no cookie)
   private instances = new Map<MusicSource, any>()
 
-  private async getInstance(source: MusicSource) {
+  private getInstance(source: MusicSource) {
     if (!this.instances.has(source)) {
-      const Meting = await getMeting()
       const m = new Meting(source)
       m.format(true)
       this.instances.set(source, m)
@@ -42,10 +46,13 @@ class MusicProvider {
    */
   async search(source: MusicSource, keyword: string, limit = 20, page = 1): Promise<Track[]> {
     try {
-      const Meting = await getMeting()
       // Fresh instance without format — gets raw API response with all fields
       const meting = new Meting(source)
-      const raw = await meting.search(keyword, { limit, page })
+      const raw = await withTimeout(meting.search(keyword, { limit, page }))
+      if (raw === null) {
+        logger.warn(`Search timeout for ${source}: "${keyword}"`)
+        return []
+      }
 
       let rawData: any
       try {
@@ -71,11 +78,29 @@ class MusicProvider {
     }
   }
 
-  async getStreamUrl(source: MusicSource, urlId: string, bitrate = 320): Promise<string | null> {
+  /**
+   * Get stream URL for a track. Optionally inject a cookie for VIP access.
+   * When cookie is provided, a fresh Meting instance is created to avoid
+   * polluting the shared cached instance.
+   */
+  async getStreamUrl(source: MusicSource, urlId: string, bitrate = 320, cookie?: string): Promise<string | null> {
     try {
-      const meting = await this.getInstance(source)
-      const raw = await meting.url(urlId, bitrate)
-      const data = JSON.parse(raw)
+      let meting: any
+      if (cookie) {
+        // Fresh instance with cookie — don't pollute the shared one
+        meting = new Meting(source)
+        meting.format(true)
+        meting.cookie(cookie)
+      } else {
+        meting = this.getInstance(source)
+      }
+      const raw = await withTimeout(meting.url(urlId, bitrate))
+      if (raw === null || raw === undefined) {
+        logger.warn(`URL fetch timeout for ${source}: ${urlId}`)
+        return null
+      }
+      let data: any
+      try { data = JSON.parse(raw as string) } catch { return null }
       return data.url || null
     } catch (err) {
       logger.error(`Get URL failed for ${source}:`, err)
@@ -85,9 +110,14 @@ class MusicProvider {
 
   async getLyric(source: MusicSource, lyricId: string): Promise<{ lyric: string; tlyric: string }> {
     try {
-      const meting = await this.getInstance(source)
-      const raw = await meting.lyric(lyricId)
-      const data = JSON.parse(raw)
+      const meting = this.getInstance(source)
+      const raw = await withTimeout(meting.lyric(lyricId))
+      if (raw === null || raw === undefined) {
+        logger.warn(`Lyric fetch timeout for ${source}: ${lyricId}`)
+        return { lyric: '', tlyric: '' }
+      }
+      let data: any
+      try { data = JSON.parse(raw as string) } catch { return { lyric: '', tlyric: '' } }
       return {
         lyric: data.lyric || '',
         tlyric: data.tlyric || '',
@@ -100,9 +130,14 @@ class MusicProvider {
 
   async getCover(source: MusicSource, picId: string, size = 300): Promise<string> {
     try {
-      const meting = await this.getInstance(source)
-      const raw = await meting.pic(picId, size)
-      const data = JSON.parse(raw)
+      const meting = this.getInstance(source)
+      const raw = await withTimeout(meting.pic(picId, size))
+      if (raw === null || raw === undefined) {
+        logger.warn(`Cover fetch timeout for ${source}: ${picId}`)
+        return ''
+      }
+      let data: any
+      try { data = JSON.parse(raw as string) } catch { return '' }
       return data.url || ''
     } catch (err) {
       logger.error(`Get cover failed for ${source}:`, err)
@@ -129,11 +164,12 @@ class MusicProvider {
    */
   private rawToTrack(song: any, source: MusicSource): Track {
     switch (source) {
-      case 'netease':
+      case 'netease': {
+        const neteaseArtists = song.ar?.map((a: any) => a.name).filter(Boolean)
         return {
           id: nanoid(),
           title: song.name || 'Unknown',
-          artist: song.ar?.map((a: any) => a.name) || ['Unknown'],
+          artist: neteaseArtists?.length ? neteaseArtists : ['Unknown'],
           album: song.al?.name || '',
           duration: Math.round((song.dt || 0) / 1000), // ms -> seconds
           cover: '', // resolved via pic()
@@ -142,7 +178,10 @@ class MusicProvider {
           urlId: String(song.id),
           lyricId: String(song.id),
           picId: String(song.al?.pic_str || song.al?.pic || ''),
+          // fee: 0=免费, 1=VIP, 4=付费专辑, 8=低音质免费
+          vip: song.fee === 1 || song.fee === 4 || song.privilege?.fee === 1 || song.privilege?.fee === 4,
         }
+      }
 
       case 'tencent': {
         // Tencent sometimes wraps data in musicData
@@ -159,6 +198,8 @@ class MusicProvider {
           urlId: String(s.mid),
           lyricId: String(s.mid),
           picId: String(s.album?.mid || ''),
+          // pay.pay_play=1 表示需要 VIP, pay.pay_month=1 表示月度VIP, pay.price_track>0 表示付费单曲
+          vip: s.pay?.pay_play === 1 || s.pay?.pay_month === 1 || (s.pay?.price_track ?? 0) > 0,
         }
       }
 
@@ -184,42 +225,10 @@ class MusicProvider {
           urlId: String(song.hash),
           lyricId: String(song.hash),
           picId: String(song.hash),
+          // privilege 位掩码: & 8 表示 VIP; pay_type > 0 也表示付费
+          vip: ((song.privilege ?? 0) & 8) !== 0 || (song.pay_type ?? 0) > 0,
         }
       }
-
-      case 'kuwo':
-        return {
-          id: nanoid(),
-          title: song.name || 'Unknown',
-          artist: song.artist
-            ? song.artist.split('&').map((s: string) => s.trim())
-            : ['Unknown'],
-          album: song.album || '',
-          duration: song.duration || 0, // seconds
-          cover: song.pic || song.albumpic || '', // often available in raw data
-          source,
-          sourceId: String(song.rid),
-          urlId: String(song.rid),
-          lyricId: String(song.rid),
-          picId: String(song.rid),
-        }
-
-      case 'baidu':
-        return {
-          id: nanoid(),
-          title: song.title || 'Unknown',
-          artist: song.author
-            ? song.author.split(',').map((s: string) => s.trim())
-            : ['Unknown'],
-          album: song.album_title || '',
-          duration: song.file_duration || 0, // seconds
-          cover: song.pic_small || song.pic_big || '', // often available in raw data
-          source,
-          sourceId: String(song.song_id),
-          urlId: String(song.song_id),
-          lyricId: String(song.song_id),
-          picId: String(song.song_id),
-        }
 
       default:
         return {
@@ -239,8 +248,7 @@ class MusicProvider {
   /**
    * Batch-resolve cover URLs for tracks that don't have one.
    * - netease/tencent: pic() is pure URL generation (instant, no API call)
-   * - kugou/baidu/kuwo: pic() makes an API call per track (slower)
-   * - kuwo/baidu raw search usually includes covers, so few need resolution
+   * - kugou: pic() makes an API call per track (slower)
    *
    * Each pic() call uses a fresh Meting instance to avoid race conditions.
    */
@@ -248,15 +256,13 @@ class MusicProvider {
     const toResolve = tracks.filter((t) => !t.cover && t.picId)
     if (toResolve.length === 0) return
 
-    const Meting = await getMeting()
     // For platforms that need API calls, limit concurrency
-    const needsApiCall = source === 'kugou' || source === 'baidu' || source === 'kuwo'
-    const CONCURRENCY = needsApiCall ? 3 : toResolve.length
+    const needsApiCall = source === 'kugou'
+    const limit = pLimit(needsApiCall ? 3 : toResolve.length)
 
-    for (let i = 0; i < toResolve.length; i += CONCURRENCY) {
-      const batch = toResolve.slice(i, i + CONCURRENCY)
-      await Promise.allSettled(
-        batch.map(async (track) => {
+    await Promise.allSettled(
+      toResolve.map((track) =>
+        limit(async () => {
           try {
             // Fresh instance per call to avoid shared state race conditions
             const instance = new Meting(source)
@@ -267,8 +273,8 @@ class MusicProvider {
             // Leave cover empty — frontend shows placeholder
           }
         }),
-      )
-    }
+      ),
+    )
   }
 }
 

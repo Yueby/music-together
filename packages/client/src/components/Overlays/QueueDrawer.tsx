@@ -13,6 +13,8 @@ import { usePlayerStore } from '@/stores/playerStore'
 import { useRoomStore } from '@/stores/roomStore'
 import type { Track } from '@music-together/shared'
 import { useIsMobile } from '@/hooks/useIsMobile'
+import { useContext } from 'react'
+import { AbilityContext } from '@/providers/AbilityProvider'
 import { ChevronDown, ChevronUp, Music, Trash2, User, X } from 'lucide-react'
 import { AnimatePresence, motion } from 'motion/react'
 
@@ -29,6 +31,9 @@ export function QueueDrawer({ open, onOpenChange, onRemoveFromQueue, onReorderQu
   const queue = useRoomStore((s) => s.room?.queue ?? EMPTY_QUEUE)
   const currentTrack = usePlayerStore((s) => s.currentTrack)
   const isMobile = useIsMobile()
+  const ability = useContext(AbilityContext)
+  const canRemove = ability.can('remove', 'Queue')
+  const canReorder = ability.can('reorder', 'Queue')
 
   const handleMoveUp = (index: number) => {
     if (index <= 0) return
@@ -133,7 +138,8 @@ export function QueueDrawer({ open, onOpenChange, onRemoveFromQueue, onReorderQu
                     </Badge>
                   )}
 
-                  {/* Actions — visible on hover or focus-within */}
+                  {/* Actions — visible on hover or focus-within, permission-gated */}
+                  {(canReorder || canRemove) && (
                   <div
                     className={cn(
                       'absolute right-1 top-1/2 z-20 flex -translate-y-1/2 items-center gap-0.5',
@@ -141,6 +147,8 @@ export function QueueDrawer({ open, onOpenChange, onRemoveFromQueue, onReorderQu
                       'opacity-0 transition-opacity group-hover:opacity-100 group-focus-within:opacity-100',
                     )}
                   >
+                    {canReorder && (
+                    <>
                     <Tooltip delayDuration={400}>
                       <TooltipTrigger asChild>
                         <Button
@@ -172,7 +180,10 @@ export function QueueDrawer({ open, onOpenChange, onRemoveFromQueue, onReorderQu
                       </TooltipTrigger>
                       <TooltipContent side="bottom">下移</TooltipContent>
                     </Tooltip>
+                    </>
+                    )}
 
+                    {canRemove && (
                     <Tooltip delayDuration={400}>
                       <TooltipTrigger asChild>
                         <Button
@@ -187,7 +198,9 @@ export function QueueDrawer({ open, onOpenChange, onRemoveFromQueue, onReorderQu
                       </TooltipTrigger>
                       <TooltipContent side="bottom">移除</TooltipContent>
                     </Tooltip>
+                    )}
                   </div>
+                  )}
                 </motion.div>
               ))}
               </AnimatePresence>

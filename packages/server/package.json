@@ -11,16 +11,24 @@
   "dependencies": {
     "@meting/core": "^1.6.0",
     "@music-together/shared": "workspace:*",
+    "@neteasecloudmusicapienhanced/api": "^4.30.1",
     "cors": "^2.8.5",
     "dotenv": "^16.4.5",
+    "escape-html": "^1.0.3",
     "express": "^4.21.0",
     "nanoid": "^5.0.9",
-    "socket.io": "^4.8.3"
+    "p-limit": "^7.3.0",
+    "pino": "^10.3.1",
+    "rate-limiter-flexible": "^9.1.1",
+    "socket.io": "^4.8.3",
+    "zod": "^4.3.6"
   },
   "devDependencies": {
     "@types/cors": "^2.8.17",
+    "@types/escape-html": "^1.0.4",
     "@types/express": "^5.0.0",
     "@types/node": "^22.10.0",
+    "pino-pretty": "^13.1.3",
     "tsx": "^4.19.0",
     "typescript": "~5.9.3"
   }

@@ -1,3 +1,4 @@
+import { memo } from 'react'
 import dayjs from 'dayjs'
 import { motion } from 'motion/react'
 import type { ChatMessage as ChatMessageType } from '@music-together/shared'
@@ -8,7 +9,7 @@ interface ChatMessageProps {
   isOwnMessage: boolean
 }
 
-export function ChatMessage({ message, isOwnMessage }: ChatMessageProps) {
+export const ChatMessage = memo(function ChatMessage({ message, isOwnMessage }: ChatMessageProps) {
   if (message.type === 'system') {
     return (
       <motion.div
@@ -48,4 +49,4 @@ export function ChatMessage({ message, isOwnMessage }: ChatMessageProps) {
       </div>
     </motion.div>
   )
-}
+})

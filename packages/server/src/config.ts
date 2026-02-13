@@ -1,20 +1,24 @@
 import 'dotenv/config'
+import * as z from 'zod/v4'
 import { TIMING } from '@music-together/shared'
 
-function safePort(raw: string | undefined, fallback: number): number {
-  const n = parseInt(raw || '', 10)
-  return Number.isFinite(n) && n > 0 ? n : fallback
-}
+const envSchema = z.object({
+  PORT: z.coerce.number().int().positive().default(3001),
+  CLIENT_URL: z.string().default('http://localhost:5173'),
+  CORS_ORIGINS: z.string().default(''),
+})
+
+const env = envSchema.parse(process.env)
 
 export const config = {
-  port: safePort(process.env.PORT, 3001),
-  clientUrl: process.env.CLIENT_URL || 'http://localhost:5173',
+  port: env.PORT,
+  clientUrl: env.CLIENT_URL,
   corsOrigins: [
-    process.env.CLIENT_URL || 'http://localhost:5173',
+    env.CLIENT_URL,
     'http://localhost:5173',
     'http://localhost:5174',
     'http://localhost:5175',
-    ...(process.env.CORS_ORIGINS || '').split(',').filter(Boolean),
+    ...env.CORS_ORIGINS.split(',').filter(Boolean),
   ] as string[],
   sync: {
     broadcastIntervalMs: TIMING.SYNC_BROADCAST_INTERVAL_MS,

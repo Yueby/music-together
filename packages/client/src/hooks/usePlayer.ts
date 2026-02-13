@@ -1,9 +1,11 @@
 import { useCallback, useEffect, useRef } from 'react'
 import { EVENTS } from '@music-together/shared'
+import type { Track, ScheduledPlayState } from '@music-together/shared'
 import { useSocketContext } from '@/providers/SocketProvider'
 import { PLAYER_PLAY_DEDUP_MS } from '@/lib/constants'
 import { usePlayerStore } from '@/stores/playerStore'
 import { useRoomStore } from '@/stores/roomStore'
+import { getServerTime } from '@/lib/clockSync'
 import { useHowl } from './useHowl'
 import { useLyric } from './useLyric'
 import { usePlayerSync } from './usePlayerSync'
@@ -11,21 +13,29 @@ import { usePlayerSync } from './usePlayerSync'
 /**
  * Composing hook: useHowl + useLyric + usePlayerSync.
  * Provides unified playback controls.
+ *
+ * Architecture: **Scheduled Execution**.
+ * All player actions (play, pause, seek, resume) are emitted to the server
+ * which broadcasts a `ScheduledPlayState` to ALL clients (including the
+ * initiator). Clients then execute the action at the scheduled server-time
+ * so that every device acts in unison.
  */
 export function usePlayer() {
   const { socket } = useSocketContext()
   const loadingRef = useRef<{ trackId: string; ts: number } | null>(null)
 
   const next = useCallback(() => socket.emit(EVENTS.PLAYER_NEXT), [socket])
-  const { howlRef, syncReadyRef, loadTrack } = useHowl(next)
+  const { howlRef, syncReadyRef, soundIdRef, loadTrack } = useHowl(next)
   const { fetchLyric } = useLyric()
 
-  // Connect sync
-  usePlayerSync(howlRef, syncReadyRef)
+  // Connect sync (handles SEEK, PAUSE, RESUME, SYNC_RESPONSE + host reporting)
+  usePlayerSync(howlRef, syncReadyRef, soundIdRef)
 
-  // Listen for PLAYER_PLAY events
+  // Listen for PLAYER_PLAY events (new track load)
+  const playTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null)
+
   useEffect(() => {
-    socket.on(EVENTS.PLAYER_PLAY, (data) => {
+    const onPlayerPlay = (data: { track: Track; playState: ScheduledPlayState }) => {
       // Deduplicate: ignore if the same track was requested within the dedup window
       const now = Date.now()
       if (
@@ -36,22 +46,40 @@ export function usePlayer() {
       }
       loadingRef.current = { trackId: data.track.id, ts: now }
 
-      // Compensate for network delay, but ONLY for mid-song joins (currentTime > 0).
-      // New songs (currentTime === 0) must skip compensation to avoid triggering
-      // useHowl's slow seek path (1200ms mute) instead of the fast start path (100ms).
       const ct = data.playState.currentTime
-      let adjustedTime = ct
-      if (ct > 0 && data.playState.isPlaying) {
-        const rawDelay = (Date.now() - data.playState.serverTimestamp) / 1000
-        adjustedTime = ct + Math.max(0, Math.min(5, rawDelay))
-      }
 
-      loadTrack(data.track, adjustedTime, data.playState.isPlaying)
-      fetchLyric(data.track)
-    })
+      if (ct === 0 && data.playState.serverTimeToExecute) {
+        // New track from position 0: schedule load so playback begins at
+        // the coordinated server-time.  We load with autoPlay=true and let
+        // the scheduling delay account for buffering.
+        const delay = Math.max(0, data.playState.serverTimeToExecute - getServerTime())
+        if (playTimerRef.current) clearTimeout(playTimerRef.current)
+        playTimerRef.current = setTimeout(() => {
+          playTimerRef.current = null
+          loadTrack(data.track, 0, data.playState.isPlaying)
+          fetchLyric(data.track)
+        }, delay)
+      } else {
+        // Mid-song join or currentTime > 0: load immediately and seek to
+        // the expected position at the scheduled execution time.
+        const elapsed = data.playState.isPlaying
+          ? Math.max(0, (getServerTime() - data.playState.serverTimestamp) / 1000)
+          : 0
+        const adjustedTime = ct + elapsed
+
+        loadTrack(data.track, adjustedTime, data.playState.isPlaying)
+        fetchLyric(data.track)
+      }
+    }
+
+    socket.on(EVENTS.PLAYER_PLAY, onPlayerPlay)
 
     return () => {
-      socket.off(EVENTS.PLAYER_PLAY)
+      socket.off(EVENTS.PLAYER_PLAY, onPlayerPlay)
+      if (playTimerRef.current) {
+        clearTimeout(playTimerRef.current)
+        playTimerRef.current = null
+      }
     }
   }, [socket, loadTrack, fetchLyric])
 
@@ -67,22 +95,15 @@ export function usePlayer() {
       const playerTrack = usePlayerStore.getState().currentTrack
       const roomTrack = room.currentTrack
 
-      // Case 1: Server has track but client doesn't (HMR reset / missed PLAYER_PLAY)
-      if (roomTrack?.streamUrl && !playerTrack) {
+      // Server has track but client doesn't (HMR reset / missed PLAYER_PLAY)
+      if (roomTrack?.streamUrl && (!playerTrack || !howlRef.current)) {
         hasRecovered = true
         const ps = room.playState
         const elapsed = ps.isPlaying
-          ? (Date.now() - ps.serverTimestamp) / 1000
+          ? (getServerTime() - ps.serverTimestamp) / 1000
           : 0
-        loadTrack(roomTrack, ps.currentTime + elapsed, ps.isPlaying)
+        loadTrack(roomTrack, ps.currentTime + Math.max(0, elapsed), ps.isPlaying)
         fetchLyric(roomTrack)
-        return
-      }
-
-      // Case 2: No track anywhere but queue has items → ask server to play from queue
-      if (!roomTrack && !playerTrack && room.queue.length > 0) {
-        hasRecovered = true
-        socket.emit(EVENTS.PLAYER_PLAY)
       }
     }
 
@@ -94,13 +115,27 @@ export function usePlayer() {
     return unsubscribe
   }, [loadTrack, fetchLyric, socket])
 
-  // Exposed controls
-  const play = useCallback(() => socket.emit(EVENTS.PLAYER_PLAY), [socket])
-  const pause = useCallback(() => socket.emit(EVENTS.PLAYER_PAUSE), [socket])
+  // -----------------------------------------------------------------------
+  // Controls — emit to server only.  Server broadcasts ScheduledPlayState
+  // to ALL clients (including us) via scheduled execution.
+  // -----------------------------------------------------------------------
+  const play = useCallback(() => {
+    socket.emit(EVENTS.PLAYER_PLAY)
+  }, [socket])
+
+  const pause = useCallback(() => {
+    socket.emit(EVENTS.PLAYER_PAUSE)
+  }, [socket])
+
   const seek = useCallback(
-    (time: number) => socket.emit(EVENTS.PLAYER_SEEK, { currentTime: time }),
+    (time: number) => {
+      // Optimistic local update for the progress bar UI
+      usePlayerStore.getState().setCurrentTime(time)
+      socket.emit(EVENTS.PLAYER_SEEK, { currentTime: time })
+    },
     [socket],
   )
+
   const prev = useCallback(() => socket.emit(EVENTS.PLAYER_PREV), [socket])
 
   return { play, pause, seek, next, prev }

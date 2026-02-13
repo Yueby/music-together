@@ -7,6 +7,8 @@ import { roomRepo } from '../repositories/roomRepository.js'
 import { chatRepo } from '../repositories/chatRepository.js'
 import { logger } from '../utils/logger.js'
 import { cleanupRoom as cleanupPlayerRoom } from '../controllers/playerController.js'
+import { cleanupRoom as cleanupVoteRoom } from './voteService.js'
+import { cleanupRoom as cleanupAuthRoom } from './authService.js'
 import type { TypedServer } from '../middleware/types.js'
 
 /** 宽限期定时器：房间变空后延迟删除，给断线用户重连的窗口 */
@@ -25,14 +27,13 @@ export function createRoom(
   const roomId = nanoid(6).toUpperCase()
   const userId = socketId
 
-  const user: User = { id: userId, nickname, isHost: true }
+  const user: User = { id: userId, nickname, role: 'host' }
 
   const room: RoomData = {
     id: roomId,
     name: roomName?.trim() || `${nickname}的房间`,
     password: password || null,
     hostId: userId,
-    mode: 'collaborative',
     users: [user],
     queue: [],
     currentTrack: null,
@@ -74,7 +75,7 @@ export function joinRoom(
 
   // If the room is empty (grace period), the first joiner becomes host
   const shouldBeHost = room.users.length === 0
-  const user: User = { id: userId, nickname, isHost: shouldBeHost }
+  const user: User = { id: userId, nickname, role: shouldBeHost ? 'host' : 'member' }
 
   if (shouldBeHost) {
     room.hostId = userId
@@ -118,7 +119,7 @@ export function leaveRoom(socketId: string): {
   if (room.hostId === userId && room.users.length > 0) {
     const newHost = room.users[0]
     room.hostId = newHost.id
-    newHost.isHost = true
+    newHost.role = 'host'
     hostChanged = true
     logger.info(`Host transferred from ${user.nickname} to ${newHost.nickname} in room ${roomId}`, { roomId })
   }
@@ -137,13 +138,13 @@ export function listRooms(): RoomListItem[] {
 
 export function updateSettings(
   roomId: string,
-  settings: { mode?: 'host-only' | 'collaborative'; password?: string | null },
+  settings: { name?: string; password?: string | null },
 ): void {
   const room = roomRepo.get(roomId)
   if (!room) return
 
-  if (settings.mode !== undefined) {
-    room.mode = settings.mode
+  if (settings.name !== undefined) {
+    room.name = settings.name
   }
 
   // password: string -> set password; null -> remove password; undefined -> no change
@@ -158,7 +159,6 @@ export function toPublicRoomState(data: RoomData): RoomState {
     id: data.id,
     name: data.name,
     hostId: data.hostId,
-    mode: data.mode,
     hasPassword: data.password !== null,
     users: data.users,
     queue: data.queue,
@@ -172,13 +172,15 @@ export function broadcastRoomList(io: TypedServer): void {
   io.to('lobby').emit(EVENTS.ROOM_LIST_UPDATE, listRooms())
 }
 
-export function canUserControl(socketId: string): boolean {
-  const mapping = roomRepo.getSocketMapping(socketId)
-  if (!mapping) return false
-  const room = roomRepo.get(mapping.roomId)
+export function setUserRole(roomId: string, targetUserId: string, role: 'admin' | 'member'): boolean {
+  const room = roomRepo.get(roomId)
   if (!room) return false
-  if (room.mode === 'collaborative') return true
-  return room.hostId === mapping.userId
+  const user = room.users.find((u) => u.id === targetUserId)
+  if (!user) return false
+  // Cannot change host's role via this method
+  if (user.id === room.hostId) return false
+  user.role = role
+  return true
 }
 
 export function getUserBySocket(socketId: string): User | null {
@@ -202,6 +204,9 @@ export function getRoomBySocket(socketId: string): { roomId: string; room: RoomD
 // ---------------------------------------------------------------------------
 
 function scheduleDeletion(roomId: string): void {
+  // Prevent duplicate timers if called multiple times for the same room
+  cancelDeletionTimer(roomId)
+
   logger.info(
     `Room ${roomId} is empty, will be deleted in ${config.room.gracePeriodMs / 1000}s unless someone rejoins`,
     { roomId },
@@ -212,6 +217,8 @@ function scheduleDeletion(roomId: string): void {
       roomRepo.delete(roomId)
       chatRepo.deleteRoom(roomId)
       cleanupPlayerRoom(roomId)
+      cleanupVoteRoom(roomId)
+      cleanupAuthRoom(roomId)
       roomDeletionTimers.delete(roomId)
       logger.info(`Room ${roomId} deleted after grace period`, { roomId })
     }

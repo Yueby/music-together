@@ -1,42 +1,20 @@
-import type { MusicSource } from '@music-together/shared'
+import { searchQuerySchema, urlQuerySchema, lyricQuerySchema, coverQuerySchema } from '@music-together/shared'
 import { Router, type Router as RouterType } from 'express'
 import { musicProvider } from '../services/musicProvider.js'
 import { logger } from '../utils/logger.js'
 
 const router: RouterType = Router()
 
-const VALID_SOURCES: MusicSource[] = ['netease', 'tencent', 'kugou', 'kuwo', 'baidu']
-
-/** Safe parseInt with fallback */
-function safeInt(value: unknown, fallback: number): number {
-  if (value == null) return fallback
-  const n = parseInt(String(value), 10)
-  return Number.isFinite(n) && n > 0 ? n : fallback
-}
-
 router.get('/search', async (req, res) => {
   try {
-    const { source, keyword, limit, page } = req.query
-
-    if (!source || !VALID_SOURCES.includes(source as MusicSource)) {
-      res.status(400).json({ error: 'Invalid source. Must be one of: netease, tencent, kugou, kuwo, baidu' })
+    const parsed = searchQuerySchema.safeParse(req.query)
+    if (!parsed.success) {
+      res.status(400).json({ error: parsed.error.issues[0]?.message ?? 'Invalid query parameters' })
       return
     }
+    const { source, keyword, limit: pageSize, page: pageNum } = parsed.data
 
-    if (!keyword || typeof keyword !== 'string') {
-      res.status(400).json({ error: 'keyword is required' })
-      return
-    }
-
-    const pageSize = safeInt(limit, 20)
-    const pageNum = safeInt(page, 1)
-
-    const tracks = await musicProvider.search(
-      source as MusicSource,
-      keyword,
-      pageSize,
-      pageNum,
-    )
+    const tracks = await musicProvider.search(source, keyword, pageSize, pageNum)
 
     res.json({ tracks, page: pageNum, hasMore: tracks.length >= pageSize })
   } catch (err) {
@@ -47,23 +25,14 @@ router.get('/search', async (req, res) => {
 
 router.get('/url', async (req, res) => {
   try {
-    const { source, urlId, bitrate } = req.query
-
-    if (!source || !VALID_SOURCES.includes(source as MusicSource)) {
-      res.status(400).json({ error: 'Invalid source' })
+    const parsed = urlQuerySchema.safeParse(req.query)
+    if (!parsed.success) {
+      res.status(400).json({ error: parsed.error.issues[0]?.message ?? 'Invalid query parameters' })
       return
     }
+    const { source, urlId, bitrate } = parsed.data
 
-    if (!urlId) {
-      res.status(400).json({ error: 'urlId is required' })
-      return
-    }
-
-    const url = await musicProvider.getStreamUrl(
-      source as MusicSource,
-      urlId as string,
-      safeInt(bitrate, 320),
-    )
+    const url = await musicProvider.getStreamUrl(source, urlId, bitrate)
 
     res.json({ url })
   } catch (err) {
@@ -74,19 +43,14 @@ router.get('/url', async (req, res) => {
 
 router.get('/lyric', async (req, res) => {
   try {
-    const { source, lyricId } = req.query
-
-    if (!source || !VALID_SOURCES.includes(source as MusicSource)) {
-      res.status(400).json({ error: 'Invalid source' })
+    const parsed = lyricQuerySchema.safeParse(req.query)
+    if (!parsed.success) {
+      res.status(400).json({ error: parsed.error.issues[0]?.message ?? 'Invalid query parameters' })
       return
     }
+    const { source, lyricId } = parsed.data
 
-    if (!lyricId) {
-      res.status(400).json({ error: 'lyricId is required' })
-      return
-    }
-
-    const result = await musicProvider.getLyric(source as MusicSource, lyricId as string)
+    const result = await musicProvider.getLyric(source, lyricId)
     res.json(result)
   } catch (err) {
     logger.error('Get lyric failed', err)
@@ -96,23 +60,14 @@ router.get('/lyric', async (req, res) => {
 
 router.get('/cover', async (req, res) => {
   try {
-    const { source, picId, size } = req.query
-
-    if (!source || !VALID_SOURCES.includes(source as MusicSource)) {
-      res.status(400).json({ error: 'Invalid source' })
+    const parsed = coverQuerySchema.safeParse(req.query)
+    if (!parsed.success) {
+      res.status(400).json({ error: parsed.error.issues[0]?.message ?? 'Invalid query parameters' })
       return
     }
+    const { source, picId, size } = parsed.data
 
-    if (!picId) {
-      res.status(400).json({ error: 'picId is required' })
-      return
-    }
-
-    const url = await musicProvider.getCover(
-      source as MusicSource,
-      picId as string,
-      safeInt(size, 300),
-    )
+    const url = await musicProvider.getCover(source, picId, size)
     res.json({ url })
   } catch (err) {
     logger.error('Get cover failed', err)

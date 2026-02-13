@@ -6,10 +6,30 @@ export const LIMITS = {
   CHAT_HISTORY_MAX: 200,
   CHAT_RATE_LIMIT_PER_SECOND: 5,
   QUEUE_MAX_SIZE: 100,
+  SEARCH_KEYWORD_MAX_LENGTH: 100,
+  SEARCH_PAGE_SIZE_MAX: 50,
+  SEARCH_PAGE_MAX: 100,
 } as const
 
 export const TIMING = {
   SYNC_BROADCAST_INTERVAL_MS: 5_000,
   ROOM_GRACE_PERIOD_MS: 30_000,
   PLAYER_NEXT_DEBOUNCE_MS: 500,
+  VOTE_TIMEOUT_MS: 30_000,
+} as const
+
+/** NTP clock synchronisation constants */
+export const NTP = {
+  /** Fast sampling interval during initial calibration (ms) */
+  INITIAL_INTERVAL_MS: 50,
+  /** Steady-state heartbeat interval after initial calibration (ms) */
+  STEADY_STATE_INTERVAL_MS: 2_500,
+  /** Number of rapid samples to collect during initial calibration */
+  MAX_INITIAL_SAMPLES: 30,
+  /** Maximum stored measurements (sliding window) */
+  MAX_MEASUREMENTS: 60,
+  /** Minimum scheduling delay for scheduled execution (ms) */
+  MIN_SCHEDULE_DELAY_MS: 300,
+  /** Maximum scheduling delay cap (ms) */
+  MAX_SCHEDULE_DELAY_MS: 3_000,
 } as const

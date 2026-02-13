@@ -31,6 +31,12 @@ export function reorderTracks(roomId: string, trackIds: string[]): void {
     const track = trackMap.get(id)
     if (track) reordered.push(track)
   }
+  // Append any tracks that were NOT included in trackIds (prevent accidental drops)
+  for (const track of room.queue) {
+    if (!seen.has(track.id)) {
+      reordered.push(track)
+    }
+  }
   room.queue = reordered
 }
 
