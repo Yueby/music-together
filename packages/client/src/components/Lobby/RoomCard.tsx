@@ -1,5 +1,5 @@
 import { Lock, LockOpen, Music, Users } from 'lucide-react'
-import { motion } from 'motion/react'
+import { motion, useReducedMotion } from 'motion/react'
 import type { RoomListItem } from '@music-together/shared'
 import { cn } from '@/lib/utils'
 
@@ -10,6 +10,7 @@ interface RoomCardProps {
 }
 
 export function RoomCard({ room, index, onClick }: RoomCardProps) {
+  const prefersReducedMotion = useReducedMotion()
   return (
     <motion.button
       initial={{ opacity: 0, y: 20 }}
@@ -69,8 +70,8 @@ export function RoomCard({ room, index, onClick }: RoomCardProps) {
             <motion.div
               key={i}
               className="w-0.5 rounded-full bg-primary/40"
-              animate={{ height: [4, 12, 6, 10, 4] }}
-              transition={{
+              animate={prefersReducedMotion ? { height: 8 } : { height: [4, 12, 6, 10, 4] }}
+              transition={prefersReducedMotion ? {} : {
                 duration: 1.2,
                 repeat: Infinity,
                 delay: i * 0.15,

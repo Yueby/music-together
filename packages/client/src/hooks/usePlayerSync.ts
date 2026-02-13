@@ -5,6 +5,12 @@ import type { PlayState } from '@music-together/shared'
 import { usePlayerStore } from '@/stores/playerStore'
 import { useRoomStore } from '@/stores/roomStore'
 import { useSocketContext } from '@/providers/SocketProvider'
+import {
+  SYNC_READY_DELAY_MS,
+  SYNC_REQUEST_INTERVAL_MS,
+  HOST_REPORT_INTERVAL_MS,
+  SYNC_DRIFT_THRESHOLD_S,
+} from '@/lib/constants'
 
 /** Manages playback sync: host reporting + client drift correction */
 export function usePlayerSync(
@@ -30,7 +36,7 @@ export function usePlayerSync(
       syncDelayTimerRef.current = setTimeout(() => {
         syncReadyRef.current = true
         syncDelayTimerRef.current = null
-      }, 1500)
+      }, SYNC_READY_DELAY_MS)
     }
 
     const onSeek = (data: { playState: PlayState }) => {
@@ -45,10 +51,15 @@ export function usePlayerSync(
       if (!howlRef.current || !syncReadyRef.current) return
       if (!howlRef.current.playing()) return
 
+      // Compensate for network latency (clamped to [0, 5s] for clock skew safety)
+      const rawDelay = (Date.now() - data.serverTimestamp) / 1000
+      const networkDelaySec = Math.max(0, Math.min(5, rawDelay))
+      const adjustedTime = data.currentTime + (data.isPlaying ? networkDelaySec : 0)
+
       const currentSeek = howlRef.current.seek() as number
-      const drift = Math.abs(currentSeek - data.currentTime)
-      if (drift > 3) {
-        howlRef.current.seek(data.currentTime)
+      const drift = Math.abs(currentSeek - adjustedTime)
+      if (drift > SYNC_DRIFT_THRESHOLD_S) {
+        howlRef.current.seek(adjustedTime)
         scheduleSyncReady()
       }
     }
@@ -57,15 +68,21 @@ export function usePlayerSync(
       howlRef.current?.pause()
     }
 
+    const onResume = () => {
+      howlRef.current?.play()
+    }
+
     socket.on(EVENTS.PLAYER_SEEK, onSeek)
     socket.on(EVENTS.PLAYER_SYNC_RESPONSE, onSyncResponse)
     socket.on(EVENTS.PLAYER_PAUSE, onPause)
+    socket.on(EVENTS.PLAYER_RESUME, onResume)
 
     return () => {
       clearSyncDelay()
       socket.off(EVENTS.PLAYER_SEEK, onSeek)
       socket.off(EVENTS.PLAYER_SYNC_RESPONSE, onSyncResponse)
       socket.off(EVENTS.PLAYER_PAUSE, onPause)
+      socket.off(EVENTS.PLAYER_RESUME, onResume)
     }
   }, [socket, howlRef, syncReadyRef, setCurrentTime])
 
@@ -73,7 +90,7 @@ export function usePlayerSync(
   useEffect(() => {
     const interval = setInterval(() => {
       socket.emit(EVENTS.PLAYER_SYNC_REQUEST)
-    }, 12000)
+    }, SYNC_REQUEST_INTERVAL_MS)
     return () => clearInterval(interval)
   }, [socket])
 
@@ -87,7 +104,7 @@ export function usePlayerSync(
           currentTime: howlRef.current.seek() as number,
         })
       }
-    }, 5000)
+    }, HOST_REPORT_INTERVAL_MS)
     return () => clearInterval(interval)
   }, [socket, howlRef])
 }

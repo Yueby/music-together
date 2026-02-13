@@ -45,3 +45,15 @@ export function getNextTrack(roomId: string): Track | null {
   const nextIndex = currentIndex + 1
   return nextIndex < room.queue.length ? room.queue[nextIndex] : null
 }
+
+export function getPreviousTrack(roomId: string): Track | null {
+  const room = roomRepo.get(roomId)
+  if (!room || room.queue.length === 0) return null
+
+  const currentIndex = room.currentTrack
+    ? room.queue.findIndex((t) => t.id === room.currentTrack!.id)
+    : -1
+
+  const prevIndex = currentIndex - 1
+  return prevIndex >= 0 ? room.queue[prevIndex] : null
+}

@@ -2,17 +2,19 @@ import { Badge } from '@/components/ui/badge'
 import { Button } from '@/components/ui/button'
 import { ScrollArea } from '@/components/ui/scroll-area'
 import {
-  Sheet,
-  SheetContent,
-  SheetHeader,
-  SheetTitle,
-} from '@/components/ui/sheet'
+  Drawer,
+  DrawerContent,
+  DrawerHeader,
+  DrawerTitle,
+} from '@/components/ui/drawer'
 import { Tooltip, TooltipContent, TooltipTrigger } from '@/components/ui/tooltip'
 import { cn } from '@/lib/utils'
 import { usePlayerStore } from '@/stores/playerStore'
 import { useRoomStore } from '@/stores/roomStore'
 import type { Track } from '@music-together/shared'
-import { ChevronDown, ChevronUp, Music, Trash2, User } from 'lucide-react'
+import { useIsMobile } from '@/hooks/useIsMobile'
+import { ChevronDown, ChevronUp, Music, Trash2, User, X } from 'lucide-react'
+import { AnimatePresence, motion } from 'motion/react'
 
 const EMPTY_QUEUE: Track[] = []
 
@@ -26,6 +28,7 @@ interface QueueDrawerProps {
 export function QueueDrawer({ open, onOpenChange, onRemoveFromQueue, onReorderQueue }: QueueDrawerProps) {
   const queue = useRoomStore((s) => s.room?.queue ?? EMPTY_QUEUE)
   const currentTrack = usePlayerStore((s) => s.currentTrack)
+  const isMobile = useIsMobile()
 
   const handleMoveUp = (index: number) => {
     if (index <= 0) return
@@ -42,14 +45,32 @@ export function QueueDrawer({ open, onOpenChange, onRemoveFromQueue, onReorderQu
   }
 
   return (
-    <Sheet open={open} onOpenChange={onOpenChange}>
-      <SheetContent side="right" showCloseButton={false} className="flex w-[380px] flex-col p-0">
-        <SheetHeader className="shrink-0 border-b px-4 py-3">
-          <SheetTitle className="flex items-center gap-2 text-base">
-            <Music className="h-4 w-4" />
-            播放列表 ({queue.length})
-          </SheetTitle>
-        </SheetHeader>
+    <Drawer open={open} onOpenChange={onOpenChange} direction={isMobile ? 'bottom' : 'right'}>
+      <DrawerContent
+        className={cn(
+          'flex flex-col p-0',
+          isMobile && 'h-[75vh]',
+        )}
+      >
+        <DrawerHeader className="shrink-0 border-b px-4 py-3">
+          <div className="flex items-center justify-between">
+            <DrawerTitle className="flex items-center gap-2 text-base">
+              <Music className="h-4 w-4" />
+              播放列表 ({queue.length})
+            </DrawerTitle>
+            {!isMobile && (
+              <Button
+                variant="ghost"
+                size="icon"
+                className="h-7 w-7"
+                onClick={() => onOpenChange(false)}
+                aria-label="关闭播放列表"
+              >
+                <X className="h-4 w-4" />
+              </Button>
+            )}
+          </div>
+        </DrawerHeader>
 
         <ScrollArea className="min-h-0 flex-1">
           {queue.length === 0 ? (
@@ -58,9 +79,14 @@ export function QueueDrawer({ open, onOpenChange, onRemoveFromQueue, onReorderQu
             </div>
           ) : (
             <div className="p-2">
+              <AnimatePresence initial={false}>
               {queue.map((track, i) => (
-                <div
+                <motion.div
                   key={track.id}
+                  initial={{ opacity: 0, height: 0 }}
+                  animate={{ opacity: 1, height: 'auto' }}
+                  exit={{ opacity: 0, height: 0 }}
+                  transition={{ duration: 0.2 }}
                   className={cn(
                     'group relative flex items-center gap-2 rounded-lg px-2 py-2 transition-colors hover:bg-accent/50',
                     currentTrack?.id === track.id && 'bg-primary/10',
@@ -107,12 +133,12 @@ export function QueueDrawer({ open, onOpenChange, onRemoveFromQueue, onReorderQu
                     </Badge>
                   )}
 
-                  {/* Actions — overlay on hover, positioned over right side */}
+                  {/* Actions — visible on hover or focus-within */}
                   <div
                     className={cn(
                       'absolute right-1 top-1/2 z-20 flex -translate-y-1/2 items-center gap-0.5',
                       'rounded-md border border-border/50 bg-popover px-1 py-0.5 shadow-md backdrop-blur-md',
-                      'pointer-events-none opacity-0 transition-opacity group-hover:pointer-events-auto group-hover:opacity-100',
+                      'opacity-0 transition-opacity group-hover:opacity-100 group-focus-within:opacity-100',
                     )}
                   >
                     <Tooltip delayDuration={400}>
@@ -121,9 +147,9 @@ export function QueueDrawer({ open, onOpenChange, onRemoveFromQueue, onReorderQu
                           variant="ghost"
                           size="icon"
                           className="h-6 w-6"
-                          tabIndex={-1}
                           disabled={i === 0}
                           onClick={() => handleMoveUp(i)}
+                          aria-label={`上移 ${track.title}`}
                         >
                           <ChevronUp className="h-3 w-3" />
                         </Button>
@@ -137,9 +163,9 @@ export function QueueDrawer({ open, onOpenChange, onRemoveFromQueue, onReorderQu
                           variant="ghost"
                           size="icon"
                           className="h-6 w-6"
-                          tabIndex={-1}
                           disabled={i === queue.length - 1}
                           onClick={() => handleMoveDown(i)}
+                          aria-label={`下移 ${track.title}`}
                         >
                           <ChevronDown className="h-3 w-3" />
                         </Button>
@@ -153,8 +179,8 @@ export function QueueDrawer({ open, onOpenChange, onRemoveFromQueue, onReorderQu
                           variant="ghost"
                           size="icon"
                           className="h-6 w-6 text-destructive hover:text-destructive"
-                          tabIndex={-1}
                           onClick={() => onRemoveFromQueue(track.id)}
+                          aria-label={`移除 ${track.title}`}
                         >
                           <Trash2 className="h-3 w-3" />
                         </Button>
@@ -162,12 +188,13 @@ export function QueueDrawer({ open, onOpenChange, onRemoveFromQueue, onReorderQu
                       <TooltipContent side="bottom">移除</TooltipContent>
                     </Tooltip>
                   </div>
-                </div>
+                </motion.div>
               ))}
+              </AnimatePresence>
             </div>
           )}
         </ScrollArea>
-      </SheetContent>
-    </Sheet>
+      </DrawerContent>
+    </Drawer>
   )
 }

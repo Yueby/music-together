@@ -1,10 +1,10 @@
 import { CreateRoomDialog } from '@/components/Lobby/CreateRoomDialog'
 import { NicknameDialog } from '@/components/Lobby/NicknameDialog'
 import { PasswordDialog } from '@/components/Lobby/PasswordDialog'
-import { RoomCard } from '@/components/Lobby/RoomCard'
 import { UserPopover } from '@/components/Lobby/UserPopover'
-import { Button } from '@/components/ui/button'
-import { Input } from '@/components/ui/input'
+import { HeroSection } from '@/components/Lobby/HeroSection'
+import { ActionCards } from '@/components/Lobby/ActionCards'
+import { RoomListSection } from '@/components/Lobby/RoomListSection'
 import { Separator } from '@/components/ui/separator'
 import { useLobby } from '@/hooks/useLobby'
 import { unlockAudio } from '@/lib/audioUnlock'
@@ -12,7 +12,8 @@ import { storage } from '@/lib/storage'
 import { useSocketContext } from '@/providers/SocketProvider'
 import { useRoomStore } from '@/stores/roomStore'
 import { EVENTS, type RoomListItem } from '@music-together/shared'
-import { Github, Headphones, Home, LogIn, Music } from 'lucide-react'
+import { ACTION_LOADING_TIMEOUT_MS } from '@/lib/constants'
+import { Github, Headphones } from 'lucide-react'
 import { motion } from 'motion/react'
 import { useCallback, useEffect, useRef, useState } from 'react'
 import { useNavigate } from 'react-router-dom'
@@ -46,7 +47,7 @@ export default function HomePage() {
       actionTimeoutRef.current = setTimeout(() => {
         setActionLoading(false)
         toast.error('操作超时，请重试')
-      }, 15_000)
+      }, ACTION_LOADING_TIMEOUT_MS)
     } else {
       if (actionTimeoutRef.current) {
         clearTimeout(actionTimeoutRef.current)
@@ -171,8 +172,14 @@ export default function HomePage() {
   }, [joinRoom])
 
   return (
-    <div className="flex min-h-screen flex-col bg-background">
-      {/* ── Header ── */}
+    <motion.div
+      initial={{ opacity: 0 }}
+      animate={{ opacity: 1 }}
+      exit={{ opacity: 0 }}
+      transition={{ duration: 0.2 }}
+      className="flex min-h-screen flex-col bg-background"
+    >
+      {/* Header */}
       <header className="border-b border-border/50 bg-background/95 backdrop-blur-sm">
         <div className="mx-auto flex max-w-5xl items-center justify-between px-4 py-3">
           <div className="flex items-center gap-2.5">
@@ -185,135 +192,32 @@ export default function HomePage() {
         </div>
       </header>
 
-      {/* ── Main ── */}
+      {/* Main */}
       <main className="flex-1">
         <div className="mx-auto max-w-5xl px-4 py-8">
-          {/* Hero text */}
-          <motion.div
-            initial={{ opacity: 0, y: -12 }}
-            animate={{ opacity: 1, y: 0 }}
-            transition={{ duration: 0.5 }}
-            className="mb-8 text-center"
-          >
-            <h1 className="text-3xl font-bold tracking-tight text-foreground">
-              和朋友一起听歌
-            </h1>
-            <p className="mt-2 text-sm text-muted-foreground">
-              创建或加入一个房间，实时同步音乐播放
-            </p>
-          </motion.div>
+          <HeroSection />
 
-          {/* Action cards */}
-          <motion.div
-            initial={{ opacity: 0, y: 10 }}
-            animate={{ opacity: 1, y: 0 }}
-            transition={{ duration: 0.4, delay: 0.15 }}
-            className="mb-10 grid gap-4 sm:grid-cols-2"
-          >
-            {/* Create room card */}
-            <div className="flex flex-col justify-between rounded-xl border border-border bg-card p-5">
-              <div className="mb-4">
-                <div className="mb-2 flex items-center gap-2">
-                  <div className="flex h-8 w-8 items-center justify-center rounded-lg bg-primary/10">
-                    <Home className="h-4 w-4 text-primary" />
-                  </div>
-                  <h2 className="text-base font-semibold text-foreground">创建房间</h2>
-                </div>
-                <p className="text-xs text-muted-foreground">
-                  新建一个房间，分享房间号邀请朋友加入
-                </p>
-              </div>
-              <Button onClick={() => setCreateDialogOpen(true)} className="w-full">
-                <Home className="mr-2 h-4 w-4" />
-                创建房间
-              </Button>
-            </div>
-
-            {/* Join room card */}
-            <div className="flex flex-col justify-between rounded-xl border border-border bg-card p-5">
-              <div className="mb-4">
-                <div className="mb-2 flex items-center gap-2">
-                  <div className="flex h-8 w-8 items-center justify-center rounded-lg bg-primary/10">
-                    <LogIn className="h-4 w-4 text-primary" />
-                  </div>
-                  <h2 className="text-base font-semibold text-foreground">加入房间</h2>
-                </div>
-                <p className="text-xs text-muted-foreground">
-                  输入房间号直接加入已有房间
-                </p>
-              </div>
-              <div className="flex gap-2">
-                <Input
-                  placeholder="输入房间号..."
-                  value={directRoomId}
-                  onChange={(e) => setDirectRoomId(e.target.value)}
-                  onKeyDown={(e) => e.key === 'Enter' && handleDirectJoin()}
-                  className="flex-1"
-                />
-                <Button
-                  variant="secondary"
-                  onClick={handleDirectJoin}
-                  disabled={actionLoading}
-                >
-                  加入
-                </Button>
-              </div>
-            </div>
-          </motion.div>
+          <ActionCards
+            directRoomId={directRoomId}
+            onDirectRoomIdChange={setDirectRoomId}
+            onCreateClick={() => setCreateDialogOpen(true)}
+            onDirectJoin={handleDirectJoin}
+            actionLoading={actionLoading}
+          />
 
           <Separator className="mb-8" />
 
-          {/* Room list */}
-          <div className="mb-4">
-            <h2 className="text-lg font-semibold text-foreground/80">
-              活跃房间
-              {!isLoading && rooms.length > 0 && (
-                <span className="ml-2 text-sm font-normal text-muted-foreground">
-                  ({rooms.length})
-                </span>
-              )}
-            </h2>
-          </div>
-
-          {isLoading ? (
-            <div className="flex items-center justify-center py-20">
-              <motion.div
-                className="h-8 w-8 rounded-full border-2 border-primary/30 border-t-primary"
-                animate={{ rotate: 360 }}
-                transition={{ duration: 1, repeat: Infinity, ease: 'linear' }}
-              />
-            </div>
-          ) : rooms.length === 0 ? (
-            <motion.div
-              initial={{ opacity: 0 }}
-              animate={{ opacity: 1 }}
-              transition={{ delay: 0.25 }}
-              className="flex flex-col items-center gap-4 rounded-xl border border-dashed border-border bg-card/50 px-8 py-16 text-center"
-            >
-              <Music className="h-10 w-10 text-muted-foreground/25" />
-              <div>
-                <p className="text-base font-medium text-foreground/60">还没有活跃的房间</p>
-                <p className="mt-1 text-sm text-muted-foreground">创建一个房间，邀请朋友一起听歌</p>
-              </div>
-            </motion.div>
-          ) : (
-            <div className="grid gap-3 sm:grid-cols-2 lg:grid-cols-3">
-              {rooms.map((room, i) => (
-                <RoomCard
-                  key={room.id}
-                  room={room}
-                  index={i}
-                  onClick={() => handleRoomClick(room)}
-                />
-              ))}
-            </div>
-          )}
+          <RoomListSection
+            rooms={rooms}
+            isLoading={isLoading}
+            onRoomClick={handleRoomClick}
+          />
         </div>
       </main>
 
-      {/* ── Footer ── */}
+      {/* Footer */}
       <footer className="border-t border-border/50">
-        <div className="mx-auto flex max-w-5xl items-center justify-between px-4 py-4">
+        <div className="mx-auto flex max-w-5xl flex-wrap items-center justify-between gap-2 px-4 py-4">
           <span className="text-xs text-muted-foreground">
             Music Together · Made by Yueby
           </span>
@@ -329,7 +233,7 @@ export default function HomePage() {
         </div>
       </footer>
 
-      {/* ── Dialogs ── */}
+      {/* Dialogs */}
       <CreateRoomDialog
         open={createDialogOpen}
         onOpenChange={setCreateDialogOpen}
@@ -355,6 +259,6 @@ export default function HomePage() {
         error={passwordError}
         isLoading={actionLoading}
       />
-    </div>
+    </motion.div>
   )
 }

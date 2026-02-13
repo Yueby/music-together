@@ -1,17 +1,14 @@
-import { create } from 'zustand'
 import type { ChatMessage } from '@music-together/shared'
-
-const DEFAULT_CHAT_WIDTH = 350
+import { create } from 'zustand'
 
 interface ChatStore {
   messages: ChatMessage[]
   unreadCount: number
-  chatWidth: number
+  isChatOpen: boolean
 
   addMessage: (message: ChatMessage) => void
   setMessages: (messages: ChatMessage[]) => void
-  setChatWidth: (width: number | ((prev: number) => number)) => void
-  incrementUnread: () => void
+  setIsChatOpen: (open: boolean) => void
   clearUnread: () => void
   reset: () => void
 }
@@ -19,26 +16,22 @@ interface ChatStore {
 export const useChatStore = create<ChatStore>((set) => ({
   messages: [],
   unreadCount: 0,
-  chatWidth: DEFAULT_CHAT_WIDTH,
+  isChatOpen: false,
 
   addMessage: (message) =>
     set((state) => ({
       messages: [...state.messages, message],
-      unreadCount: state.chatWidth > 0 ? state.unreadCount : state.unreadCount + 1,
+      unreadCount: state.isChatOpen || message.type === 'system'
+        ? state.unreadCount
+        : state.unreadCount + 1,
     })),
   setMessages: (messages) => set({ messages }),
-  setChatWidth: (width) =>
-    set((state) => {
-      const newWidth = typeof width === 'function' ? width(state.chatWidth) : width
-      return {
-        chatWidth: newWidth,
-        unreadCount: newWidth > 0 && state.chatWidth === 0 ? 0 : state.unreadCount,
-      }
-    }),
-  incrementUnread: () =>
-    set((state) => ({ unreadCount: state.unreadCount + 1 })),
+  setIsChatOpen: (open) =>
+    set((state) => ({
+      isChatOpen: open,
+      // Auto-clear unread when opening from closed state
+      unreadCount: open && !state.isChatOpen ? 0 : state.unreadCount,
+    })),
   clearUnread: () => set({ unreadCount: 0 }),
-  reset: () => set({ messages: [], unreadCount: 0 }),
+  reset: () => set({ messages: [], unreadCount: 0, isChatOpen: false }),
 }))
-
-export { DEFAULT_CHAT_WIDTH }

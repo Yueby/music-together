@@ -21,8 +21,15 @@ export function registerPlayerController(io: TypedServer, socket: TypedSocket) {
   socket.on(
     EVENTS.PLAYER_PLAY,
     withControl(async (ctx, data) => {
-      const track = data?.track ?? ctx.room.currentTrack
+      const track = data?.track ?? ctx.room.currentTrack ?? ctx.room.queue[0]
       if (!track) return
+
+      // Resume: same track already loaded and has stream URL → keep position
+      if (!data?.track && ctx.room.currentTrack?.id === track.id && ctx.room.currentTrack?.streamUrl) {
+        playerService.resumeTrack(ctx.io, ctx.roomId)
+        return
+      }
+
       await playerService.playTrackInRoom(ctx.io, ctx.roomId, track)
     }),
   )
@@ -66,6 +73,28 @@ export function registerPlayerController(io: TypedServer, socket: TypedSocket) {
       // If stream URL failed, try the next one after that
       if (!success) {
         const skipTrack = queueService.getNextTrack(ctx.roomId)
+        if (skipTrack) {
+          await playerService.playTrackInRoom(ctx.io, ctx.roomId, skipTrack)
+        }
+      }
+    }),
+  )
+
+  socket.on(
+    EVENTS.PLAYER_PREV,
+    withControl(async (ctx) => {
+      const now = Date.now()
+      const lastNext = lastNextTimestamp.get(ctx.roomId) ?? 0
+      if (now - lastNext < config.player.nextDebounceMs) return
+      lastNextTimestamp.set(ctx.roomId, now)
+
+      const prevTrack = queueService.getPreviousTrack(ctx.roomId)
+      if (!prevTrack) return // already at the start, do nothing
+
+      const success = await playerService.playTrackInRoom(ctx.io, ctx.roomId, prevTrack)
+
+      if (!success) {
+        const skipTrack = queueService.getPreviousTrack(ctx.roomId)
         if (skipTrack) {
           await playerService.playTrackInRoom(ctx.io, ctx.roomId, skipTrack)
         }

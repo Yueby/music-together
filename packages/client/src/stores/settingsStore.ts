@@ -2,6 +2,9 @@ import { create } from 'zustand'
 import { storage } from '@/lib/storage'
 
 interface SettingsStore {
+  // Mobile layout
+  mobileLyricPosition: 'below' | 'above'
+
   // AMLL Lyrics
   lyricAlignAnchor: 'top' | 'center' | 'bottom'
   lyricAlignPosition: number
@@ -9,6 +12,7 @@ interface SettingsStore {
   lyricEnableBlur: boolean
   lyricEnableScale: boolean
   lyricFontWeight: number
+  lyricFontSize: number
 
   // Background
   bgFps: number
@@ -16,12 +20,14 @@ interface SettingsStore {
   bgRenderScale: number
 
   // Setters
+  setMobileLyricPosition: (v: 'below' | 'above') => void
   setLyricAlignAnchor: (v: 'top' | 'center' | 'bottom') => void
   setLyricAlignPosition: (v: number) => void
   setLyricEnableSpring: (v: boolean) => void
   setLyricEnableBlur: (v: boolean) => void
   setLyricEnableScale: (v: boolean) => void
   setLyricFontWeight: (v: number) => void
+  setLyricFontSize: (v: number) => void
   setBgFps: (v: number) => void
   setBgFlowSpeed: (v: number) => void
   setBgRenderScale: (v: number) => void
@@ -29,18 +35,24 @@ interface SettingsStore {
 
 export const useSettingsStore = create<SettingsStore>((set) => ({
   // Defaults from localStorage
+  mobileLyricPosition: storage.getMobileLyricPosition(),
   lyricAlignAnchor: storage.getLyricAlignAnchor(),
   lyricAlignPosition: storage.getLyricAlignPosition(),
   lyricEnableSpring: storage.getLyricEnableSpring(),
   lyricEnableBlur: storage.getLyricEnableBlur(),
   lyricEnableScale: storage.getLyricEnableScale(),
   lyricFontWeight: storage.getLyricFontWeight(),
+  lyricFontSize: storage.getLyricFontSize(),
 
   bgFps: storage.getBgFps(),
   bgFlowSpeed: storage.getBgFlowSpeed(),
   bgRenderScale: storage.getBgRenderScale(),
 
   // Setters (persist + update state)
+  setMobileLyricPosition: (v) => {
+    storage.setMobileLyricPosition(v)
+    set({ mobileLyricPosition: v })
+  },
   setLyricAlignAnchor: (v) => {
     storage.setLyricAlignAnchor(v)
     set({ lyricAlignAnchor: v })
@@ -64,6 +76,10 @@ export const useSettingsStore = create<SettingsStore>((set) => ({
   setLyricFontWeight: (v) => {
     storage.setLyricFontWeight(v)
     set({ lyricFontWeight: v })
+  },
+  setLyricFontSize: (v) => {
+    storage.setLyricFontSize(v)
+    set({ lyricFontSize: v })
   },
   setBgFps: (v) => {
     storage.setBgFps(v)

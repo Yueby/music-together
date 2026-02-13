@@ -129,16 +129,6 @@
   }
 }
 
-/* ===== Subtle float animation ===== */
-@keyframes float {
-  0%, 100% { transform: translateY(0); }
-  50% { transform: translateY(-6px); }
-}
-
-.animate-float {
-  animation: float 6s ease-in-out infinite;
-}
-
 /* ===== Scrollbar styling ===== */
 ::-webkit-scrollbar {
   width: 6px;
@@ -154,7 +144,20 @@
   background: oklch(0.5 0 0 / 40%);
 }
 
+/* ===== Reduced motion ===== */
+@media (prefers-reduced-motion: reduce) {
+  *,
+  *::before,
+  *::after {
+    animation-duration: 0.01ms !important;
+    animation-iteration-count: 1 !important;
+    transition-duration: 0.01ms !important;
+    scroll-behavior: auto !important;
+  }
+}
+
 /* ===== AMLL Lyric Player overrides ===== */
 .amll-container {
-  color: rgba(255, 255, 255, 0.9);
+  color: var(--foreground);
+  opacity: 0.9;
 }

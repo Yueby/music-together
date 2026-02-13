@@ -13,6 +13,7 @@ export interface ServerToClientEvents {
 
   [EVENTS.PLAYER_PLAY]: (data: { track: Track; playState: PlayState }) => void
   [EVENTS.PLAYER_PAUSE]: (data: { playState: PlayState }) => void
+  [EVENTS.PLAYER_RESUME]: (data: { playState: PlayState }) => void
   [EVENTS.PLAYER_SEEK]: (data: { playState: PlayState }) => void
   [EVENTS.PLAYER_SYNC_RESPONSE]: (data: {
     currentTime: number
@@ -49,6 +50,7 @@ export interface ClientToServerEvents {
   [EVENTS.PLAYER_PAUSE]: () => void
   [EVENTS.PLAYER_SEEK]: (data: { currentTime: number }) => void
   [EVENTS.PLAYER_NEXT]: () => void
+  [EVENTS.PLAYER_PREV]: () => void
   [EVENTS.PLAYER_SYNC]: (data: { currentTime: number }) => void
   [EVENTS.PLAYER_SYNC_REQUEST]: () => void
 

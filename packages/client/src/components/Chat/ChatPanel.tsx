@@ -37,7 +37,7 @@ export function ChatPanel() {
       </div>
 
       {/* Messages */}
-      <div className="min-h-0 flex-1 overflow-y-auto px-3">
+      <div className="min-h-0 flex-1 overflow-y-auto px-3" aria-live="polite" aria-label="聊天消息">
         <div className="py-3">
           {messages.length === 0 ? (
             <p className="text-center text-sm text-muted-foreground/30 py-8">
@@ -64,6 +64,7 @@ export function ChatPanel() {
           onChange={(e) => setInput(e.target.value)}
           onKeyDown={(e) => e.key === 'Enter' && handleSend()}
           className="flex-1"
+          aria-label="输入聊天消息"
         />
         <Tooltip>
           <TooltipTrigger asChild>
@@ -72,6 +73,7 @@ export function ChatPanel() {
               variant="secondary"
               onClick={handleSend}
               disabled={!input.trim()}
+              aria-label="发送消息"
             >
               <Send className="h-4 w-4" />
             </Button>

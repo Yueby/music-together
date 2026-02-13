@@ -1,14 +1,15 @@
-import { useState, useEffect } from 'react'
-import { motion } from 'motion/react'
-import { Lock, Loader2 } from 'lucide-react'
-import {
-  Dialog,
-  DialogContent,
-  DialogHeader,
-  DialogTitle,
-} from '@/components/ui/dialog'
-import { Input } from '@/components/ui/input'
 import { Button } from '@/components/ui/button'
+import { Input } from '@/components/ui/input'
+import {
+  ResponsiveDialog,
+  ResponsiveDialogBody,
+  ResponsiveDialogContent,
+  ResponsiveDialogHeader,
+  ResponsiveDialogTitle,
+} from '@/components/ui/responsive-dialog'
+import { Loader2, Lock } from 'lucide-react'
+import { motion } from 'motion/react'
+import { useState } from 'react'
 
 interface PasswordDialogProps {
   open: boolean
@@ -29,10 +30,11 @@ export function PasswordDialog({
 }: PasswordDialogProps) {
   const [password, setPassword] = useState('')
 
-  // Reset password input each time dialog opens
-  useEffect(() => {
-    if (open) setPassword('')
-  }, [open])
+  // Reset password when dialog opens
+  const handleOpenChange = (nextOpen: boolean) => {
+    if (nextOpen) setPassword('')
+    onOpenChange(nextOpen)
+  }
 
   const handleSubmit = (e: React.FormEvent) => {
     e.preventDefault()
@@ -41,15 +43,16 @@ export function PasswordDialog({
   }
 
   return (
-    <Dialog open={open} onOpenChange={onOpenChange}>
-      <DialogContent className="max-w-sm">
-        <DialogHeader>
-          <DialogTitle className="flex items-center gap-2 text-lg">
+    <ResponsiveDialog open={open} onOpenChange={handleOpenChange}>
+      <ResponsiveDialogContent className="sm:max-w-sm">
+        <ResponsiveDialogHeader>
+          <ResponsiveDialogTitle className="flex items-center gap-2 text-lg">
             <Lock className="h-5 w-5 text-muted-foreground" />
             需要密码
-          </DialogTitle>
-        </DialogHeader>
+          </ResponsiveDialogTitle>
+        </ResponsiveDialogHeader>
 
+        <ResponsiveDialogBody className="space-y-4">
         <p className="text-sm text-muted-foreground">
           房间「{roomName}」已设置密码保护
         </p>
@@ -89,7 +92,8 @@ export function PasswordDialog({
             加入房间
           </Button>
         </form>
-      </DialogContent>
-    </Dialog>
+        </ResponsiveDialogBody>
+      </ResponsiveDialogContent>
+    </ResponsiveDialog>
   )
 }
