@@ -11,7 +11,9 @@
       "types": "./src/index.ts"
     }
   },
-  "scripts": {},
+  "scripts": {
+    "build": "tsc -p tsconfig.build.json"
+  },
   "devDependencies": {
     "typescript": "~5.9.3"
   },
