@@ -13,7 +13,7 @@ FROM deps AS build
 COPY packages/shared/ packages/shared/
 COPY packages/server/ packages/server/
 COPY packages/client/ packages/client/
-RUN pnpm --filter @music-together/shared run build 2>/dev/null || true
+RUN pnpm --filter @music-together/shared run build
 RUN pnpm --filter @music-together/server run build
 RUN pnpm --filter @music-together/client run build
 
@@ -34,7 +34,10 @@ RUN pnpm install --frozen-lockfile --prod --filter @music-together/server...
 # 复制构建产物
 COPY --from=build /app/packages/server/dist packages/server/dist
 COPY --from=build /app/packages/client/dist packages/client/dist
-COPY packages/shared/src packages/shared/src
+COPY --from=build /app/packages/shared/dist packages/shared/dist
+
+# 生产环境：将 shared 的 exports 从 src(TS) 切换到 dist(JS)
+RUN sed -i 's|./src/index.ts|./dist/index.js|g' packages/shared/package.json
 
 EXPOSE 3001
 ENV NODE_ENV=production
