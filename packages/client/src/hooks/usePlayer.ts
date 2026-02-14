@@ -1,11 +1,11 @@
-import { useCallback, useEffect, useRef } from 'react'
-import { EVENTS } from '@music-together/shared'
-import type { Track, ScheduledPlayState } from '@music-together/shared'
-import { useSocketContext } from '@/providers/SocketProvider'
+import { getServerTime } from '@/lib/clockSync'
 import { PLAYER_PLAY_DEDUP_MS } from '@/lib/constants'
+import { useSocketContext } from '@/providers/SocketProvider'
 import { usePlayerStore } from '@/stores/playerStore'
 import { useRoomStore } from '@/stores/roomStore'
-import { getServerTime } from '@/lib/clockSync'
+import type { ScheduledPlayState, Track } from '@music-together/shared'
+import { EVENTS } from '@music-together/shared'
+import { useCallback, useEffect, useRef } from 'react'
 import { useHowl } from './useHowl'
 import { useLyric } from './useLyric'
 import { usePlayerSync } from './usePlayerSync'
@@ -25,11 +25,30 @@ export function usePlayer() {
   const loadingRef = useRef<{ trackId: string; ts: number } | null>(null)
 
   const next = useCallback(() => socket.emit(EVENTS.PLAYER_NEXT), [socket])
-  const { howlRef, syncReadyRef, soundIdRef, loadTrack } = useHowl(next)
+
+  // Auto-next on song end: only host/admin emit PLAYER_NEXT.
+  // Members silently wait — the host's client will advance the queue.
+  const autoNext = useCallback(() => {
+    const role = useRoomStore.getState().currentUser?.role
+    if (role === 'host' || role === 'admin') {
+      socket.emit(EVENTS.PLAYER_NEXT)
+    }
+  }, [socket])
+
+  const { howlRef, soundIdRef, loadTrack } = useHowl(autoNext)
   const { fetchLyric } = useLyric()
 
-  // Connect sync (handles SEEK, PAUSE, RESUME, SYNC_RESPONSE + host reporting)
-  usePlayerSync(howlRef, syncReadyRef, soundIdRef)
+  // Connect sync (handles SEEK, PAUSE, RESUME + host reporting)
+  usePlayerSync(howlRef, soundIdRef)
+
+  // Reset dedup ref on disconnect so reconnect PLAYER_PLAY is never blocked
+  useEffect(() => {
+    const onDisconnect = () => {
+      loadingRef.current = null
+    }
+    socket.on('disconnect', onDisconnect)
+    return () => { socket.off('disconnect', onDisconnect) }
+  }, [socket])
 
   // Listen for PLAYER_PLAY events (new track load)
   const playTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null)
@@ -45,6 +64,16 @@ export function usePlayer() {
         return
       }
       loadingRef.current = { trackId: data.track.id, ts: now }
+
+      // Keep roomStore in sync so recovery effect sees the correct currentTrack
+      useRoomStore.getState().updateRoom({
+        currentTrack: data.track,
+        playState: {
+          isPlaying: data.playState.isPlaying,
+          currentTime: data.playState.currentTime,
+          serverTimestamp: data.playState.serverTimestamp,
+        },
+      })
 
       const ct = data.playState.currentTime
 
@@ -89,11 +118,29 @@ export function usePlayer() {
     let hasRecovered = false
 
     const recover = () => {
-      if (hasRecovered) return
       const { room } = useRoomStore.getState()
-      if (!room) return
+
+      // When room becomes null (disconnect), reset flag so next reconnect can recover
+      if (!room) {
+        hasRecovered = false
+        return
+      }
+
+      if (hasRecovered) return
       const playerTrack = usePlayerStore.getState().currentTrack
       const roomTrack = room.currentTrack
+
+      // Server has cleared the track (queue empty / cleared) — reset client
+      if (!roomTrack && playerTrack) {
+        hasRecovered = true
+        if (howlRef.current) {
+          try { howlRef.current.unload() } catch { /* ignore */ }
+          howlRef.current = null
+        }
+        soundIdRef.current = undefined
+        usePlayerStore.getState().reset()
+        return
+      }
 
       // Server has track but client doesn't (HMR reset / missed PLAYER_PLAY)
       if (roomTrack?.streamUrl && (!playerTrack || !howlRef.current)) {

@@ -1,4 +1,5 @@
 import type { MusicSource } from '@music-together/shared'
+import { nanoid } from 'nanoid'
 
 const PREFIX = 'mt-'
 
@@ -64,6 +65,16 @@ const MOBILE_LYRIC_POSITIONS = ['below', 'above'] as const
 const LYRIC_FONT_SIZES = [75, 90, 100, 110, 125, 150] as const
 
 export const storage = {
+  /** Persistent user identity — generated once and stored in localStorage */
+  getUserId: (): string => {
+    let id = safeGet('userId')
+    if (!id) {
+      id = nanoid()
+      safeSet('userId', id)
+    }
+    return id
+  },
+
   getNickname: () => safeGet('nickname') ?? '',
   setNickname: (v: string) => safeSet('nickname', v),
 

@@ -1,5 +1,4 @@
-import { EVENTS, playerSeekSchema, playerSyncSchema } from '@music-together/shared'
-import { config } from '../config.js'
+import { EVENTS, playerSeekSchema, playerSetModeSchema, playerSyncSchema } from '@music-together/shared'
 import { roomRepo } from '../repositories/roomRepository.js'
 import * as playerService from '../services/playerService.js'
 import * as queueService from '../services/queueService.js'
@@ -8,14 +7,6 @@ import { estimateCurrentTime } from '../services/syncService.js'
 import { createWithPermission } from '../middleware/withControl.js'
 import { logger } from '../utils/logger.js'
 import type { TypedServer, TypedSocket } from '../middleware/types.js'
-
-// Debounce tracking for PLAYER_NEXT per room (entries are cleaned by cleanupRoom)
-const lastNextTimestamp = new Map<string, number>()
-
-/** Remove debounce entry for a deleted room */
-export function cleanupRoom(roomId: string): void {
-  lastNextTimestamp.delete(roomId)
-}
 
 export function registerPlayerController(io: TypedServer, socket: TypedSocket) {
   const withPermission = createWithPermission(io)
@@ -56,12 +47,9 @@ export function registerPlayerController(io: TypedServer, socket: TypedSocket) {
     EVENTS.PLAYER_NEXT,
     withPermission('next', 'Player', async (ctx) => {
       // Debounce: ignore if another NEXT was processed recently for this room
-      const now = Date.now()
-      const lastNext = lastNextTimestamp.get(ctx.roomId) ?? 0
-      if (now - lastNext < config.player.nextDebounceMs) return
-      lastNextTimestamp.set(ctx.roomId, now)
+      if (playerService.isNextDebounced(ctx.roomId)) return
 
-      const nextTrack = queueService.getNextTrack(ctx.roomId)
+      const nextTrack = queueService.getNextTrack(ctx.roomId, ctx.room.playMode)
       if (!nextTrack) {
         playerService.setCurrentTrack(ctx.roomId, null)
         ctx.io.to(ctx.roomId).emit(EVENTS.PLAYER_PAUSE, {
@@ -76,7 +64,7 @@ export function registerPlayerController(io: TypedServer, socket: TypedSocket) {
 
       // If stream URL failed, try the next one after that
       if (!success) {
-        const skipTrack = queueService.getNextTrack(ctx.roomId)
+        const skipTrack = queueService.getNextTrack(ctx.roomId, ctx.room.playMode)
         if (skipTrack) {
           await playerService.playTrackInRoom(ctx.io, ctx.roomId, skipTrack)
         }
@@ -87,10 +75,7 @@ export function registerPlayerController(io: TypedServer, socket: TypedSocket) {
   socket.on(
     EVENTS.PLAYER_PREV,
     withPermission('prev', 'Player', async (ctx) => {
-      const now = Date.now()
-      const lastNext = lastNextTimestamp.get(ctx.roomId) ?? 0
-      if (now - lastNext < config.player.nextDebounceMs) return
-      lastNextTimestamp.set(ctx.roomId, now)
+      if (playerService.isNextDebounced(ctx.roomId)) return
 
       const prevTrack = queueService.getPreviousTrack(ctx.roomId)
       if (!prevTrack) return // already at the start, do nothing
@@ -106,12 +91,24 @@ export function registerPlayerController(io: TypedServer, socket: TypedSocket) {
     }),
   )
 
+  socket.on(
+    EVENTS.PLAYER_SET_MODE,
+    withPermission('set-mode', 'Player', (ctx, data) => {
+      const parsed = playerSetModeSchema.safeParse(data)
+      if (!parsed.success) return
+      ctx.room.playMode = parsed.data.mode
+      // Broadcast updated room state so all clients see the new play mode
+      ctx.io.to(ctx.roomId).emit(EVENTS.ROOM_STATE, roomService.toPublicRoomState(ctx.room))
+      logger.info(`Play mode set to ${parsed.data.mode}`, { roomId: ctx.roomId })
+    }),
+  )
+
   // ---------------------------------------------------------------------------
   // NTP clock synchronisation – reply instantly with server time
   // ---------------------------------------------------------------------------
   socket.on(EVENTS.NTP_PING, (data) => {
     // Store client-reported RTT for adaptive scheduling delay
-    if (data?.lastRttMs != null && data.lastRttMs > 0) {
+    if (data?.lastRttMs != null && data.lastRttMs > 0 && data.lastRttMs <= 10_000) {
       roomRepo.setSocketRTT(socket.id, data.lastRttMs)
     }
 
@@ -121,7 +118,8 @@ export function registerPlayerController(io: TypedServer, socket: TypedSocket) {
     })
   })
 
-  // Host reports real playback position (hybrid sync calibration)
+  // Host reports real playback position (keeps server-side playState accurate
+  // for mid-song joiners and reconnection recovery — no forwarding to clients)
   socket.on(EVENTS.PLAYER_SYNC, (raw) => {
     try {
       const parsed = playerSyncSchema.safeParse(raw)
@@ -133,16 +131,9 @@ export function registerPlayerController(io: TypedServer, socket: TypedSocket) {
       const room = roomRepo.get(mapping.roomId)
       if (!room) return
       // Only accept reports from the host
-      if (room.hostId !== socket.id) return
+      if (room.hostId !== mapping.userId) return
 
       room.playState = { ...room.playState, currentTime, serverTimestamp: Date.now() }
-
-      // 立即转发给房间内其他客户端（不含 host 自己）
-      socket.to(mapping.roomId).emit(EVENTS.PLAYER_SYNC_RESPONSE, {
-        currentTime,
-        isPlaying: room.playState.isPlaying,
-        serverTimestamp: Date.now(),
-      })
     } catch (err) {
       // Sync is best-effort; log but don't emit error to avoid noise
       logger.error('PLAYER_SYNC handler error', err, { socketId: socket.id })

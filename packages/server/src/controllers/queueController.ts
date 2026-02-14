@@ -92,4 +92,27 @@ export function registerQueueController(io: TypedServer, socket: TypedSocket) {
       logger.info(`Queue reordered`, { roomId: ctx.roomId })
     }),
   )
+
+  socket.on(
+    EVENTS.QUEUE_CLEAR,
+    withPermission('remove', 'Queue', (ctx) => {
+      queueService.clearQueue(ctx.roomId)
+      io.to(ctx.roomId).emit(EVENTS.QUEUE_UPDATED, { queue: [] })
+
+      // Stop playback
+      playerService.setCurrentTrack(ctx.roomId, null)
+      io.to(ctx.roomId).emit(EVENTS.PLAYER_PAUSE, {
+        playState: { isPlaying: false, currentTime: 0, serverTimestamp: Date.now(), serverTimeToExecute: Date.now() },
+      })
+
+      // Broadcast full ROOM_STATE so clients clear the stale currentTrack
+      const updatedRoom = roomService.getRoom(ctx.roomId)
+      if (updatedRoom) {
+        io.to(ctx.roomId).emit(EVENTS.ROOM_STATE, roomService.toPublicRoomState(updatedRoom))
+      }
+      roomService.broadcastRoomList(io)
+
+      logger.info(`Queue cleared`, { roomId: ctx.roomId })
+    }),
+  )
 }

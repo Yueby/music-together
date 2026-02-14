@@ -1,3 +1,4 @@
+import { storage } from '@/lib/storage'
 import { useSocketContext } from '@/providers/SocketProvider'
 import { useLobbyStore } from '@/stores/lobbyStore'
 import { EVENTS, type RoomListItem } from '@music-together/shared'
@@ -30,14 +31,14 @@ export function useLobby() {
 
   const createRoom = useCallback(
     (nickname: string, roomName?: string, password?: string) => {
-      socket.emit(EVENTS.ROOM_CREATE, { nickname, roomName, password })
+      socket.emit(EVENTS.ROOM_CREATE, { nickname, roomName, password, userId: storage.getUserId() })
     },
     [socket],
   )
 
   const joinRoom = useCallback(
     (roomId: string, nickname: string, password?: string) => {
-      socket.emit(EVENTS.ROOM_JOIN, { roomId, nickname, password })
+      socket.emit(EVENTS.ROOM_JOIN, { roomId, nickname, password, userId: storage.getUserId() })
     },
     [socket],
   )

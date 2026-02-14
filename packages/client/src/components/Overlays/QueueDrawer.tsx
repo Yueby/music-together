@@ -13,27 +13,61 @@ import { usePlayerStore } from '@/stores/playerStore'
 import { useRoomStore } from '@/stores/roomStore'
 import type { Track } from '@music-together/shared'
 import { useIsMobile } from '@/hooks/useIsMobile'
-import { useContext } from 'react'
+import { useCallback, useContext, useEffect, useRef, useState } from 'react'
 import { AbilityContext } from '@/providers/AbilityProvider'
-import { ChevronDown, ChevronUp, Music, Trash2, User, X } from 'lucide-react'
+import { ChevronDown, ChevronUp, ListX, Music, Trash2, User, X } from 'lucide-react'
 import { AnimatePresence, motion } from 'motion/react'
+import type { MusicSource } from '@music-together/shared'
 
 const EMPTY_QUEUE: Track[] = []
+
+const SOURCE_STYLE: Record<MusicSource, { label: string; className: string }> = {
+  netease: { label: '网易', className: 'text-white bg-red-500 ring-red-600/50' },
+  tencent: { label: 'QQ', className: 'text-white bg-green-500 ring-green-600/50' },
+  kugou: { label: '酷狗', className: 'text-white bg-blue-500 ring-blue-600/50' },
+}
 
 interface QueueDrawerProps {
   open: boolean
   onOpenChange: (open: boolean) => void
   onRemoveFromQueue: (trackId: string) => void
   onReorderQueue: (trackIds: string[]) => void
+  onClearQueue: () => void
 }
 
-export function QueueDrawer({ open, onOpenChange, onRemoveFromQueue, onReorderQueue }: QueueDrawerProps) {
+export function QueueDrawer({ open, onOpenChange, onRemoveFromQueue, onReorderQueue, onClearQueue }: QueueDrawerProps) {
   const queue = useRoomStore((s) => s.room?.queue ?? EMPTY_QUEUE)
   const currentTrack = usePlayerStore((s) => s.currentTrack)
   const isMobile = useIsMobile()
   const ability = useContext(AbilityContext)
   const canRemove = ability.can('remove', 'Queue')
   const canReorder = ability.can('reorder', 'Queue')
+  const [confirmClear, setConfirmClear] = useState(false)
+  const confirmTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null)
+
+  // Clear the confirm-dismiss timer on unmount
+  useEffect(() => () => {
+    if (confirmTimerRef.current) clearTimeout(confirmTimerRef.current)
+  }, [])
+
+  const handleClear = useCallback(() => {
+    if (!confirmClear) {
+      setConfirmClear(true)
+      // Auto-dismiss after 3s
+      if (confirmTimerRef.current) clearTimeout(confirmTimerRef.current)
+      confirmTimerRef.current = setTimeout(() => {
+        confirmTimerRef.current = null
+        setConfirmClear(false)
+      }, 3000)
+      return
+    }
+    if (confirmTimerRef.current) {
+      clearTimeout(confirmTimerRef.current)
+      confirmTimerRef.current = null
+    }
+    onClearQueue()
+    setConfirmClear(false)
+  }, [confirmClear, onClearQueue])
 
   const handleMoveUp = (index: number) => {
     if (index <= 0) return
@@ -63,17 +97,40 @@ export function QueueDrawer({ open, onOpenChange, onRemoveFromQueue, onReorderQu
               <Music className="h-4 w-4" />
               播放列表 ({queue.length})
             </DrawerTitle>
-            {!isMobile && (
-              <Button
-                variant="ghost"
-                size="icon"
-                className="h-7 w-7"
-                onClick={() => onOpenChange(false)}
-                aria-label="关闭播放列表"
-              >
-                <X className="h-4 w-4" />
-              </Button>
-            )}
+            <div className="flex items-center gap-1">
+              {canRemove && queue.length > 0 && (
+                <Tooltip delayDuration={300}>
+                  <TooltipTrigger asChild>
+                    <Button
+                      variant="ghost"
+                      size="icon"
+                      className={cn(
+                        'h-7 w-7',
+                        confirmClear && 'text-destructive hover:text-destructive',
+                      )}
+                      onClick={handleClear}
+                      aria-label="清空播放列表"
+                    >
+                      <ListX className="h-4 w-4" />
+                    </Button>
+                  </TooltipTrigger>
+                  <TooltipContent>
+                    {confirmClear ? '再次点击确认清空' : '清空播放列表'}
+                  </TooltipContent>
+                </Tooltip>
+              )}
+              {!isMobile && (
+                <Button
+                  variant="ghost"
+                  size="icon"
+                  className="h-7 w-7"
+                  onClick={() => onOpenChange(false)}
+                  aria-label="关闭播放列表"
+                >
+                  <X className="h-4 w-4" />
+                </Button>
+              )}
+            </div>
           </div>
         </DrawerHeader>
 
@@ -102,18 +159,28 @@ export function QueueDrawer({ open, onOpenChange, onRemoveFromQueue, onReorderQu
                     {i + 1}
                   </span>
 
-                  {/* Cover */}
-                  {track.cover ? (
-                    <img
-                      src={track.cover}
-                      alt={track.title}
-                      className="h-9 w-9 shrink-0 rounded object-cover"
-                    />
-                  ) : (
-                    <div className="flex h-9 w-9 shrink-0 items-center justify-center rounded bg-muted">
-                      <Music className="h-4 w-4 text-muted-foreground" />
-                    </div>
-                  )}
+                  {/* Cover + source badge */}
+                  <div className="relative shrink-0">
+                    {track.cover ? (
+                      <img
+                        src={track.cover}
+                        alt={track.title}
+                        className="h-9 w-9 rounded object-cover"
+                      />
+                    ) : (
+                      <div className="flex h-9 w-9 items-center justify-center rounded bg-muted">
+                        <Music className="h-4 w-4 text-muted-foreground" />
+                      </div>
+                    )}
+                    {track.source && SOURCE_STYLE[track.source] && (
+                      <span className={cn(
+                        'absolute -bottom-1 -right-1 rounded px-0.5 text-[8px] font-bold leading-tight ring-1',
+                        SOURCE_STYLE[track.source].className,
+                      )}>
+                        {SOURCE_STYLE[track.source].label}
+                      </span>
+                    )}
+                  </div>
 
                   {/* Track info */}
                   <div className="min-w-0 flex-1">

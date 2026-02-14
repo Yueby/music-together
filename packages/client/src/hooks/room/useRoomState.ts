@@ -12,6 +12,10 @@ import { toast } from 'sonner'
  * ROOM_STATE, ROOM_USER_JOINED/LEFT, ROOM_SETTINGS, ROOM_ROLE_CHANGED, ROOM_ERROR.
  *
  * Also auto-resends persisted auth cookies on ROOM_STATE (join/reconnect).
+ *
+ * NOTE: `currentUser` is now auto-derived inside `roomStore` whenever `room`
+ * changes (setRoom / addUser / removeUser / updateRoom).  No manual
+ * `setCurrentUser` calls are needed here.
  */
 export function useRoomState() {
   const navigate = useNavigate()
@@ -21,12 +25,8 @@ export function useRoomState() {
 
   useEffect(() => {
     const onRoomState = (roomState: RoomState) => {
+      // setRoom automatically derives currentUser from room.users
       useRoomStore.getState().setRoom(roomState)
-      const me = roomState.users.find((u) => u.id === socket.id)
-      if (me) {
-        const role: UserRole = roomState.hostId === socket.id ? 'host' : me.role
-        useRoomStore.getState().setCurrentUser({ ...me, role })
-      }
 
       // Auto-resend persisted auth cookies so the room's cookie pool is populated
       const storedCookies = storage.getAuthCookies()
@@ -54,13 +54,15 @@ export function useRoomState() {
       const updatedUsers = room.users.map((u) =>
         u.id === data.userId ? { ...u, role: data.role } : u,
       )
+      // updateRoom with users automatically re-derives currentUser
       store.updateRoom({ users: updatedUsers })
-      if (data.userId === store.currentUser?.id) {
-        store.setCurrentUser({ ...store.currentUser, role: data.role })
-      }
     }
 
     const onError = (error: { code: string; message: string }) => {
+      // WRONG_PASSWORD is handled by RoomPage's own UI (gate password field),
+      // so skip the generic toast to avoid duplicate feedback.
+      if (error.code === ERROR_CODE.WRONG_PASSWORD) return
+
       toast.error(error.message)
       if (error.code === ERROR_CODE.ROOM_NOT_FOUND) {
         navigateRef.current('/', { replace: true })

@@ -6,6 +6,8 @@ export class InMemoryRoomRepository implements RoomRepository {
   private socketToRoom = new Map<string, SocketMapping>()
   /** Smoothed RTT per socket (ms).  Cleaned up together with socket mapping. */
   private socketRTT = new Map<string, number>()
+  /** Reverse index: roomId → Set of socketIds.  Keeps getMaxRTT O(room sockets) instead of O(all sockets). */
+  private roomToSockets = new Map<string, Set<string>>()
 
   get(roomId: string): RoomData | undefined {
     return this.rooms.get(roomId)
@@ -17,6 +19,8 @@ export class InMemoryRoomRepository implements RoomRepository {
 
   delete(roomId: string): void {
     this.rooms.delete(roomId)
+    // Clean up reverse index for the deleted room
+    this.roomToSockets.delete(roomId)
   }
 
   getAll(): ReadonlyMap<string, RoomData> {
@@ -39,7 +43,25 @@ export class InMemoryRoomRepository implements RoomRepository {
   }
 
   setSocketMapping(socketId: string, roomId: string, userId: string): void {
+    // Remove from previous room's reverse index (if socket was mapped before)
+    const prev = this.socketToRoom.get(socketId)
+    if (prev) {
+      const prevSet = this.roomToSockets.get(prev.roomId)
+      if (prevSet) {
+        prevSet.delete(socketId)
+        if (prevSet.size === 0) this.roomToSockets.delete(prev.roomId)
+      }
+    }
+
     this.socketToRoom.set(socketId, { roomId, userId })
+
+    // Add to new room's reverse index
+    let socketSet = this.roomToSockets.get(roomId)
+    if (!socketSet) {
+      socketSet = new Set()
+      this.roomToSockets.set(roomId, socketSet)
+    }
+    socketSet.add(socketId)
   }
 
   getSocketMapping(socketId: string): SocketMapping | undefined {
@@ -47,8 +69,29 @@ export class InMemoryRoomRepository implements RoomRepository {
   }
 
   deleteSocketMapping(socketId: string): void {
+    // Remove from reverse index
+    const mapping = this.socketToRoom.get(socketId)
+    if (mapping) {
+      const socketSet = this.roomToSockets.get(mapping.roomId)
+      if (socketSet) {
+        socketSet.delete(socketId)
+        if (socketSet.size === 0) this.roomToSockets.delete(mapping.roomId)
+      }
+    }
+
     this.socketToRoom.delete(socketId)
     this.socketRTT.delete(socketId)
+  }
+
+  hasOtherSocketForUser(roomId: string, userId: string, excludeSocketId: string): boolean {
+    const sockets = this.roomToSockets.get(roomId)
+    if (!sockets) return false
+    for (const sid of sockets) {
+      if (sid === excludeSocketId) continue
+      const mapping = this.socketToRoom.get(sid)
+      if (mapping && mapping.userId === userId && mapping.roomId === roomId) return true
+    }
+    return false
   }
 
   setSocketRTT(socketId: string, rttMs: number): void {
@@ -66,15 +109,12 @@ export class InMemoryRoomRepository implements RoomRepository {
   }
 
   getMaxRTT(roomId: string): number {
-    const room = this.rooms.get(roomId)
-    if (!room) return 0
+    const sockets = this.roomToSockets.get(roomId)
+    if (!sockets) return 0
     let max = 0
-    // Walk through all socket mappings to find sockets in this room
-    for (const [socketId, mapping] of this.socketToRoom) {
-      if (mapping.roomId === roomId) {
-        const rtt = this.socketRTT.get(socketId) ?? 0
-        if (rtt > max) max = rtt
-      }
+    for (const socketId of sockets) {
+      const rtt = this.socketRTT.get(socketId) ?? 0
+      if (rtt > max) max = rtt
     }
     return max
   }

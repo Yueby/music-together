@@ -1,4 +1,4 @@
-import type { ChatMessage, PlayState, RoomListItem, Track, User } from '@music-together/shared'
+import type { ChatMessage, PlayMode, PlayState, RoomListItem, Track, User } from '@music-together/shared'
 
 /** 服务端内部房间数据模型 -- 含密码（永远不发送给客户端） */
 export interface RoomData {
@@ -10,6 +10,7 @@ export interface RoomData {
   queue: Track[]
   currentTrack: Track | null
   playState: PlayState
+  playMode: PlayMode
 }
 
 export interface SocketMapping {
@@ -27,6 +28,8 @@ export interface RoomRepository {
   setSocketMapping(socketId: string, roomId: string, userId: string): void
   getSocketMapping(socketId: string): SocketMapping | undefined
   deleteSocketMapping(socketId: string): void
+  /** Check if a user has another active socket in the same room (excluding a specific socket) */
+  hasOtherSocketForUser(roomId: string, userId: string, excludeSocketId: string): boolean
   /** Store a smoothed RTT measurement for a given socket */
   setSocketRTT(socketId: string, rttMs: number): void
   /** Retrieve the current smoothed RTT for a socket (default 0) */

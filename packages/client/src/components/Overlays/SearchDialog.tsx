@@ -47,7 +47,9 @@ export function SearchDialog({ open, onOpenChange, onAddToQueue }: SearchDialogP
   const abortRef = useRef<AbortController | null>(null)
   const searchIdRef = useRef(0)
   const queue = useRoomStore((s) => s.room?.queue ?? EMPTY_QUEUE)
-  const queueIds = useMemo(() => new Set(queue.map((t) => t.id)), [queue])
+  /** Use stable source:sourceId as key instead of nanoid-generated track.id */
+  const trackKey = (t: Track) => `${t.source}:${t.sourceId}`
+  const queueKeys = useMemo(() => new Set(queue.map(trackKey)), [queue])
 
   // Cancel any in-flight request on unmount
   useEffect(() => {
@@ -134,7 +136,7 @@ export function SearchDialog({ open, onOpenChange, onAddToQueue }: SearchDialogP
 
   const handleAdd = (track: Track) => {
     onAddToQueue(track)
-    setAddedIds((prev) => new Set(prev).add(track.id))
+    setAddedIds((prev) => new Set(prev).add(trackKey(track)))
     toast.success(`已添加: ${track.title}`)
   }
 
@@ -148,7 +150,6 @@ export function SearchDialog({ open, onOpenChange, onAddToQueue }: SearchDialogP
 
   const handleOpenChange = (nextOpen: boolean) => {
     onOpenChange(nextOpen)
-    if (!nextOpen) resetState()
   }
 
   return (
@@ -226,7 +227,7 @@ export function SearchDialog({ open, onOpenChange, onAddToQueue }: SearchDialogP
                     key={`${track.id}-${i}`}
                     track={track}
                     index={i}
-                    isAdded={addedIds.has(track.id) || queueIds.has(track.id)}
+                    isAdded={addedIds.has(trackKey(track)) || queueKeys.has(trackKey(track))}
                     onAdd={handleAdd}
                     onSearchArtist={handleSearch}
                   />

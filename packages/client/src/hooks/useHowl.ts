@@ -15,7 +15,7 @@ const PLAY_ERROR_TIMEOUT_MS = 3000
 /**
  * Manages a Howl audio instance with two-phase loading strategy:
  * Phase 1: Create Howl with volume=0 (silent)
- * Phase 2: onload → seek to target → delay → unmute
+ * Phase 2: onload → seek to target → delay → fade-in unmute
  */
 export function useHowl(onTrackEnd: () => void) {
   const howlRef = useRef<Howl | null>(null)
@@ -77,6 +77,7 @@ export function useHowl(onTrackEnd: () => void) {
         format: ['mp3'],
         volume: 0,
         onload: () => {
+          if (howlRef.current !== howl) return // Stale instance guard
           usePlayerStore.getState().setDuration(howl.duration())
           if (autoPlay) {
             if (seekTo && seekTo > 0) {
@@ -94,7 +95,8 @@ export function useHowl(onTrackEnd: () => void) {
             }
             unmuteTimerRef.current = setTimeout(() => {
               if (howlRef.current === howl) {
-                howl.volume(currentVolume)
+                const latestVolume = usePlayerStore.getState().volume
+                howl.fade(0, latestVolume, 200) // Smooth fade-in with latest volume
                 syncReadyRef.current = true
               }
             }, seekTo && seekTo > 0 ? HOWL_UNMUTE_DELAY_SEEK_MS : HOWL_UNMUTE_DELAY_DEFAULT_MS)
@@ -134,6 +136,7 @@ export function useHowl(onTrackEnd: () => void) {
             onTrackEnd()
           }, PLAY_ERROR_TIMEOUT_MS)
           howl.once('unlock', () => {
+            if (howlRef.current !== howl) return // Already switched or unmounted
             if (playErrorTimerRef.current) {
               clearTimeout(playErrorTimerRef.current)
               playErrorTimerRef.current = null
@@ -175,5 +178,5 @@ export function useHowl(onTrackEnd: () => void) {
     }
   }, [stopTimeUpdate])
 
-  return { howlRef, syncReadyRef, soundIdRef, loadTrack }
+  return { howlRef, soundIdRef, loadTrack }
 }

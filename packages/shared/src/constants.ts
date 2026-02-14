@@ -12,8 +12,8 @@ export const LIMITS = {
 } as const
 
 export const TIMING = {
-  SYNC_BROADCAST_INTERVAL_MS: 5_000,
-  ROOM_GRACE_PERIOD_MS: 30_000,
+  ROOM_GRACE_PERIOD_MS: 60_000,
+  ROLE_GRACE_PERIOD_MS: 30_000,
   PLAYER_NEXT_DEBOUNCE_MS: 500,
   VOTE_TIMEOUT_MS: 30_000,
 } as const
@@ -23,9 +23,9 @@ export const NTP = {
   /** Fast sampling interval during initial calibration (ms) */
   INITIAL_INTERVAL_MS: 50,
   /** Steady-state heartbeat interval after initial calibration (ms) */
-  STEADY_STATE_INTERVAL_MS: 2_500,
+  STEADY_STATE_INTERVAL_MS: 5_000,
   /** Number of rapid samples to collect during initial calibration */
-  MAX_INITIAL_SAMPLES: 30,
+  MAX_INITIAL_SAMPLES: 20,
   /** Maximum stored measurements (sliding window) */
   MAX_MEASUREMENTS: 60,
   /** Minimum scheduling delay for scheduled execution (ms) */

@@ -16,6 +16,7 @@
     "dotenv": "^16.4.5",
     "escape-html": "^1.0.3",
     "express": "^4.21.0",
+    "lru-cache": "^11.2.6",
     "nanoid": "^5.0.9",
     "p-limit": "^7.3.0",
     "pino": "^10.3.1",

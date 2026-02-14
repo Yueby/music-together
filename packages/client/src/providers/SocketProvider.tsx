@@ -1,7 +1,6 @@
 import { createContext, useContext, useEffect, useMemo, useRef, useState, type ReactNode } from 'react'
 import { connectSocket, type TypedSocket } from '@/lib/socket'
 import { toast } from 'sonner'
-import { useClockSync } from '@/hooks/useClockSync'
 
 interface SocketContextValue {
   socket: TypedSocket
@@ -61,16 +60,9 @@ export function SocketProvider({ children }: { children: ReactNode }) {
 
   return (
     <SocketContext.Provider value={value}>
-      <ClockSyncRunner />
       {children}
     </SocketContext.Provider>
   )
-}
-
-/** Invisible component that runs the NTP clock-sync loop. */
-function ClockSyncRunner() {
-  useClockSync()
-  return null
 }
 
 export function useSocketContext(): SocketContextValue {

@@ -1,11 +1,14 @@
 import { SERVER_URL } from '@/lib/config'
 import { usePlayerStore } from '@/stores/playerStore'
 import type { Track } from '@music-together/shared'
-import { useCallback, useRef } from 'react'
+import { useCallback, useEffect, useRef } from 'react'
 
 export function useLyric() {
   const setLyric = usePlayerStore((s) => s.setLyric)
   const abortRef = useRef<AbortController | null>(null)
+
+  // Abort any in-flight lyric request on unmount
+  useEffect(() => () => { abortRef.current?.abort() }, [])
 
   const fetchLyric = useCallback(
     async (track: Track) => {

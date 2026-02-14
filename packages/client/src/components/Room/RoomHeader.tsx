@@ -1,6 +1,8 @@
 import { Copy, LogOut, Search, Settings, Users, Wifi, WifiOff } from 'lucide-react'
+import { useEffect, useState } from 'react'
 import { Button } from '@/components/ui/button'
 import { Tooltip, TooltipContent, TooltipTrigger } from '@/components/ui/tooltip'
+import { getMedianRTT } from '@/lib/clockSync'
 import { useRoomStore } from '@/stores/roomStore'
 import { useSocketContext } from '@/providers/SocketProvider'
 import { toast } from 'sonner'
@@ -18,6 +20,23 @@ export function RoomHeader({ onOpenSearch, onOpenSettings, onOpenMembers, onLeav
   const roomId = useRoomStore((s) => s.room?.id)
   const userCount = useRoomStore((s) => s.room?.users.length ?? 0)
   const { isConnected } = useSocketContext()
+
+  // Poll RTT from clockSync module every 3s
+  const [rtt, setRtt] = useState(0)
+  useEffect(() => {
+    if (!isConnected) { setRtt(0); return }
+    setRtt(getMedianRTT())
+    const timer = setInterval(() => setRtt(getMedianRTT()), 3000)
+    return () => clearInterval(timer)
+  }, [isConnected])
+
+  const rttColor = !isConnected
+    ? 'text-destructive'
+    : rtt < 100
+      ? 'text-emerald-500/60'
+      : rtt < 300
+        ? 'text-yellow-500/60'
+        : 'text-destructive/60'
 
   const copyRoomId = () => {
     if (roomId) {
@@ -66,19 +85,24 @@ export function RoomHeader({ onOpenSearch, onOpenSettings, onOpenMembers, onLeav
             </Tooltip>
           </>
         )}
-        {/* Connection status indicator */}
+        {/* Connection status + RTT indicator */}
         <Tooltip>
           <TooltipTrigger asChild>
-            <span className="flex items-center" role="status" aria-live="polite" aria-label={isConnected ? '已连接' : '连接断开，正在重连'}>
+            <span className="flex items-center gap-1" role="status" aria-live="polite" aria-label={isConnected ? `已连接 · 延迟 ${Math.round(rtt)}ms` : '连接断开，正在重连'}>
               {isConnected ? (
-                <Wifi className="h-3.5 w-3.5 text-emerald-500/60" />
+                <Wifi className={`h-3.5 w-3.5 ${rttColor}`} />
               ) : (
                 <WifiOff className="h-3.5 w-3.5 text-destructive animate-pulse" />
+              )}
+              {isConnected && (
+                <span className={`text-xs font-mono tabular-nums ${rttColor}`}>
+                  {Math.round(rtt)}ms
+                </span>
               )}
             </span>
           </TooltipTrigger>
           <TooltipContent>
-            {isConnected ? '已连接' : '连接断开，正在重连...'}
+            {isConnected ? `已连接 · 延迟 ${Math.round(rtt)}ms` : '连接断开，正在重连...'}
           </TooltipContent>
         </Tooltip>
       </div>

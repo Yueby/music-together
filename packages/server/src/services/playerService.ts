@@ -5,8 +5,10 @@ import { musicProvider } from './musicProvider.js'
 import * as queueService from './queueService.js'
 import * as authService from './authService.js'
 import { estimateCurrentTime } from './syncService.js'
-import { broadcastRoomList } from './roomService.js'
+import { broadcastRoomList } from './roomLifecycleService.js'
+import { config } from '../config.js'
 import { logger } from '../utils/logger.js'
+import type { RoomData } from '../repositories/types.js'
 import type { TypedServer, TypedSocket } from '../middleware/types.js'
 
 // ---------------------------------------------------------------------------
@@ -166,4 +168,66 @@ export function setCurrentTrack(roomId: string, track: Track | null): void {
       serverTimestamp: Date.now(),
     }
   }
+}
+
+// ---------------------------------------------------------------------------
+// Playback sync for newly-joined clients
+// ---------------------------------------------------------------------------
+
+/**
+ * Send current playback state to a socket that just joined a room.
+ * Handles auto-resume when alone, and auto-play from queue.
+ */
+export async function syncPlaybackToSocket(
+  io: TypedServer,
+  socket: TypedSocket,
+  roomId: string,
+  room: RoomData,
+): Promise<void> {
+  const isAloneInRoom = room.users.length === 1
+
+  if (room.currentTrack?.streamUrl) {
+    // Alone in room + track was paused → auto-resume (host rejoining)
+    const shouldAutoPlay = isAloneInRoom || room.playState.isPlaying
+    if (isAloneInRoom && !room.playState.isPlaying) {
+      room.playState = { ...room.playState, isPlaying: true, serverTimestamp: Date.now() }
+    }
+    socket.emit(EVENTS.PLAYER_PLAY, {
+      track: room.currentTrack,
+      playState: {
+        isPlaying: shouldAutoPlay,
+        currentTime: estimateCurrentTime(roomId),
+        serverTimestamp: Date.now(),
+        serverTimeToExecute: Date.now(),
+      },
+    })
+  } else if (isAloneInRoom && room.queue.length > 0) {
+    // No current track but queue has items → start playing from queue
+    const firstTrack = room.queue[0]
+    await playTrackInRoom(io, roomId, firstTrack)
+  }
+}
+
+// ---------------------------------------------------------------------------
+// Room cleanup & debounce (moved from playerController to fix circular dep)
+// ---------------------------------------------------------------------------
+
+/** Debounce tracking for PLAYER_NEXT per room */
+const lastNextTimestamp = new Map<string, number>()
+
+/** Remove debounce entry for a deleted room */
+export function cleanupRoom(roomId: string): void {
+  lastNextTimestamp.delete(roomId)
+}
+
+/**
+ * Check and update the next-track debounce for a room.
+ * Returns true if the action should be SKIPPED (too soon), false if allowed.
+ */
+export function isNextDebounced(roomId: string): boolean {
+  const now = Date.now()
+  const lastNext = lastNextTimestamp.get(roomId) ?? 0
+  if (now - lastNext < config.player.nextDebounceMs) return true
+  lastNextTimestamp.set(roomId, now)
+  return false
 }

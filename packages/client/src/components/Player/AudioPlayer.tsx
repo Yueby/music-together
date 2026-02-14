@@ -37,7 +37,7 @@ export function AudioPlayer({ onPlay, onPause, onSeek, onNext, onPrev, onOpenCha
     <div
       className={cn(
         'min-h-0 w-full flex-1 overflow-hidden',
-        isMobile && 'px-4',
+        showLyricsAboveControls ? '' : isMobile && 'px-4',
       )}
       style={{ maskImage: 'linear-gradient(to bottom, transparent 0%, black 8%, black 92%, transparent 100%)', WebkitMaskImage: 'linear-gradient(to bottom, transparent 0%, black 8%, black 92%, transparent 100%)' }}
     >
@@ -63,20 +63,22 @@ export function AudioPlayer({ onPlay, onPause, onSeek, onNext, onPrev, onOpenCha
 
       {/* Content with padding */}
       <div className="relative z-10 h-full p-[5%]">
-        <div className="flex h-full flex-col md:flex-row">
+        <div className={cn('flex h-full', isMobile ? 'flex-col' : 'flex-row')}>
           {/* Left: cover + song info + controls (Apple Music style) */}
           <div className={cn(
-            'flex flex-col items-center gap-4 md:gap-8 md:w-[40%] md:justify-center lg:w-[38%]',
-            showLyricsAboveControls ? 'flex-1' : 'justify-center',
+            'relative flex flex-col items-center',
+            isMobile ? 'gap-4' : 'gap-8 w-[40%] justify-center lg:w-[38%]',
+            showLyricsAboveControls && 'flex-1',
           )}>
             {showLyricsAboveControls ? (
               <>
                 <div className="w-full max-w-[min(90%,38vh)]">
                   <NowPlaying />
                 </div>
-                {lyricsSection}
+                <div className="flex min-h-0 w-full max-w-[min(90%,38vh)] flex-1 flex-col">
+                  {lyricsSection}
+                </div>
                 <div className="relative z-10 mt-auto w-full max-w-[min(90%,38vh)]">
-                  {activeVote && <div className="mb-2"><VoteBanner vote={activeVote} onCastVote={castVote} /></div>}
                   <PlayerControls
                     onPlay={onPlay}
                     onPause={onPause}
@@ -91,9 +93,8 @@ export function AudioPlayer({ onPlay, onPause, onSeek, onNext, onPrev, onOpenCha
                 </div>
               </>
             ) : (
-              <div className="flex w-full max-w-[min(90%,38vh)] flex-col gap-4 md:gap-8">
+              <div className={cn('flex w-full max-w-[min(90%,38vh)] flex-col', isMobile ? 'gap-4' : 'gap-8')}>
                 <NowPlaying />
-                {activeVote && <VoteBanner vote={activeVote} onCastVote={castVote} />}
                 <PlayerControls
                   onPlay={onPlay}
                   onPause={onPause}
@@ -105,6 +106,13 @@ export function AudioPlayer({ onPlay, onPause, onSeek, onNext, onPrev, onOpenCha
                   chatUnreadCount={chatUnreadCount}
                   onStartVote={startVote}
                 />
+              </div>
+            )}
+
+            {/* Vote banner: absolute overlay at the bottom, does not displace controls */}
+            {activeVote && (
+              <div className="absolute bottom-0 left-1/2 z-20 w-full max-w-[min(90%,38vh)] -translate-x-1/2 px-2 pb-2">
+                <VoteBanner vote={activeVote} onCastVote={castVote} />
               </div>
             )}
           </div>

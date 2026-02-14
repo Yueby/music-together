@@ -1,6 +1,6 @@
 import type { EVENTS } from './events.js'
 import type {
-  ChatMessage, MusicSource, MyPlatformAuth, PlatformAuthStatus,
+  ChatMessage, MusicSource, MyPlatformAuth, PlayMode, PlatformAuthStatus,
   RoomListItem, RoomState, ScheduledPlayState, Track, User, UserRole, VoteAction, VoteState,
 } from './types.js'
 
@@ -50,11 +50,13 @@ export interface ClientToServerEvents {
     nickname: string
     roomName?: string
     password?: string
+    userId?: string
   }) => void
   [EVENTS.ROOM_JOIN]: (data: {
     roomId: string
     nickname: string
     password?: string
+    userId?: string
   }) => void
   [EVENTS.ROOM_LEAVE]: () => void
   [EVENTS.ROOM_LIST]: () => void
@@ -71,14 +73,16 @@ export interface ClientToServerEvents {
   [EVENTS.PLAYER_PREV]: () => void
   [EVENTS.PLAYER_SYNC]: (data: { currentTime: number }) => void
   [EVENTS.PLAYER_SYNC_REQUEST]: () => void
+  [EVENTS.PLAYER_SET_MODE]: (data: { mode: PlayMode }) => void
 
   [EVENTS.QUEUE_ADD]: (data: { track: Track }) => void
   [EVENTS.QUEUE_REMOVE]: (data: { trackId: string }) => void
   [EVENTS.QUEUE_REORDER]: (data: { trackIds: string[] }) => void
+  [EVENTS.QUEUE_CLEAR]: () => void
 
   [EVENTS.CHAT_MESSAGE]: (data: { content: string }) => void
 
-  [EVENTS.VOTE_START]: (data: { action: VoteAction }) => void
+  [EVENTS.VOTE_START]: (data: { action: VoteAction; payload?: Record<string, unknown> }) => void
   [EVENTS.VOTE_CAST]: (data: { approve: boolean }) => void
 
   // Auth

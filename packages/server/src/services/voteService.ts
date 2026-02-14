@@ -15,6 +15,7 @@ interface Vote {
   expiresAt: number
   timeoutHandle: ReturnType<typeof setTimeout>
   hostId: string
+  payload?: Record<string, unknown>
 }
 
 interface CastResult {
@@ -37,6 +38,7 @@ export function createVote(
   initiator: User,
   action: VoteAction,
   totalUsers: number,
+  payload?: Record<string, unknown>,
 ): Vote | null {
   if (activeVotes.has(roomId)) return null
 
@@ -54,6 +56,7 @@ export function createVote(
     expiresAt: Date.now() + TIMING.VOTE_TIMEOUT_MS,
     timeoutHandle: null as unknown as ReturnType<typeof setTimeout>, // set by controller
     hostId,
+    payload,
   }
 
   activeVotes.set(roomId, vote)
@@ -123,5 +126,6 @@ export function toVoteState(vote: Vote): VoteState {
     requiredVotes: vote.requiredVotes,
     totalUsers: vote.totalUsers,
     expiresAt: vote.expiresAt,
+    payload: vote.payload,
   }
 }
