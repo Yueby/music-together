@@ -1,26 +1,14 @@
-import { timingSafeEqual } from 'node:crypto'
 import { EVENTS, ERROR_CODE, roomCreateSchema, roomJoinSchema, roomSettingsSchema, setRoleSchema } from '@music-together/shared'
 import { roomRepo } from '../repositories/roomRepository.js'
 import * as roomService from '../services/roomService.js'
 import * as chatService from '../services/chatService.js'
 import * as playerService from '../services/playerService.js'
 import * as voteService from '../services/voteService.js'
-import { estimateCurrentTime } from '../services/syncService.js'
-import { createWithRoom } from '../middleware/withRoom.js'
 import { createWithHostOnly } from '../middleware/withControl.js'
 import { logger } from '../utils/logger.js'
 import type { TypedServer, TypedSocket } from '../middleware/types.js'
 
-/** Constant-time string comparison to mitigate timing attacks */
-function safeCompare(a: string, b: string): boolean {
-  const bufA = Buffer.from(a)
-  const bufB = Buffer.from(b)
-  if (bufA.length !== bufB.length) return false
-  return timingSafeEqual(bufA, bufB)
-}
-
 export function registerRoomController(io: TypedServer, socket: TypedSocket) {
-  const withRoom = createWithRoom(io)
   const withHostOnly = createWithHostOnly(io)
 
   // ---- Room list (不需要在房间内) ----
@@ -40,12 +28,12 @@ export function registerRoomController(io: TypedServer, socket: TypedSocket) {
         socket.emit(EVENTS.ROOM_ERROR, { code: ERROR_CODE.INVALID_INPUT, message: parsed.error.issues[0]?.message ?? '输入格式错误' })
         return
       }
-      const { nickname, roomName, password } = parsed.data
+      const { nickname, roomName, password, userId } = parsed.data
 
       // Auto-leave any previous room before creating a new one
-      autoLeaveCurrentRoom(io, socket)
+      handleLeave(io, socket, 'auto-leave before create')
 
-      const { room, user } = roomService.createRoom(socket.id, nickname.trim(), roomName, password)
+      const { room, user } = roomService.createRoom(socket.id, nickname.trim(), roomName, password, userId)
 
       socket.leave('lobby')
       socket.join(room.id)
@@ -68,30 +56,25 @@ export function registerRoomController(io: TypedServer, socket: TypedSocket) {
         socket.emit(EVENTS.ROOM_ERROR, { code: ERROR_CODE.INVALID_INPUT, message: parsed.error.issues[0]?.message ?? '输入格式错误' })
         return
       }
-      const { roomId, nickname, password } = parsed.data
+      const { roomId, nickname, password, userId } = parsed.data
 
-      const room = roomRepo.get(roomId)
-      if (!room) {
-        socket.emit(EVENTS.ROOM_ERROR, { code: ERROR_CODE.ROOM_NOT_FOUND, message: '房间不存在' })
+      // Validate join request (password, rejoin scenarios) — pure business logic
+      const validation = roomService.validateJoinRequest(roomId, socket.id, password, userId)
+      if (!validation.valid) {
+        socket.emit(EVENTS.ROOM_ERROR, {
+          code: ERROR_CODE[validation.errorCode as keyof typeof ERROR_CODE] ?? ERROR_CODE.JOIN_FAILED,
+          message: validation.errorMessage ?? '加入房间失败',
+        })
         return
       }
 
-      // 密码校验（跳过已在该房间内的用户，即重连场景）
-      const existingMapping = roomRepo.getSocketMapping(socket.id)
-      const isRejoin = existingMapping?.roomId === roomId
-      if (!isRejoin && room.password !== null) {
-        if (!password || !safeCompare(password, room.password)) {
-          socket.emit(EVENTS.ROOM_ERROR, { code: ERROR_CODE.WRONG_PASSWORD, message: '密码错误' })
-          return
-        }
-      }
-
       // Auto-leave any previous room (different from target) before joining
+      const existingMapping = roomRepo.getSocketMapping(socket.id)
       if (existingMapping && existingMapping.roomId !== roomId) {
-        autoLeaveCurrentRoom(io, socket)
+        handleLeave(io, socket, 'auto-leave before join')
       }
 
-      const result = roomService.joinRoom(socket.id, roomId, nickname.trim())
+      const result = roomService.joinRoom(socket.id, roomId, nickname.trim(), userId)
       if (!result) {
         socket.emit(EVENTS.ROOM_ERROR, { code: ERROR_CODE.JOIN_FAILED, message: '加入房间失败' })
         return
@@ -106,29 +89,10 @@ export function registerRoomController(io: TypedServer, socket: TypedSocket) {
       socket.emit(EVENTS.ROOM_STATE, roomService.toPublicRoomState(updatedRoom))
       socket.emit(EVENTS.CHAT_HISTORY, chatService.getHistory(roomId))
 
-      // Sync playback state to the joining client
-      const isAloneInRoom = updatedRoom.users.length === 1
-
-      if (updatedRoom.currentTrack?.streamUrl) {
-        // Alone in room + track was paused → auto-resume (host rejoining)
-        const shouldAutoPlay = isAloneInRoom || updatedRoom.playState.isPlaying
-        if (isAloneInRoom && !updatedRoom.playState.isPlaying) {
-          updatedRoom.playState = { ...updatedRoom.playState, isPlaying: true, serverTimestamp: Date.now() }
-        }
-        socket.emit(EVENTS.PLAYER_PLAY, {
-          track: updatedRoom.currentTrack,
-          playState: {
-            isPlaying: shouldAutoPlay,
-            currentTime: estimateCurrentTime(roomId),
-            serverTimestamp: Date.now(),
-            serverTimeToExecute: Date.now(),
-          },
-        })
-      } else if (isAloneInRoom && updatedRoom.queue.length > 0) {
-        // No current track but queue has items → start playing from queue
-        const firstTrack = updatedRoom.queue[0]
-        playerService.playTrackInRoom(io, roomId, firstTrack)
-      }
+      // Sync playback state to the joining client (auto-resume, auto-play)
+      playerService.syncPlaybackToSocket(io, socket, roomId, updatedRoom).catch((err) => {
+        logger.error('syncPlaybackToSocket failed', err, { roomId })
+      })
 
       // Send active vote state if one is in progress
       const activeVote = voteService.getActiveVote(roomId)
@@ -137,7 +101,7 @@ export function registerRoomController(io: TypedServer, socket: TypedSocket) {
       }
 
       // Notify others (skip for rejoin — they already know the user is in the room)
-      if (!isRejoin) {
+      if (!validation.isRejoin) {
         socket.to(roomId).emit(EVENTS.ROOM_USER_JOINED, user)
         // System message for user joined (server-authoritative)
         const joinMsg = chatService.createSystemMessage(roomId, `${user.nickname} 加入了房间`)
@@ -217,42 +181,26 @@ export function registerRoomController(io: TypedServer, socket: TypedSocket) {
     try {
       logger.info(`Client disconnected: ${socket.id}, reason: ${reason}`, { socketId: socket.id })
       handleLeave(io, socket)
+      // Safety net: always clean up socket mapping & RTT data.
+      // handleLeave only cleans up if the socket was in a room, but
+      // NTP_PING can store RTT even for sockets that never joined a room.
+      roomRepo.deleteSocketMapping(socket.id)
     } catch (err) {
       logger.error('disconnect handler error', err, { socketId: socket.id })
     }
   })
 }
 
+// ---------------------------------------------------------------------------
+// Unified leave handler (previously duplicated as autoLeaveCurrentRoom + handleLeave)
+// ---------------------------------------------------------------------------
+
 /**
- * Silently leave the current room (if any).
- * Used before ROOM_CREATE / ROOM_JOIN to ensure a socket is only in one room.
+ * Leave the current room (if any), notify other users, and update lobby.
+ * Used by ROOM_LEAVE, disconnect, and auto-leave before create/join.
  */
-function autoLeaveCurrentRoom(io: TypedServer, socket: TypedSocket): void {
-  const result = roomService.leaveRoom(socket.id)
-  if (!result) return
-
-  const { roomId, user, room, hostChanged } = result
-  socket.leave(roomId)
-  socket.join('lobby')
-  io.to(roomId).emit(EVENTS.ROOM_USER_LEFT, user)
-
-  // System message for user left (server-authoritative)
-  if (room && room.users.length > 0) {
-    const leaveMsg = chatService.createSystemMessage(roomId, `${user.nickname} 离开了房间`)
-    io.to(roomId).emit(EVENTS.CHAT_MESSAGE, leaveMsg)
-  }
-
-  // 房主变更时广播完整状态，确保所有客户端更新 hostId
-  if (hostChanged && room && room.users.length > 0) {
-    io.to(roomId).emit(EVENTS.ROOM_STATE, roomService.toPublicRoomState(room))
-  }
-
-  roomService.broadcastRoomList(io)
-  logger.info(`Auto-left room ${roomId} for socket ${socket.id}`, { roomId, socketId: socket.id })
-}
-
-function handleLeave(io: TypedServer, socket: TypedSocket) {
-  const result = roomService.leaveRoom(socket.id)
+function handleLeave(io: TypedServer, socket: TypedSocket, reason?: string): void {
+  const result = roomService.leaveRoom(socket.id, io)
   if (!result) return
 
   const { roomId, user, room, hostChanged } = result
@@ -273,4 +221,8 @@ function handleLeave(io: TypedServer, socket: TypedSocket) {
 
   // 更新大厅房间列表
   roomService.broadcastRoomList(io)
+
+  if (reason) {
+    logger.info(`${reason}: left room ${roomId} for socket ${socket.id}`, { roomId, socketId: socket.id })
+  }
 }

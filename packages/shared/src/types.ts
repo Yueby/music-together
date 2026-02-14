@@ -24,6 +24,8 @@ export type MusicSource = 'netease' | 'tencent' | 'kugou'
 
 export type UserRole = 'host' | 'admin' | 'member'
 
+export type PlayMode = 'sequential' | 'loop-all' | 'loop-one' | 'shuffle'
+
 export interface Track {
   id: string
   title: string
@@ -53,6 +55,7 @@ export interface RoomState {
   queue: Track[]
   currentTrack: Track | null
   playState: PlayState
+  playMode: PlayMode
 }
 
 export interface PlayState {
@@ -85,7 +88,7 @@ export interface ChatMessage {
   type: 'user' | 'system'
 }
 
-export type VoteAction = 'pause' | 'resume' | 'next' | 'prev'
+export type VoteAction = 'pause' | 'resume' | 'next' | 'prev' | 'set-mode'
 
 export interface VoteState {
   id: string
@@ -96,6 +99,8 @@ export interface VoteState {
   requiredVotes: number
   totalUsers: number
   expiresAt: number
+  /** Optional payload for parameterized actions (e.g. target play mode) */
+  payload?: Record<string, unknown>
 }
 
 /** 房间列表项 -- 用于首页房间大厅展示（轻量，不含完整 queue/users） */

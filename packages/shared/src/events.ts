@@ -24,11 +24,13 @@ export const EVENTS = {
   PLAYER_SYNC: 'player:sync',
   PLAYER_SYNC_REQUEST: 'player:sync_request',
   PLAYER_SYNC_RESPONSE: 'player:sync_response',
+  PLAYER_SET_MODE: 'player:set_mode',
 
   // Queue management
   QUEUE_ADD: 'queue:add',
   QUEUE_REMOVE: 'queue:remove',
   QUEUE_REORDER: 'queue:reorder',
+  QUEUE_CLEAR: 'queue:clear',
   QUEUE_UPDATED: 'queue:updated',
 
   // Chat

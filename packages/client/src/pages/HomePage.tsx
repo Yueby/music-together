@@ -12,7 +12,7 @@ import { ACTION_LOADING_TIMEOUT_MS } from '@/lib/constants'
 import { storage } from '@/lib/storage'
 import { useSocketContext } from '@/providers/SocketProvider'
 import { useRoomStore } from '@/stores/roomStore'
-import { EVENTS, ERROR_CODE, type RoomListItem } from '@music-together/shared'
+import { EVENTS, ERROR_CODE, type RoomListItem, type RoomState } from '@music-together/shared'
 import { Github, Headphones } from 'lucide-react'
 import { motion } from 'motion/react'
 import { useCallback, useEffect, useRef, useState } from 'react'
@@ -44,7 +44,7 @@ export default function HomePage() {
   const directRoomIdRef = useRef(directRoomId)
   directRoomIdRef.current = directRoomId
 
-  const setCurrentUser = useRoomStore((s) => s.setCurrentUser)
+  const setRoom = useRoomStore((s) => s.setRoom)
   const savedNickname = storage.getNickname()
 
   // Safety timeout: reset actionLoading after 15s to prevent stuck button
@@ -70,15 +70,16 @@ export default function HomePage() {
 
   // Listen for room created / room state events for navigation
   useEffect(() => {
-    const onCreated = (data: { roomId: string; userId: string }) => {
-      const nickname = storage.getNickname()
-      setCurrentUser({ id: data.userId, nickname, role: 'host' })
+    const onCreated = () => {
+      // currentUser will be auto-derived when onState fires and calls setRoom
       setActionLoading(false)
       setCreateDialogOpen(false)
-      navigate(`/room/${data.roomId}`)
+      // Navigation is handled by onState which fires right after onCreated
     }
 
-    const onState = (roomState: { id: string }) => {
+    const onState = (roomState: RoomState) => {
+      // setRoom automatically derives currentUser from room.users
+      setRoom(roomState)
       setActionLoading(false)
       setPasswordDialog({ open: false, room: null })
       setPasswordError(null)
@@ -118,7 +119,7 @@ export default function HomePage() {
       socket.off(EVENTS.ROOM_STATE, onState)
       socket.off(EVENTS.ROOM_ERROR, onError)
     }
-  }, [socket, navigate, setCurrentUser])
+  }, [socket, navigate, setRoom])
 
   const handleCreateRoom = async (nickname: string, roomName?: string, password?: string) => {
     await unlockAudio()
@@ -128,6 +129,7 @@ export default function HomePage() {
   }
 
   const handleRoomClick = async (room: RoomListItem) => {
+    if (actionLoading) return
     if (!savedNickname) {
       pendingJoinRef.current = { type: 'room', room }
       setNicknameDialogOpen(true)
@@ -154,6 +156,7 @@ export default function HomePage() {
   }
 
   const handleDirectJoin = async () => {
+    if (actionLoading) return
     if (!directRoomId.trim()) {
       toast.error('请输入房间号')
       return

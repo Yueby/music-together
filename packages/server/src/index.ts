@@ -1,13 +1,16 @@
+import path from 'node:path'
+import fs from 'node:fs'
+import { fileURLToPath } from 'node:url'
 import express from 'express'
 import cors from 'cors'
-import { createServer } from 'http'
+import { createServer } from 'node:http'
 import { Server } from 'socket.io'
 import type { ClientToServerEvents, ServerToClientEvents } from '@music-together/shared'
 import { config } from './config.js'
 import { initializeSocket } from './controllers/index.js'
 import musicRoutes from './routes/music.js'
+import roomRoutes from './routes/rooms.js'
 import { logger } from './utils/logger.js'
-import { stop as stopSync } from './services/syncService.js'
 
 const app = express()
 const httpServer = createServer(app)
@@ -23,11 +26,34 @@ app.use(express.json())
 
 // REST API routes
 app.use('/api/music', musicRoutes)
+app.use('/api/rooms', roomRoutes)
 
 // Health check
 app.get('/api/health', (_req, res) => {
   res.json({ status: 'ok', timestamp: Date.now() })
 })
+
+// --- Serve client SPA (条件挂载，仅当构建产物存在时) ---
+const __dirname = path.dirname(fileURLToPath(import.meta.url))
+const clientDist = path.resolve(__dirname, '../../client/dist')
+const indexHtml = path.join(clientDist, 'index.html')
+
+if (fs.existsSync(indexHtml)) {
+  // Vite 产物带 content hash -> 长缓存
+  app.use('/assets', express.static(path.join(clientDist, 'assets'), {
+    maxAge: '1y',
+    immutable: true,
+  }))
+  // 其他静态文件 (favicon, manifest 等)
+  app.use(express.static(clientDist, { maxAge: '1h' }))
+  // SPA fallback: 所有非 API 的 GET -> index.html
+  app.get('*', (_req, res) => {
+    res.sendFile(indexHtml)
+  })
+  logger.info(`Serving client SPA from ${clientDist}`)
+} else {
+  logger.info('Client dist not found, skipping static file serving (dev mode)')
+}
 
 // Socket.IO with typed events
 const io = new Server<ClientToServerEvents, ServerToClientEvents>(httpServer, {
@@ -36,6 +62,7 @@ const io = new Server<ClientToServerEvents, ServerToClientEvents>(httpServer, {
     methods: ['GET', 'POST'],
     credentials: true,
   },
+  transports: ['websocket'],
 })
 
 initializeSocket(io)
@@ -56,7 +83,6 @@ httpServer.listen(config.port, () => {
 // Graceful shutdown
 function shutdown(signal: string) {
   logger.info(`Received ${signal}, shutting down gracefully...`)
-  stopSync()
   io.close(() => {
     httpServer.close(() => {
       logger.info('Server closed')

@@ -2,6 +2,8 @@ import { useState, useEffect, useCallback, useRef } from 'react'
 import { useParams, useNavigate } from 'react-router-dom'
 import { EVENTS } from '@music-together/shared'
 import { motion } from 'motion/react'
+import { toast } from 'sonner'
+import { Loader2 } from 'lucide-react'
 import { InteractionGate } from '@/components/InteractionGate'
 import { AudioPlayer } from '@/components/Player/AudioPlayer'
 import { ChatPanel } from '@/components/Chat/ChatPanel'
@@ -13,6 +15,7 @@ import { PasswordDialog } from '@/components/Lobby/PasswordDialog'
 import { Drawer, DrawerContent, DrawerHeader, DrawerTitle } from '@/components/ui/drawer'
 import { cn } from '@/lib/utils'
 import { isAudioUnlocked, unlockAudio } from '@/lib/audioUnlock'
+import { SERVER_URL } from '@/lib/config'
 import { useRoom } from '@/hooks/useRoom'
 import { usePlayer } from '@/hooks/usePlayer'
 import { useQueue } from '@/hooks/useQueue'
@@ -21,7 +24,20 @@ import { useRoomStore } from '@/stores/roomStore'
 import { useChatStore } from '@/stores/chatStore'
 import { useSocketContext } from '@/providers/SocketProvider'
 import { AbilityProvider } from '@/providers/AbilityProvider'
+import { useClockSync } from '@/hooks/useClockSync'
 import { storage } from '@/lib/storage'
+
+/** Invisible component that runs NTP clock-sync only while in a room. */
+function ClockSyncRunner() {
+  useClockSync()
+  return null
+}
+
+interface RoomCheckInfo {
+  name: string
+  hasPassword: boolean
+  userCount: number
+}
 
 export default function RoomPage() {
   const { roomId } = useParams<{ roomId: string }>()
@@ -29,36 +45,104 @@ export default function RoomPage() {
   const { socket, isConnected } = useSocketContext()
   const { leaveRoom, updateSettings, setUserRole } = useRoom()
   const { play, pause, seek, next, prev } = usePlayer()
-  const { addTrack, removeTrack, reorderTracks } = useQueue()
+  const { addTrack, removeTrack, reorderTracks, clearQueue } = useQueue()
 
   const room = useRoomStore((s) => s.room)
   const chatOpen = useChatStore((s) => s.isChatOpen)
   const setChatOpen = useChatStore((s) => s.setIsChatOpen)
   const chatUnreadCount = useChatStore((s) => s.unreadCount)
+  const toggleChat = useCallback(() => {
+    setChatOpen(!useChatStore.getState().isChatOpen)
+  }, [setChatOpen])
   const isMobile = useIsMobile()
+
+  // --- Pre-check state ---
+  const [checking, setChecking] = useState(true)
+  const [roomInfo, setRoomInfo] = useState<RoomCheckInfo | null>(null)
 
   // Gate: audio must be unlocked before joining the room.
   // From lobby: isAudioUnlocked() is already true → gate skipped, auto-join runs immediately.
   // Direct URL / page refresh: gate blocks until user clicks "开始收听".
   const [gateOpen, setGateOpen] = useState(() => isAudioUnlocked())
+  const [gatePasswordError, setGatePasswordError] = useState<string | null>(null)
 
   const [searchOpen, setSearchOpen] = useState(false)
   const [queueOpen, setQueueOpen] = useState(false)
   const [settingsOpen, setSettingsOpen] = useState(false)
   const [settingsInitialTab, setSettingsInitialTab] = useState<SettingsTab | undefined>(undefined)
+
+  // Fallback password dialog state (edge case: password changed after pre-check)
   const [passwordNeeded, setPasswordNeeded] = useState(false)
   const [passwordError, setPasswordError] = useState<string | null>(null)
   const [passwordLoading, setPasswordLoading] = useState(false)
 
   const joiningRef = useRef(false)
   const isLeavingRef = useRef(false)
+  const passwordRef = useRef<string | undefined>(undefined)
 
-  const handleGateStart = useCallback(async () => {
+  // --- Pre-check: fetch room existence & password requirement ---
+  useEffect(() => {
+    if (!roomId) {
+      navigate('/', { replace: true })
+      return
+    }
+
+    // If already in this room (e.g. navigated from lobby), skip pre-check
+    if (room && room.id === roomId) {
+      setChecking(false)
+      return
+    }
+
+    let cancelled = false
+    const controller = new AbortController()
+
+    async function checkRoom() {
+      try {
+        const res = await fetch(`${SERVER_URL}/api/rooms/${roomId}/check`, {
+          signal: controller.signal,
+        })
+        if (cancelled) return
+
+        if (!res.ok) {
+          // Room not found
+          toast.error('房间不存在')
+          navigate('/', { replace: true })
+          return
+        }
+
+        const data = await res.json()
+        setRoomInfo({
+          name: data.name,
+          hasPassword: data.hasPassword,
+          userCount: data.userCount,
+        })
+      } catch (err) {
+        if (cancelled) return
+        // Network error — still allow the user to try (gate will show, join may fail)
+        console.warn('Room pre-check failed:', err)
+        setRoomInfo(null)
+      } finally {
+        if (!cancelled) setChecking(false)
+      }
+    }
+
+    checkRoom()
+    return () => {
+      cancelled = true
+      controller.abort()
+    }
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [roomId])
+
+  // --- Gate start handler (receives password from gate if applicable) ---
+  const handleGateStart = useCallback(async (password?: string) => {
     await unlockAudio()
+    if (password) passwordRef.current = password
+    setGatePasswordError(null)
     setGateOpen(true)
   }, [])
 
-  // Auto-join if room state is missing (e.g. page refresh, direct URL access)
+  // --- Auto-join if room state is missing (e.g. page refresh, direct URL access) ---
   // Only after the interaction gate is open — avoids autoplay warnings.
   useEffect(() => {
     if (!gateOpen) return
@@ -66,38 +150,68 @@ export default function RoomPage() {
     if (!room && isConnected && !joiningRef.current && roomId) {
       joiningRef.current = true
       const nickname = storage.getNickname() || 'Guest'
-      socket.emit(EVENTS.ROOM_JOIN, { roomId, nickname })
+      socket.emit(EVENTS.ROOM_JOIN, {
+        roomId,
+        nickname,
+        password: passwordRef.current || undefined,
+        userId: storage.getUserId(),
+      })
     }
     if (room) {
       joiningRef.current = false
     }
   }, [gateOpen, room, isConnected, socket, roomId])
 
-  // Handle ROOM_ERROR — detect WRONG_PASSWORD to show password dialog
+  // --- Handle ROOM_ERROR — password errors, fallback dialog ---
   useEffect(() => {
     const onRoomError = (error: { code: string; message: string }) => {
       joiningRef.current = false
+
       if (error.code === 'WRONG_PASSWORD') {
-        setPasswordNeeded(true)
-        setPasswordLoading(false)
-        // Don't set error on first prompt — only on retry
+        // If we came through the gate, revert to gate with error
+        if (!passwordNeeded && !gateOpen) {
+          // Gate was not yet open — shouldn't happen, but handle gracefully
+          setPasswordNeeded(true)
+          return
+        }
+
+        if (gateOpen && !passwordNeeded) {
+          // Password was sent from gate but rejected (e.g. race condition / password changed)
+          // Reset gate so user can re-enter password
+          setGateOpen(false)
+          setGatePasswordError('密码错误，请重试')
+          passwordRef.current = undefined
+          return
+        }
+
+        // Fallback password dialog path
+        if (passwordNeeded) {
+          setPasswordError('密码错误，请重试')
+          setPasswordLoading(false)
+        } else {
+          setPasswordNeeded(true)
+          setPasswordLoading(false)
+        }
       }
     }
-    // On successful join, dismiss the password dialog
+
+    // On successful join, dismiss any password state
     const onRoomState = () => {
       if (passwordNeeded) {
         setPasswordNeeded(false)
         setPasswordError(null)
         setPasswordLoading(false)
       }
+      setGatePasswordError(null)
     }
+
     socket.on(EVENTS.ROOM_ERROR, onRoomError)
     socket.on(EVENTS.ROOM_STATE, onRoomState)
     return () => {
       socket.off(EVENTS.ROOM_ERROR, onRoomError)
       socket.off(EVENTS.ROOM_STATE, onRoomState)
     }
-  }, [socket, passwordNeeded])
+  }, [socket, passwordNeeded, gateOpen])
 
   // No unmount cleanup needed — the server handles room membership:
   // - On disconnect: server's disconnect handler removes user
@@ -109,7 +223,7 @@ export default function RoomPage() {
     const nickname = storage.getNickname() || 'Guest'
     setPasswordLoading(true)
     setPasswordError(null)
-    socket.emit(EVENTS.ROOM_JOIN, { roomId, nickname, password })
+    socket.emit(EVENTS.ROOM_JOIN, { roomId, nickname, password, userId: storage.getUserId() })
   }, [socket, roomId])
 
   // If password dialog is dismissed without submitting, navigate home
@@ -132,6 +246,23 @@ export default function RoomPage() {
     navigate('/', { replace: true })
   }, [leaveRoom, navigate])
 
+  // --- Loading state during pre-check ---
+  if (checking) {
+    return (
+      <div className="fixed inset-0 z-50 flex items-center justify-center bg-background">
+        <motion.div
+          initial={{ opacity: 0 }}
+          animate={{ opacity: 1 }}
+          className="flex flex-col items-center gap-4"
+        >
+          <Loader2 className="h-8 w-8 animate-spin text-muted-foreground" />
+          <p className="text-sm text-muted-foreground">正在检查房间...</p>
+        </motion.div>
+      </div>
+    )
+  }
+
+  // --- Interaction gate (audio unlock + optional password) ---
   if (!gateOpen) {
     return (
       <motion.div
@@ -140,13 +271,19 @@ export default function RoomPage() {
         exit={{ opacity: 0 }}
         transition={{ duration: 0.2 }}
       >
-        <InteractionGate onStart={handleGateStart} />
+        <InteractionGate
+          onStart={handleGateStart}
+          roomName={roomInfo?.name}
+          hasPassword={roomInfo?.hasPassword || !!gatePasswordError}
+          passwordError={gatePasswordError}
+        />
       </motion.div>
     )
   }
 
   return (
     <AbilityProvider>
+      <ClockSyncRunner />
       <motion.div
         initial={{ opacity: 0 }}
         animate={{ opacity: 1 }}
@@ -169,7 +306,7 @@ export default function RoomPage() {
                 onSeek={seek}
                 onNext={next}
                 onPrev={prev}
-                onOpenChat={() => setChatOpen(!chatOpen)}
+                onOpenChat={toggleChat}
                 onOpenQueue={() => setQueueOpen(true)}
                 chatUnreadCount={chatUnreadCount}
               />
@@ -210,6 +347,7 @@ export default function RoomPage() {
             onOpenChange={setQueueOpen}
             onRemoveFromQueue={removeTrack}
             onReorderQueue={reorderTracks}
+            onClearQueue={clearQueue}
           />
         <SettingsDialog
           open={settingsOpen}
@@ -223,7 +361,7 @@ export default function RoomPage() {
         />
         </div>
 
-        {/* Password dialog for reconnecting to password-protected rooms */}
+        {/* Fallback password dialog for edge cases (password changed after pre-check) */}
         <PasswordDialog
           open={passwordNeeded}
           onOpenChange={handlePasswordOpenChange}

@@ -2,7 +2,7 @@ import { PureAbility, AbilityBuilder } from '@casl/ability'
 import type { UserRole } from './types.js'
 
 export type Actions =
-  | 'play' | 'pause' | 'seek' | 'next' | 'prev'
+  | 'play' | 'pause' | 'seek' | 'next' | 'prev' | 'set-mode'
   | 'add' | 'remove' | 'reorder'
   | 'manage' | 'vote' | 'set-role'
 
@@ -30,6 +30,7 @@ export function defineAbilityFor(role: UserRole): AppAbility {
       can('seek', 'Player')
       can('next', 'Player')
       can('prev', 'Player')
+      can('set-mode', 'Player')
       can('add', 'Queue')
       can('remove', 'Queue')
       can('reorder', 'Queue')

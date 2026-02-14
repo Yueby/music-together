@@ -1,4 +1,4 @@
-import type { Track } from '@music-together/shared'
+import type { PlayMode, Track } from '@music-together/shared'
 import { LIMITS } from '@music-together/shared'
 import { roomRepo } from '../repositories/roomRepository.js'
 
@@ -14,6 +14,13 @@ export function removeTrack(roomId: string, trackId: string): void {
   const room = roomRepo.get(roomId)
   if (room) {
     room.queue = room.queue.filter((t) => t.id !== trackId)
+  }
+}
+
+export function clearQueue(roomId: string): void {
+  const room = roomRepo.get(roomId)
+  if (room) {
+    room.queue = []
   }
 }
 
@@ -40,16 +47,50 @@ export function reorderTracks(roomId: string, trackIds: string[]): void {
   room.queue = reordered
 }
 
-export function getNextTrack(roomId: string): Track | null {
+/**
+ * Get the next track based on the play mode.
+ *
+ * - sequential: next in queue; null at end
+ * - loop-all:   next in queue; wraps to first at end
+ * - loop-one:   returns the current track itself
+ * - shuffle:    random track from queue (excludes current; returns self if queue has 1 item)
+ */
+export function getNextTrack(roomId: string, playMode?: PlayMode): Track | null {
   const room = roomRepo.get(roomId)
   if (!room || room.queue.length === 0) return null
+
+  const mode = playMode ?? room.playMode ?? 'sequential'
 
   const currentIndex = room.currentTrack
     ? room.queue.findIndex((t) => t.id === room.currentTrack!.id)
     : -1
 
-  const nextIndex = currentIndex + 1
-  return nextIndex < room.queue.length ? room.queue[nextIndex] : null
+  switch (mode) {
+    case 'loop-one':
+      // Replay the current track; fall back to next if current is gone
+      if (room.currentTrack && currentIndex >= 0) return room.currentTrack
+      return room.queue[0] ?? null
+
+    case 'loop-all': {
+      const nextIndex = currentIndex + 1
+      return nextIndex < room.queue.length
+        ? room.queue[nextIndex]
+        : room.queue[0] // wrap to first
+    }
+
+    case 'shuffle': {
+      if (room.queue.length === 1) return room.queue[0]
+      // Pick a random track excluding the current one
+      const candidates = room.queue.filter((_, i) => i !== currentIndex)
+      return candidates[Math.floor(Math.random() * candidates.length)] ?? room.queue[0]
+    }
+
+    case 'sequential':
+    default: {
+      const nextIndex = currentIndex + 1
+      return nextIndex < room.queue.length ? room.queue[nextIndex] : null
+    }
+  }
 }
 
 export function getPreviousTrack(roomId: string): Track | null {
@@ -59,6 +100,11 @@ export function getPreviousTrack(roomId: string): Track | null {
   const currentIndex = room.currentTrack
     ? room.queue.findIndex((t) => t.id === room.currentTrack!.id)
     : -1
+
+  // For loop-all, wrap to last track when at the beginning
+  if (room.playMode === 'loop-all' && currentIndex <= 0) {
+    return room.queue[room.queue.length - 1]
+  }
 
   const prevIndex = currentIndex - 1
   return prevIndex >= 0 ? room.queue[prevIndex] : null

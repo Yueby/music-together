@@ -1,5 +1,6 @@
 import Meting from '@meting/core'
 import type { MusicSource, Track } from '@music-together/shared'
+import { LRUCache } from 'lru-cache'
 import { nanoid } from 'nanoid'
 import pLimit from 'p-limit'
 import { logger } from '../utils/logger.js'
@@ -27,9 +28,23 @@ const SEARCH_PATHS: Record<MusicSource, string> = {
   kugou: 'data.info',
 }
 
+// ---------------------------------------------------------------------------
+// Cache TTL constants
+// ---------------------------------------------------------------------------
+const HOUR = 60 * 60 * 1000
+const MINUTE = 60 * 1000
+
 class MusicProvider {
   // Shared instances with format(true) — used for url/lyric/cover operations (no cookie)
   private instances = new Map<MusicSource, any>()
+
+  // ---------------------------------------------------------------------------
+  // LRU caches — bounded by max entries + TTL; auto-evicts stale/overflow entries
+  // ---------------------------------------------------------------------------
+  private searchCache = new LRUCache<string, Track[]>({ max: 200, ttl: 10 * MINUTE })
+  private streamUrlCache = new LRUCache<string, string>({ max: 500, ttl: 1 * HOUR })
+  private coverCache = new LRUCache<string, string>({ max: 1000, ttl: 24 * HOUR })
+  private lyricCache = new LRUCache<string, { lyric: string; tlyric: string }>({ max: 500, ttl: 24 * HOUR })
 
   private getInstance(source: MusicSource) {
     if (!this.instances.has(source)) {
@@ -45,6 +60,13 @@ class MusicProvider {
    * then batch-resolves cover URLs.
    */
   async search(source: MusicSource, keyword: string, limit = 20, page = 1): Promise<Track[]> {
+    const cacheKey = `${source}:${keyword}:${limit}:${page}`
+    const cached = this.searchCache.get(cacheKey)
+    if (cached) {
+      logger.info(`Search cache hit: "${keyword}" on ${source} (page ${page})`)
+      return cached.map(t => ({ ...t, id: nanoid() }))
+    }
+
     try {
       // Fresh instance without format — gets raw API response with all fields
       const meting = new Meting(source)
@@ -70,6 +92,7 @@ class MusicProvider {
       // Batch resolve cover URLs for tracks that don't already have one
       await this.batchResolveCover(tracks, source)
 
+      this.searchCache.set(cacheKey, tracks)
       logger.info(`Search "${keyword}" on ${source}: ${tracks.length} results`)
       return tracks
     } catch (err) {
@@ -81,9 +104,20 @@ class MusicProvider {
   /**
    * Get stream URL for a track. Optionally inject a cookie for VIP access.
    * When cookie is provided, a fresh Meting instance is created to avoid
-   * polluting the shared cached instance.
+   * polluting the shared cached instance — and the result is NOT cached
+   * because VIP URLs are user-specific.
    */
   async getStreamUrl(source: MusicSource, urlId: string, bitrate = 320, cookie?: string): Promise<string | null> {
+    // Skip cache when cookie is provided (VIP URLs are user-specific)
+    if (!cookie) {
+      const cacheKey = `${source}:${urlId}:${bitrate}`
+      const cached = this.streamUrlCache.get(cacheKey)
+      if (cached) {
+        logger.info(`Stream URL cache hit: ${source}/${urlId}`)
+        return cached
+      }
+    }
+
     try {
       let meting: any
       if (cookie) {
@@ -101,7 +135,14 @@ class MusicProvider {
       }
       let data: any
       try { data = JSON.parse(raw as string) } catch { return null }
-      return data.url || null
+      const url = data.url || null
+
+      // Only cache non-cookie & successful results (null = transient failure, retry next time)
+      if (!cookie && url) {
+        this.streamUrlCache.set(`${source}:${urlId}:${bitrate}`, url)
+      }
+
+      return url
     } catch (err) {
       logger.error(`Get URL failed for ${source}:`, err)
       return null
@@ -109,6 +150,13 @@ class MusicProvider {
   }
 
   async getLyric(source: MusicSource, lyricId: string): Promise<{ lyric: string; tlyric: string }> {
+    const cacheKey = `${source}:${lyricId}`
+    const cached = this.lyricCache.get(cacheKey)
+    if (cached) {
+      logger.info(`Lyric cache hit: ${source}/${lyricId}`)
+      return cached
+    }
+
     try {
       const meting = this.getInstance(source)
       const raw = await withTimeout(meting.lyric(lyricId))
@@ -118,10 +166,13 @@ class MusicProvider {
       }
       let data: any
       try { data = JSON.parse(raw as string) } catch { return { lyric: '', tlyric: '' } }
-      return {
+      const result = {
         lyric: data.lyric || '',
         tlyric: data.tlyric || '',
       }
+
+      this.lyricCache.set(cacheKey, result)
+      return result
     } catch (err) {
       logger.error(`Get lyric failed for ${source}:`, err)
       return { lyric: '', tlyric: '' }
@@ -129,6 +180,12 @@ class MusicProvider {
   }
 
   async getCover(source: MusicSource, picId: string, size = 300): Promise<string> {
+    const cacheKey = `${source}:${picId}:${size}`
+    const cached = this.coverCache.get(cacheKey)
+    if (cached !== undefined) {
+      return cached
+    }
+
     try {
       const meting = this.getInstance(source)
       const raw = await withTimeout(meting.pic(picId, size))
@@ -138,7 +195,10 @@ class MusicProvider {
       }
       let data: any
       try { data = JSON.parse(raw as string) } catch { return '' }
-      return data.url || ''
+      const url = data.url || ''
+
+      this.coverCache.set(cacheKey, url)
+      return url
     } catch (err) {
       logger.error(`Get cover failed for ${source}:`, err)
       return ''
@@ -263,12 +323,23 @@ class MusicProvider {
     await Promise.allSettled(
       toResolve.map((track) =>
         limit(async () => {
+          // Check cover cache first
+          const cacheKey = `${source}:${track.picId!}:300`
+          const cached = this.coverCache.get(cacheKey)
+          if (cached !== undefined) {
+            track.cover = cached
+            return
+          }
+
           try {
             // Fresh instance per call to avoid shared state race conditions
             const instance = new Meting(source)
             const raw = await instance.pic(track.picId!, 300)
             const data = JSON.parse(raw)
-            if (data.url) track.cover = data.url
+            if (data.url) {
+              track.cover = data.url
+              this.coverCache.set(cacheKey, data.url)
+            }
           } catch {
             // Leave cover empty — frontend shows placeholder
           }

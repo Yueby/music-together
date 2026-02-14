@@ -1,13 +1,32 @@
 import { motion, useReducedMotion } from 'motion/react'
-import { Headphones } from 'lucide-react'
+import { Headphones, Lock } from 'lucide-react'
 import { Button } from '@/components/ui/button'
+import { Input } from '@/components/ui/input'
+import { useState } from 'react'
 
 interface InteractionGateProps {
-  onStart: () => void
+  onStart: (password?: string) => void
+  roomName?: string
+  hasPassword?: boolean
+  passwordError?: string | null
 }
 
-export function InteractionGate({ onStart }: InteractionGateProps) {
+export function InteractionGate({
+  onStart,
+  roomName,
+  hasPassword,
+  passwordError,
+}: InteractionGateProps) {
   const prefersReducedMotion = useReducedMotion()
+  const [password, setPassword] = useState('')
+
+  const canStart = !hasPassword || password.trim().length > 0
+
+  const handleSubmit = (e: React.FormEvent) => {
+    e.preventDefault()
+    if (!canStart) return
+    onStart(hasPassword ? password.trim() : undefined)
+  }
 
   return (
     <div className="fixed inset-0 z-50 flex items-center justify-center bg-background">
@@ -15,7 +34,7 @@ export function InteractionGate({ onStart }: InteractionGateProps) {
         initial={{ opacity: 0, scale: 0.9 }}
         animate={{ opacity: 1, scale: 1 }}
         transition={{ type: 'spring', stiffness: 300, damping: 25 }}
-        className="flex flex-col items-center gap-6 rounded-2xl border border-border bg-card p-10 shadow-lg"
+        className="flex w-full max-w-sm flex-col items-center gap-6 rounded-2xl border border-border bg-card p-10 shadow-lg"
       >
         <motion.div
           animate={prefersReducedMotion ? {} : { rotate: [0, 5, -5, 0] }}
@@ -23,15 +42,60 @@ export function InteractionGate({ onStart }: InteractionGateProps) {
         >
           <Headphones className="h-16 w-16 text-primary" />
         </motion.div>
-        <h2 className="text-xl font-semibold">准备就绪</h2>
-        <p className="text-sm text-muted-foreground">点击开始，与房间好友一起听歌</p>
-        <Button
-          size="lg"
-          onClick={onStart}
-          aria-label="开始收听"
-        >
-          开始收听
-        </Button>
+
+        <div className="flex flex-col items-center gap-1.5">
+          <h2 className="text-xl font-semibold">准备就绪</h2>
+          {roomName ? (
+            <p className="text-sm text-muted-foreground">
+              即将加入「{roomName}」
+            </p>
+          ) : (
+            <p className="text-sm text-muted-foreground">点击开始，与房间好友一起听歌</p>
+          )}
+        </div>
+
+        <form onSubmit={handleSubmit} className="flex w-full flex-col gap-4">
+          {hasPassword && (
+            <div className="flex flex-col gap-2">
+              <div className="flex items-center gap-1.5 text-xs text-muted-foreground">
+                <Lock className="h-3.5 w-3.5" />
+                <span>该房间需要密码</span>
+              </div>
+              <motion.div
+                animate={passwordError ? { x: [-8, 8, -6, 6, -3, 3, 0] } : {}}
+                transition={{ duration: 0.5 }}
+              >
+                <Input
+                  type="password"
+                  placeholder="输入房间密码..."
+                  value={password}
+                  onChange={(e) => setPassword(e.target.value)}
+                  autoFocus
+                  className={passwordError ? 'border-destructive' : ''}
+                />
+                {passwordError && (
+                  <motion.p
+                    initial={{ opacity: 0, y: -4 }}
+                    animate={{ opacity: 1, y: 0 }}
+                    className="mt-1.5 text-xs text-destructive"
+                  >
+                    {passwordError}
+                  </motion.p>
+                )}
+              </motion.div>
+            </div>
+          )}
+
+          <Button
+            type="submit"
+            size="lg"
+            className="w-full"
+            disabled={!canStart}
+            aria-label="开始收听"
+          >
+            开始收听
+          </Button>
+        </form>
       </motion.div>
     </div>
   )

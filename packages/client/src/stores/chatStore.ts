@@ -1,4 +1,5 @@
 import type { ChatMessage } from '@music-together/shared'
+import { LIMITS } from '@music-together/shared'
 import { create } from 'zustand'
 
 interface ChatStore {
@@ -19,12 +20,17 @@ export const useChatStore = create<ChatStore>((set) => ({
   isChatOpen: false,
 
   addMessage: (message) =>
-    set((state) => ({
-      messages: [...state.messages, message],
-      unreadCount: state.isChatOpen || message.type === 'system'
-        ? state.unreadCount
-        : state.unreadCount + 1,
-    })),
+    set((state) => {
+      const next = [...state.messages, message]
+      return {
+        messages: next.length > LIMITS.CHAT_HISTORY_MAX
+          ? next.slice(-LIMITS.CHAT_HISTORY_MAX)
+          : next,
+        unreadCount: state.isChatOpen || message.type === 'system'
+          ? state.unreadCount
+          : state.unreadCount + 1,
+      }
+    }),
   setMessages: (messages) => set({ messages }),
   setIsChatOpen: (open) =>
     set((state) => ({

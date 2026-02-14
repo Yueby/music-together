@@ -9,12 +9,14 @@ export const roomCreateSchema = z.object({
   nickname: z.string().min(1, '昵称不能为空').max(LIMITS.NICKNAME_MAX_LENGTH, '昵称过长'),
   roomName: z.string().max(LIMITS.ROOM_NAME_MAX_LENGTH, '房间名过长').optional(),
   password: z.string().max(LIMITS.ROOM_PASSWORD_MAX_LENGTH, '密码过长').optional(),
+  userId: z.string().min(1).max(50).optional(),
 })
 
 export const roomJoinSchema = z.object({
   roomId: z.string().min(1, '房间号不能为空'),
   nickname: z.string().min(1, '昵称不能为空'),
-  password: z.string().optional(),
+  password: z.string().max(LIMITS.ROOM_PASSWORD_MAX_LENGTH).optional(),
+  userId: z.string().min(1).max(50).optional(),
 })
 
 export const roomSettingsSchema = z.object({
@@ -39,30 +41,36 @@ export const playerSyncSchema = z.object({
   currentTime: z.number().finite().nonnegative(),
 })
 
+export const playerSetModeSchema = z.object({
+  mode: z.enum(['sequential', 'loop-all', 'loop-one', 'shuffle']),
+})
+
 // ---------------------------------------------------------------------------
 // Queue
 // ---------------------------------------------------------------------------
 
 export const queueAddSchema = z.object({
   track: z.object({
-    id: z.string(),
-    title: z.string(),
-    artist: z.array(z.string()),
-    album: z.string(),
+    id: z.string().max(200),
+    title: z.string().max(500),
+    artist: z.array(z.string().max(200)).max(20),
+    album: z.string().max(500),
     duration: z.number(),
-    cover: z.string(),
+    cover: z.string().max(2000),
     source: z.enum(['netease', 'tencent', 'kugou']),
-    sourceId: z.string(),
-    urlId: z.string(),
-    lyricId: z.string().optional(),
-    picId: z.string().optional(),
-    streamUrl: z.string().optional(),
+    sourceId: z.string().max(200),
+    urlId: z.string().max(200),
+    lyricId: z.string().max(200).optional(),
+    picId: z.string().max(200).optional(),
+    streamUrl: z.string().max(2000).optional(),
     vip: z.boolean().optional(),
   }),
 })
 
-export const queueRemoveSchema = z.object({ trackId: z.string() })
-export const queueReorderSchema = z.object({ trackIds: z.array(z.string()) })
+export const queueRemoveSchema = z.object({ trackId: z.string().max(200) })
+export const queueReorderSchema = z.object({
+  trackIds: z.array(z.string().max(200)).max(LIMITS.QUEUE_MAX_SIZE),
+})
 
 // ---------------------------------------------------------------------------
 // Chat
@@ -107,7 +115,8 @@ export const coverQuerySchema = z.object({
 // ---------------------------------------------------------------------------
 
 export const voteStartSchema = z.object({
-  action: z.enum(['pause', 'resume', 'next', 'prev']),
+  action: z.enum(['pause', 'resume', 'next', 'prev', 'set-mode']),
+  payload: z.record(z.string(), z.unknown()).optional(),
 })
 
 export const voteCastSchema = z.object({

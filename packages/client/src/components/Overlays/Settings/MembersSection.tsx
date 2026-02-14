@@ -21,6 +21,8 @@ const ROLE_LABELS: Record<UserRole, string> = {
   member: '成员',
 }
 
+const ROLE_ORDER: Record<string, number> = { host: 0, admin: 1, member: 2 }
+
 function getRoleIcon(role: UserRole) {
   switch (role) {
     case 'host': return <Crown className="h-4 w-4 text-yellow-500" />
@@ -43,7 +45,9 @@ export function MembersSection({ onSetUserRole }: MembersSectionProps) {
         <Separator className="mt-2 mb-4" />
 
         <div className="space-y-1">
-          {room?.users.map((user) => (
+          {[...(room?.users ?? [])].sort(
+            (a, b) => (ROLE_ORDER[a.role] ?? 9) - (ROLE_ORDER[b.role] ?? 9),
+          ).map((user) => (
             <div
               key={user.id}
               className="flex items-center gap-2 rounded-lg px-3 py-1.5"

@@ -10,19 +10,16 @@ const envSchema = z.object({
 
 const env = envSchema.parse(process.env)
 
+// 同域部署或开发环境：CLIENT_URL 为默认值时允许所有来源（origin: true）
+// 显式设置 CLIENT_URL 时使用严格白名单
+const isDefaultClientUrl = env.CLIENT_URL === 'http://localhost:5173'
+
 export const config = {
   port: env.PORT,
   clientUrl: env.CLIENT_URL,
-  corsOrigins: [
-    env.CLIENT_URL,
-    'http://localhost:5173',
-    'http://localhost:5174',
-    'http://localhost:5175',
-    ...env.CORS_ORIGINS.split(',').filter(Boolean),
-  ] as string[],
-  sync: {
-    broadcastIntervalMs: TIMING.SYNC_BROADCAST_INTERVAL_MS,
-  },
+  corsOrigins: isDefaultClientUrl
+    ? true as const
+    : [env.CLIENT_URL, ...env.CORS_ORIGINS.split(',').filter(Boolean)] as string[],
   room: {
     gracePeriodMs: TIMING.ROOM_GRACE_PERIOD_MS,
   },

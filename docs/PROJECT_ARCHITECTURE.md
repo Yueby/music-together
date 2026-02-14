@@ -15,7 +15,8 @@
 | 同步播放 | 房间内播放进度实时同步 |
 | 实时聊天 | 房间内文字聊天 |
 | 权限控制 | RBAC 三级权限（host > admin > member）基于 @casl/ability |
-| 投票系统 | 普通成员通过投票控制播放（暂停/恢复/切歌） |
+| 播放模式 | 顺序播放、列表循环、单曲循环、随机播放（Host/Admin 直接切换，Member 投票切换） |
+| 投票系统 | 普通成员通过投票控制播放（暂停/恢复/切歌/切换播放模式） |
 | VIP 认证 | 平台账号登录（网易云/QQ/酷狗），房间级 Cookie 池 |
 | 歌词展示 | Apple Music 风格歌词动画 (AMLL) |
 
@@ -94,7 +95,7 @@ src/
 │   │   ├── AudioPlayer.tsx     #     主播放器布局（封面+控件+歌词）
 │   │   ├── LyricDisplay.tsx    #     AMLL 歌词渲染（LRC 正则支持 [mm:ss] / [mm:ss.x] / [mm:ss.xx] / [mm:ss.xxx]）
 │   │   ├── NowPlaying.tsx      #     当前曲目信息展示
-│   │   └── PlayerControls.tsx  #     进度条+播放控制+音量
+│   │   └── PlayerControls.tsx  #     进度条+播放控制+音量+播放模式切换
 │   ├── Room/
 │   │   └── RoomHeader.tsx      #     房间头部（房间名/人数/连接状态/操作按钮）
 │   ├── Vote/
@@ -128,7 +129,7 @@ src/
 │   ├── usePlayer.ts            #   播放器主 hook（组合 useHowl + useLyric + usePlayerSync）
 │   ├── useHowl.ts              #   Howler.js 音频实例管理
 │   ├── useLyric.ts             #   歌词加载与解析
-│   ├── usePlayerSync.ts        #   播放同步（Scheduled Execution + Rate-based Drift Correction）
+│   ├── usePlayerSync.ts        #   播放同步（Scheduled Execution + Host 上报，零连续校正）
 │   ├── useClockSync.ts         #   NTP 时钟同步 hook（校准客户端时钟与服务器对齐）
 │   ├── useRoom.ts              #   房间组合 hook（编排 5 个子 hook，对外 API 不变）
 │   ├── room/                   #   useRoom 子 hook（按职责拆分）
@@ -152,7 +153,7 @@ src/
 │   └── settingsStore.ts        #   设置（移动端布局、歌词参数、背景参数，持久化到 localStorage）
 │
 ├── providers/                  # React Context Provider
-│   ├── SocketProvider.tsx      #   Socket.IO 连接管理 + NTP 时钟同步（ClockSyncRunner），提供 socket + isConnected + 断线/重连 Toast
+│   ├── SocketProvider.tsx      #   Socket.IO 连接管理，提供 socket + isConnected + 断线/重连 Toast
 │   └── AbilityProvider.tsx     #   CASL 权限上下文（基于 currentUser.role）
 │
 └── lib/                        # 工具库
@@ -172,31 +173,32 @@ src/
 ```
 src/
 ├── index.ts                    # 入口：Express + HTTP + Socket.IO 服务启动与优雅关闭
-├── config.ts                   # 环境变量配置（PORT, CLIENT_URL, CORS, 时间常量）
+├── config.ts                   # 环境变量配置（PORT, CLIENT_URL, CORS）
 │
-├── controllers/                # 控制器：注册 Socket 事件处理器
+├── controllers/                # 控制器：注册 Socket 事件处理器（薄编排层，不含业务逻辑）
 │   ├── index.ts                #   统一注册入口
 │   ├── roomController.ts       #   房间生命周期（创建/加入/离开/发现/设置/角色）
-│   ├── playerController.ts     #   播放控制（play/pause/seek/next/prev/sync）+ NTP ping/pong
-│   ├── queueController.ts      #   队列管理（add/remove/reorder）
+│   ├── playerController.ts     #   播放控制（play/pause/seek/next/prev/sync/set_mode）+ NTP ping/pong
+│   ├── queueController.ts      #   队列管理（add/remove/reorder/clear）
 │   ├── chatController.ts       #   聊天消息（含限流反馈）
-│   ├── voteController.ts       #   投票系统（发起/投票/超时/执行）
+│   ├── voteController.ts       #   投票系统（发起/投票/超时/执行，支持 set-mode 投票）
 │   └── authController.ts       #   平台认证（QR 登录/Cookie 管理/状态查询）
 │
 ├── services/                   # 服务层：业务逻辑
-│   ├── roomService.ts          #   房间 CRUD + 广播
-│   ├── playerService.ts        #   播放状态管理 + 流 URL 解析
-│   ├── queueService.ts         #   队列操作（reorder 保留未包含曲目防丢歌）
+│   ├── roomService.ts          #   房间 CRUD + 角色管理 + 加入校验（validateJoinRequest）
+│   ├── roomLifecycleService.ts #   房间生命周期定时器（删除/角色宽限期）+ 防抖广播
+│   ├── playerService.ts        #   播放状态管理 + 流 URL 解析 + 切歌防抖 + 加入播放同步
+│   ├── queueService.ts         #   队列操作（reorder 保留未包含曲目防丢歌，getNextTrack 支持 4 种播放模式，clearQueue 清空）
 │   ├── chatService.ts          #   聊天消息处理 + HTML 转义（含系统消息）
-│   ├── syncService.ts          #   周期性播放同步广播
-│   ├── musicProvider.ts        #   @meting/core 音乐数据聚合（外部 API 15s 超时保护）
+│   ├── syncService.ts          #   播放位置估算工具（estimateCurrentTime）
+│   ├── musicProvider.ts        #   @meting/core 音乐数据聚合（LRU 缓存 + 外部 API 15s 超时保护）
 │   ├── authService.ts          #   Cookie 池管理（房间级作用域）
 │   ├── neteaseAuthService.ts   #   网易云 API 认证（QR / Cookie 验证 / 用户信息）
 │   └── voteService.ts          #   投票状态管理
 │
 ├── repositories/               # 数据仓库：内存存储
 │   ├── types.ts                #   接口定义（RoomRepository, ChatRepository）
-│   ├── roomRepository.ts       #   房间数据 + Socket 映射 + per-socket RTT（Map<string, RoomData>）
+│   ├── roomRepository.ts       #   房间数据 + Socket 映射 + per-socket RTT + roomToSockets 反向索引（Map<string, RoomData>）
 │   └── chatRepository.ts       #   聊天记录（Map<string, ChatMessage[]>）
 │
 ├── middleware/                  # Socket.IO 中间件
@@ -205,13 +207,15 @@ src/
 │   └── withControl.ts          #   操作权限校验（包装 withRoom）
 │
 ├── routes/                     # Express REST 路由
-│   └── music.ts                #   GET /api/music/search|url|lyric|cover
+│   ├── music.ts                #   GET /api/music/search|url|lyric|cover
+│   └── rooms.ts                #   GET /api/rooms/:roomId/check（房间预检）
 │
 ├── types/
 │   └── meting.d.ts             #   @meting/core 类型声明
 │
 └── utils/
-    └── logger.ts               #   结构化日志（基于 pino，info/warn/error + JSON context）
+    ├── logger.ts               #   结构化日志（基于 pino，info/warn/error + JSON context）
+    └── roomUtils.ts            #   房间数据转换纯函数（toPublicRoomState）
 ```
 
 ### packages/shared/src/ — 共享代码
@@ -219,12 +223,12 @@ src/
 ```
 src/
 ├── index.ts           # 统一导出（re-export 所有模块）
-├── types.ts           # 核心类型：ERROR_CODE, Track, RoomState, PlayState, ScheduledPlayState, User, ChatMessage, RoomListItem
+├── types.ts           # 核心类型：ERROR_CODE, Track, RoomState, PlayState, ScheduledPlayState, PlayMode, User, ChatMessage, VoteAction, VoteState, RoomListItem
 ├── events.ts          # 事件常量：EVENTS 对象（room:*, player:*, queue:*, chat:*, auth:*, ntp:*）
 ├── socket-types.ts    # Socket.IO 类型：ServerToClientEvents, ClientToServerEvents
 ├── constants.ts       # 业务常量：LIMITS（长度/数量限制）, TIMING（同步间隔/宽限期）, NTP（时钟同步参数）
 ├── schemas.ts         # Zod 验证 schema
-└── abilities.ts       # CASL 权限定义（Actions, Subjects, defineAbilityFor）
+└── abilities.ts       # CASL 权限定义（Actions incl. set-mode, Subjects, defineAbilityFor）
 ```
 
 ---
@@ -273,8 +277,8 @@ graph TB
 | 分类 | 客户端 → 服务端 | 服务端 → 客户端 |
 |------|-----------------|-----------------|
 | **Room** | `room:create`, `room:join`, `room:leave`, `room:list`, `room:settings`, `room:set_role` | `room:created`, `room:state`, `room:user_joined`, `room:user_left`, `room:settings`, `room:error`, `room:list_update`, `room:role_changed` |
-| **Player** | `player:play`, `player:pause`, `player:seek`, `player:next`, `player:prev`, `player:sync`, `player:sync_request` | `player:play`, `player:pause`, `player:resume`, `player:seek`, `player:sync_response` |
-| **Queue** | `queue:add`, `queue:remove`, `queue:reorder` | `queue:updated` |
+| **Player** | `player:play`, `player:pause`, `player:seek`, `player:next`, `player:prev`, `player:sync`, `player:sync_request`, `player:set_mode` | `player:play`, `player:pause`, `player:resume`, `player:seek`, `player:sync_response` |
+| **Queue** | `queue:add`, `queue:remove`, `queue:reorder`, `queue:clear` | `queue:updated` |
 | **Chat** | `chat:message` | `chat:message`, `chat:history` |
 | **Vote** | `vote:start`, `vote:cast` | `vote:started`, `vote:result` |
 | **Auth** | `auth:request_qr`, `auth:check_qr`, `auth:set_cookie`, `auth:logout`, `auth:get_status` | `auth:qr_generated`, `auth:qr_status`, `auth:set_cookie_result`, `auth:status_update`, `auth:my_status` |
@@ -294,11 +298,15 @@ interface Track {
   vip?: boolean         // 是否为 VIP / 付费歌曲（可能无法播放或仅试听）
 }
 
+// 播放模式
+type PlayMode = 'sequential' | 'loop-all' | 'loop-one' | 'shuffle'
+
 // 客户端可见的房间状态
 interface RoomState {
   id: string; name: string; hostId: string
   hasPassword: boolean; users: User[]; queue: Track[]
   currentTrack: Track | null; playState: PlayState
+  playMode: PlayMode
 }
 
 // 播放状态（含服务端时间戳用于同步校准）
@@ -324,14 +332,17 @@ interface ChatMessage {
 
 ### 播放同步机制
 
-采用**三层同步架构**：NTP 时钟同步 + Scheduled Execution + Playback Rate Drift Correction。
+采用**事件驱动同步 + 零连续校正**架构：NTP 时钟同步 + Scheduled Execution，**音频永远不被修改**（不调 `rate()`、不做周期性 `seek()`）。
+
+**设计依据**：现代硬件时钟漂移约 10-100 ppm，一首 4 分钟歌最大累计漂移 ~24ms，远低于人耳感知阈值 30ms。因此只要初始同步精确，无需在播放过程中持续校正。
 
 #### Layer 1：NTP 时钟同步 + RTT 回报
 
 客户端与服务器通过 `ntp:ping` / `ntp:pong` 事件交换时间戳，计算 `clockOffset`（客户端与服务端时钟差值），使 `getServerTime()` 返回与服务端对齐的时间。
 
-- 初始阶段：快速采样（每 50ms）收集 30 个样本，使用 `switchedRef` 保证仅在首次校准完成时切换到稳定阶段
-- 稳定阶段：每 2.5 秒一次心跳
+- 初始阶段：快速采样（每 50ms）收集 20 个样本，使用 `switchedRef` 保证仅在首次校准完成时切换到稳定阶段
+- 稳定阶段：每 5 秒一次心跳
+- NTP 仅在用户进入房间后启动（`ClockSyncRunner` 渲染在 `RoomPage` 中），大厅用户不运行时钟同步
 - 取中位数作为 offset（对 GC 暂停/网络抖动鲁棒）
 - **RTT 回报**：每次 `ntp:ping` 附带 `lastRttMs`（客户端中位 RTT），服务端在 `NTP_PING` handler 中调用 `roomRepo.setSocketRTT()` 存储，用于自适应调度延迟计算
 - 核心模块：`clockSync.ts`（采样引擎 + `getServerTime()` + `getMedianRTT()`）、`useClockSync.ts`（React Hook，在 SocketProvider 中运行）
@@ -344,33 +355,54 @@ interface ChatMessage {
 - RTT 由客户端 NTP 测量后通过 `ntp:ping` 事件回报，服务端以指数移动平均（alpha=0.2）平滑存储在 `roomRepository` 的 per-socket RTT map
 - 全部客户端（含操作发起者）统一收到广播并在预定时刻执行
 - **serverTimestamp 对齐**：播放中的动作（play/resume/seek）将 `room.playState.serverTimestamp` 设为 `serverTimeToExecute` 而非 `Date.now()`，确保 `estimateCurrentTime()` 在下一次 Host 上报前也能准确估算位置
+- **音频始终以 rate=1.0 播放**，不进行任何速率/音高修改，保持原始音质
 
-#### Layer 3：Playback Rate Drift Correction
+#### Host 上报与服务端状态维护
 
-废弃硬 seek 校正，改用三档播放速率微调策略：
+Host（房主）每 5 秒上报当前播放位置到服务端，仅用于维护 `room.playState` 的准确性（供 mid-song join 和 reconnect recovery 使用），**不会转发给其他客户端**。
 
-| drift 范围 | 动作 | 用户感知 |
-|---|---|---|
-| < 15ms | 不处理 | 无 |
-| 15ms - 300ms | `playbackRate = 1.02` 或 `0.98` | 不可感知 |
-| > 300ms | hard seek（兜底） | 极少发生 |
+- `syncService.estimateCurrentTime()` 基于 Host 上报的位置 + 经过时间估算当前位置
+- 新用户加入时，通过 `ROOM_STATE` 获取 `playState` 并计算应跳转到的位置
+- 断线重连时，`usePlayer` 的 recovery 机制自动检测 desync 并重新加载音轨
 
-- `syncService` 每 5 秒广播 `player:sync_response`（排除 Host）
-- Host 每 2 秒上报当前位置校准服务端状态
-- 客户端使用 NTP 校准后的 `getServerTime()` 精确计算 drift
+#### 播放模式
+
+房间支持 4 种播放模式（`PlayMode`），由 `room.playMode` 字段控制，默认 `sequential`：
+
+| 模式 | 说明 |
+|------|------|
+| `sequential` | 顺序播放，末尾停止 |
+| `loop-all` | 列表循环，末尾回到第一首 |
+| `loop-one` | 单曲循环，重播当前曲目 |
+| `shuffle` | 随机播放，从队列随机选一首（排除当前） |
+
+- **Host/Admin** 直接 emit `player:set_mode`，服务端更新 `room.playMode` 并广播 `ROOM_STATE`
+- **Member** 通过 `vote:start { action: 'set-mode', payload: { mode } }` 投票切换
+- 服务端 `queueService.getNextTrack(roomId, playMode)` 根据模式返回下一首；`getPreviousTrack` 在 `loop-all` 模式下支持尾→首回绕
+- 客户端 `PlayerControls` 提供循环切换按钮，带 `AnimatePresence` 图标过渡动画
+
+#### 队列清空
+
+- Host/Admin 可通过播放列表抽屉的「清空」按钮（`ListX` 图标）一次性清空队列
+- 采用二次确认防误操作：首次点击变为 destructive 提示，3 秒内再次点击才执行
+- 服务端 `queue:clear` handler 复用 `remove` on `Queue` 权限，清空后停止播放并广播 `QUEUE_UPDATED` + `PLAYER_PAUSE` + `ROOM_STATE`
 
 #### 其他同步机制
 
 1. **暂停快照**：服务端 `pauseTrack()` 在暂停前调用 `estimateCurrentTime()` 快照准确位置
 2. **恢复播放**：暂停后点击播放，服务端检测同一首歌时发 `player:resume`（所有客户端预定时刻恢复）
 3. **自动续播**：房主独自重新加入时，若有歌曲暂停/排队中，自动恢复播放
-4. **加入房间补偿**：中途加入的客户端使用 `getServerTime()` 计算当前应处的播放位置
-5. **Host 不收自身同步广播**：`syncService` 使用 `io.to(roomId).except(hostId)` 排除 Host，避免回弹 seek
-6. **宽限期**：房间空置 30 秒 (`ROOM_GRACE_PERIOD_MS`) 后自动清理（重复调用 `scheduleDeletion` 不会创建重复 timer）
-7. **切歌防抖**：500ms (`PLAYER_NEXT_DEBOUNCE_MS`) 内不重复触发下一首
-8. **队列曲目移除**：移除当前播放曲目且无下一首时，额外广播 `ROOM_STATE` 使客户端清除 `currentTrack`
-9. **大厅重连刷新**：`useLobby` 监听 socket `connect` 事件，断线重连后自动重新拉取房间列表
-10. **投票执行**：`VOTE_CAST` / `VOTE_START` 中 `executeAction` 使用 `await` 确保动作完成后才广播 `VOTE_RESULT`
+4. **加入房间补偿**：中途加入的客户端使用 `getServerTime()` 计算当前应处的播放位置，采用 fade-in 淡入策略（400ms 等待 + 200ms fade）减少加入延迟
+5. **房间宽限期**：房间空置 60 秒 (`ROOM_GRACE_PERIOD_MS`) 后自动清理（重复调用 `scheduleDeletion` 不会创建重复 timer）
+6. **角色宽限期**：特权用户（host 或 admin）断线后不立即丢失角色，而是启动 30 秒宽限期 (`ROLE_GRACE_PERIOD_MS`)。数据结构 `roleGraceMap: Map<roomId, Map<userId, { role, timer }>>` 支持同时跟踪多个断线的特权用户（1 个 host + N 个 admin）。宽限期内原用户重连可自动恢复角色（host 恢复 hostId + host role；admin 恢复 admin role）；返回的特权用户免密码验证。Host 宽限期过期后，房主转移优先选在线的 admin，其次按加入顺序选 member；admin 宽限期过期后仅清理条目。宽限期即使房间因此变空也保持（与 `scheduleDeletion` 并行），其他用户在宽限期内加入空房间时以 `member` 身份进入（不夺取 host）
+7. **持久化用户身份**：客户端通过 `storage.getUserId()` 生成并持久化 `nanoid`，每次 `ROOM_CREATE` / `ROOM_JOIN` 携带 `userId`，使服务端可跨 socket 重连识别同一用户。服务端通过 `roomRepo.getSocketMapping(socket.id)` 获取 `{ roomId, userId }` 映射——`socket.id` 仅用于 Socket 映射查找，所有涉及用户身份的操作（host 判断、auth cookie 归属、权限检查等）统一使用 `mapping.userId`
+8. **`currentUser` 自动推导**：`roomStore` 中 `currentUser` 始终从 `room.users` 自动推导（`deriveCurrentUser`），`setRoom` / `addUser` / `removeUser` / `updateRoom` 等 action 内部自动同步，消除手动 `setCurrentUser` 带来的脱节风险
+9. **Socket 断开竞态防护**：页面刷新时新旧 socket 的 join/disconnect 到达顺序不确定，`leaveRoom` 通过 `roomRepo.hasOtherSocketForUser()` 检测同一用户是否有更新的 socket 连接，避免旧 socket disconnect 误删活跃用户
+10. **投票安全网**：`voteController` 接收 `VOTE_START` 时，若检测到用户已有直接操作权限（host/admin），不再返回错误，而是直接执行该操作（`executeAction`），防止客户端-服务端角色不同步时操作失效
+11. **切歌防抖**：500ms (`PLAYER_NEXT_DEBOUNCE_MS`) 内不重复触发下一首
+12. **队列曲目移除**：移除当前播放曲目且无下一首时，额外广播 `ROOM_STATE` 使客户端清除 `currentTrack`
+13. **大厅重连刷新**：`useLobby` 监听 socket `connect` 事件，断线重连后自动重新拉取房间列表
+14. **投票执行**：`VOTE_CAST` / `VOTE_START` 中 `executeAction` 使用 `await` 确保动作完成后才广播 `VOTE_RESULT`
 
 ### REST API
 
@@ -380,6 +412,7 @@ interface ChatMessage {
 | `/api/music/url` | GET | 解析流媒体 URL（`source` + `id`） |
 | `/api/music/lyric` | GET | 获取歌词 |
 | `/api/music/cover` | GET | 获取封面图 |
+| `/api/rooms/:roomId/check` | GET | 房间预检（存在性 + 是否需要密码），用于分享链接直接访问时的前置校验 |
 | `/api/health` | GET | 健康检查 |
 
 ---
@@ -432,6 +465,7 @@ interface ChatMessage {
 | @neteasecloudmusicapienhanced/api | ^4.30.1 | 网易云 QR 登录 / Cookie 验证 / 用户信息 |
 | escape-html | ^1.0.3 | HTML 转义（防注入） |
 | p-limit | ^7.3.0 | 并发控制（封面批量解析） |
+| lru-cache | ^11.2.6 | LRU 缓存（musicProvider 外部 API 结果缓存） |
 
 ### Shared 核心依赖
 
@@ -469,7 +503,7 @@ interface ChatMessage {
 | Store | 职责 | 持久化 |
 |-------|------|--------|
 | `playerStore` | 播放状态（曲目、进度、音量、歌词） | 音量持久化到 localStorage |
-| `roomStore` | 房间状态（room、currentUser、users） | 无 |
+| `roomStore` | 房间状态（room、currentUser 自动推导自 room.users） | 无 |
 | `chatStore` | 聊天（消息列表、未读数、开关状态） | 无 |
 | `lobbyStore` | 大厅（房间列表、加载状态） | 无 |
 | `settingsStore` | 设置（移动端歌词位置、歌词对齐/动画、背景参数） | 全部持久化到 localStorage |
@@ -496,10 +530,12 @@ usePlayer                             useRoom
 ├── useLyric (歌词解析)                ├── useChatSync (聊天事件)
 └── usePlayerSync                     ├── useQueueSync (队列事件)
     ├── Scheduled Execution           ├── useAuthSync (Cookie 持久化)
-    └── Rate-based Drift Correction   └── useConnectionGuard (断线重置)
+    └── Host Progress Reporting       └── useConnectionGuard (断线重置)
 
-SocketProvider
-└── ClockSyncRunner → useClockSync (NTP 时钟同步)
+SocketProvider (连接管理，无 NTP)
+
+RoomPage
+└── ClockSyncRunner → useClockSync (NTP 时钟同步，仅房间内运行)
 ```
 
 通用工具 Hook：`useSocketEvent(event, handler)` 封装 `socket.on/off` 样板代码，已在 `useLobby` 和 `useVote` 中使用。
@@ -548,12 +584,16 @@ const { socket, isConnected } = useSocketContext()
 #### 分层架构
 
 ```
-Controller → Service → Repository
+Controller → Service → Repository / Utils
 ```
 
-- **Controller**：注册 Socket 事件监听器，调用 Service
-- **Service**：业务逻辑、跨领域编排、Socket 广播
+- **Controller**：注册 Socket 事件监听器，薄编排层（校验输入 → 调用 Service → 编排通知）。不包含业务逻辑。
+- **Service**：业务逻辑、跨领域编排、Socket 广播。关键服务职责拆分：
+  - `roomService`：房间 CRUD + 角色管理 + 加入校验（`validateJoinRequest`）。Re-export `toPublicRoomState` 和 `broadcastRoomList` 以保持控制器调用方式不变。
+  - `roomLifecycleService`：房间删除定时器 + 角色宽限期定时器（`roleGraceMap`，host + admin）+ 防抖广播。不依赖 `roomService`，消除循环依赖。API：`startRoleGrace`、`cancelRoleGrace`、`getGracedRole`、`hasHostGrace`、`cleanupAllGrace`。
+  - `playerService`：播放状态管理 + 流 URL 解析 + 切歌防抖（`isNextDebounced`）+ 加入播放同步（`syncPlaybackToSocket`）+ 房间清理（`cleanupRoom`，原在 playerController）。
 - **Repository**：数据存取（当前为内存 Map，接口抽象，可替换为数据库）
+- **Utils**：纯函数工具（`toPublicRoomState` 等），无状态，可被任意层引用
 
 #### Repository 模式
 
@@ -615,11 +655,13 @@ logger.error('Failed to resolve stream URL', err, { roomId, trackId })
 ```typescript
 LIMITS.QUEUE_MAX_SIZE       // 100
 LIMITS.CHAT_HISTORY_MAX     // 200
-TIMING.SYNC_BROADCAST_INTERVAL_MS  // 5_000
-TIMING.ROOM_GRACE_PERIOD_MS        // 30_000
+TIMING.ROOM_GRACE_PERIOD_MS        // 60_000
+TIMING.ROLE_GRACE_PERIOD_MS        // 30_000
+TIMING.PLAYER_NEXT_DEBOUNCE_MS     // 500
+TIMING.VOTE_TIMEOUT_MS             // 30_000
 NTP.INITIAL_INTERVAL_MS            // 50
-NTP.STEADY_STATE_INTERVAL_MS       // 2_500
-NTP.MAX_INITIAL_SAMPLES            // 30
+NTP.STEADY_STATE_INTERVAL_MS       // 5_000
+NTP.MAX_INITIAL_SAMPLES            // 20
 NTP.MIN_SCHEDULE_DELAY_MS          // 300
 NTP.MAX_SCHEDULE_DELAY_MS          // 3_000
 ```
@@ -677,6 +719,9 @@ updateRoom: (partial) =>
 - **客户端连接状态**：`SocketProvider` 监听 disconnect/reconnect，显示持久化 warning toast
 - **搜索竞态防护**：`SearchDialog` 使用 `AbortController` 取消上一次请求 + `searchIdRef` 忽略过时响应
 - **外部 API 超时保护**：`musicProvider` 所有 `@meting/core` 调用使用 `Promise.race` 包裹 15s 超时
+- **外部 API LRU 缓存**：`musicProvider` 对 search（10min TTL）、streamUrl（1h）、cover（24h）、lyric（24h）使用 `lru-cache` 做内存级缓存，同一首歌被多人/多房间播放时避免重复外部请求；VIP cookie 请求不走缓存
+- **广播防抖**：`broadcastRoomList` 使用 100ms trailing debounce，多次快速操作（create+join、多人 leave）合并为一次广播
+- **反向索引优化**：`roomRepository` 维护 `roomToSockets` 反向索引（`Map<string, Set<string>>`），使 `getMaxRTT` 从 O(全局 socket 数) 降为 O(房间内 socket 数)
 - **Timer 泄漏防护**：`usePlayer`/`useHowl`/`usePlayerSync`/`PlayerControls` 中所有 `setTimeout` 均存入 ref 并在组件卸载时清理
 
 ### ESLint 配置
@@ -863,6 +908,62 @@ npx shadcn@latest add <component-name>
 
 - 服务端数据全部存储在内存中，重启后丢失
 - 无数据库、无服务端持久化（客户端 Cookie 通过 localStorage 持久化）
-- 用户身份基于 Socket ID + 昵称（无注册/登录账号系统）
+- 用户身份基于持久化 nanoid（localStorage）+ 昵称（无注册/登录账号系统）；`socket.id` 仅用于 Socket 传输层映射
 - 平台认证（网易云 QR 登录等）用于 VIP 歌曲访问，Cookie 作用域为房间级
 - `shared` 包修改后前后端会自动热重载（pnpm workspace 链接）
+
+## 9. 部署方案
+
+### 架构
+
+采用**纯 Node.js 单镜像**方案：Express 同时托管前端 SPA 静态文件和后端 API/WebSocket，无需 Nginx。
+
+```
+Docker 容器 (:3001)
+├── / 静态文件        → client/dist（Vite 产物）
+├── /api/*           → REST API
+└── /socket.io/*     → WebSocket
+```
+
+### CI/CD 流程
+
+1. **push 到 main** → GitHub Actions 构建 Docker 镜像 → 推送到 GHCR（`ghcr.io`）
+2. **服务器上** Watchtower 每 5 分钟检查镜像更新 → 自动拉取并重启容器
+
+零人工干预，GitHub 零额外 Secrets（使用自带的 `GITHUB_TOKEN`）。
+
+### Docker 多阶段构建
+
+- **阶段 1（deps）**：`pnpm install --frozen-lockfile` 安装全部依赖
+- **阶段 2（build）**：分别构建 shared、server（tsc）、client（vite build）
+- **阶段 3（production）**：仅安装 server 生产依赖（`--filter @music-together/server...`），复制构建产物
+
+### CORS 策略
+
+- `CLIENT_URL` 未设置（默认值）→ `origin: true`（允许所有来源，适用于同域部署和本地开发）
+- `CLIENT_URL` 显式设置 → 严格白名单模式（适用于前后端分离跨域部署）
+
+### 前端同域适配
+
+`SERVER_URL` 默认使用 `window.location.origin`，同域部署时自动指向当前页面的 origin，无需配置。
+
+### 静态文件托管
+
+`packages/server/src/index.ts` 在启动时检测 `client/dist/index.html` 是否存在：
+- **存在**（生产环境）：挂载 `express.static` + SPA fallback
+- **不存在**（本地开发）：跳过，零影响
+
+### 服务器部署命令
+
+```bash
+# 启动应用容器
+docker run -d --name music-together --restart unless-stopped -p 3001:3001 ghcr.io/<owner>/music-together:latest
+
+# 启动 Watchtower 自动更新
+docker run -d --name watchtower --restart unless-stopped \
+  -v /var/run/docker.sock:/var/run/docker.sock \
+  -e WATCHTOWER_CLEANUP=true \
+  containrrr/watchtower --interval 300 music-together
+```
+
+如使用 1Panel，创建反向代理网站指向 `127.0.0.1:3001`，启用 WebSocket 和 HTTPS。

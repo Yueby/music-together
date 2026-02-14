@@ -20,5 +20,10 @@ export function useQueue() {
     [socket],
   )
 
-  return { addTrack, removeTrack, reorderTracks }
+  const clearQueue = useCallback(
+    () => socket.emit(EVENTS.QUEUE_CLEAR),
+    [socket],
+  )
+
+  return { addTrack, removeTrack, reorderTracks, clearQueue }
 }

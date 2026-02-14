@@ -3,7 +3,7 @@ import { Button } from '@/components/ui/button'
 import { Separator } from '@/components/ui/separator'
 import { useAuth } from '@/hooks/useAuth'
 import type { MusicSource, MyPlatformAuth, PlatformAuthStatus } from '@music-together/shared'
-import { Crown, KeyRound, LogOut, QrCode, ScanLine } from 'lucide-react'
+import { Crown, KeyRound, LogOut, ScanLine } from 'lucide-react'
 import { useState } from 'react'
 import { ManualCookieDialog } from './ManualCookieDialog'
 import { NeteaseQrDialog } from './NeteaseQrDialog'
@@ -129,10 +129,8 @@ export function PlatformAuthSection() {
 
   return (
     <div className="space-y-1">
-      <div className="mb-3 flex items-center gap-2">
-        <QrCode className="text-muted-foreground h-4 w-4" />
-        <h3 className="text-sm font-medium">平台账号</h3>
-      </div>
+      <h3 className="text-base font-semibold">平台账号</h3>
+      <Separator className="mt-2 mb-4" />
       <p className="text-muted-foreground mb-4 text-xs">
         登录音乐平台 VIP 账号后，房间内所有人都可以播放 VIP 歌曲
       </p>

@@ -1,21 +1,27 @@
-import { EVENTS } from '@music-together/shared'
-import type { RoomListItem, RoomState, User } from '@music-together/shared'
+import { timingSafeEqual } from 'node:crypto'
+import type { RoomListItem, User } from '@music-together/shared'
 import { nanoid } from 'nanoid'
-import { config } from '../config.js'
 import type { RoomData } from '../repositories/types.js'
 import { roomRepo } from '../repositories/roomRepository.js'
 import { chatRepo } from '../repositories/chatRepository.js'
+import {
+  scheduleDeletion,
+  cancelDeletionTimer,
+  startRoleGrace,
+  cancelRoleGrace,
+  getGracedRole,
+  hasHostGrace,
+} from './roomLifecycleService.js'
 import { logger } from '../utils/logger.js'
-import { cleanupRoom as cleanupPlayerRoom } from '../controllers/playerController.js'
-import { cleanupRoom as cleanupVoteRoom } from './voteService.js'
-import { cleanupRoom as cleanupAuthRoom } from './authService.js'
 import type { TypedServer } from '../middleware/types.js'
 
-/** 宽限期定时器：房间变空后延迟删除，给断线用户重连的窗口 */
-const roomDeletionTimers = new Map<string, ReturnType<typeof setTimeout>>()
+// Re-export from their new homes so existing `roomService.xxx()` callers
+// in controllers don't need import changes.
+export { toPublicRoomState } from '../utils/roomUtils.js'
+export { broadcastRoomList } from './roomLifecycleService.js'
 
 // ---------------------------------------------------------------------------
-// Public API
+// Public API — Room CRUD
 // ---------------------------------------------------------------------------
 
 export function createRoom(
@@ -23,9 +29,10 @@ export function createRoom(
   nickname: string,
   roomName?: string,
   password?: string | null,
+  persistentUserId?: string,
 ): { room: RoomData; user: User } {
   const roomId = nanoid(6).toUpperCase()
-  const userId = socketId
+  const userId = persistentUserId || socketId
 
   const user: User = { id: userId, nickname, role: 'host' }
 
@@ -42,6 +49,7 @@ export function createRoom(
       currentTime: 0,
       serverTimestamp: Date.now(),
     },
+    playMode: 'sequential',
   }
 
   roomRepo.set(roomId, room)
@@ -56,6 +64,7 @@ export function joinRoom(
   socketId: string,
   roomId: string,
   nickname: string,
+  persistentUserId?: string,
 ): { room: RoomData; user: User } | null {
   const room = roomRepo.get(roomId)
   if (!room) return null
@@ -63,33 +72,69 @@ export function joinRoom(
   // Cancel any pending room deletion (e.g. user refreshed and is rejoining)
   cancelDeletionTimer(roomId)
 
-  const userId = socketId
+  const userId = persistentUserId || socketId
+
+  // Check if this user has a saved role from the grace period
+  const gracedRole = getGracedRole(roomId, userId)
+  const isReturningHost = room.hostId === userId
+
+  // Cancel the user's own grace timer if they are returning
+  if (gracedRole) {
+    cancelRoleGrace(roomId, userId)
+  }
 
   // Rejoin — update existing user entry instead of creating duplicate
   const existing = room.users.find((u) => u.id === userId)
   if (existing) {
     existing.nickname = nickname
+    // Restore graced role if available, otherwise keep existing role
+    if (gracedRole) {
+      existing.role = gracedRole
+      if (gracedRole === 'host') {
+        room.hostId = userId
+      }
+      logger.info(`Restored ${gracedRole} role for ${nickname} on rejoin in room ${roomId}`, { roomId })
+    } else if (room.hostId === existing.id) {
+      existing.role = 'host'
+    }
     roomRepo.setSocketMapping(socketId, roomId, userId)
     return { room, user: existing }
   }
 
-  // If the room is empty (grace period), the first joiner becomes host
-  const shouldBeHost = room.users.length === 0
-  const user: User = { id: userId, nickname, role: shouldBeHost ? 'host' : 'member' }
+  // Determine the role for this new user entry
+  let role: User['role'] = 'member'
 
-  if (shouldBeHost) {
+  if (gracedRole === 'host' || isReturningHost) {
+    // Returning host (with or without grace) — restore host role
+    role = 'host'
     room.hostId = userId
-    logger.info(`User ${nickname} became host of empty room ${roomId}`, { roomId })
+    logger.info(`Host ${nickname} reclaimed room ${roomId}`, { roomId })
+  } else if (gracedRole === 'admin') {
+    // Returning admin — restore admin role
+    role = 'admin'
+    logger.info(`Admin ${nickname} reclaimed role in room ${roomId}`, { roomId })
+  } else if (room.users.length === 0) {
+    // Empty room — check if a host grace is active
+    if (hasHostGrace(roomId)) {
+      // Host grace period is active — don't overwrite hostId, join as member
+      logger.info(`User ${nickname} joined empty room ${roomId} as member (host grace active)`, { roomId })
+    } else {
+      // No grace period — normal host takeover
+      role = 'host'
+      room.hostId = userId
+      logger.info(`User ${nickname} became host of empty room ${roomId}`, { roomId })
+    }
   }
 
+  const user: User = { id: userId, nickname, role }
   room.users.push(user)
   roomRepo.setSocketMapping(socketId, roomId, userId)
 
-  logger.info(`User ${nickname} joined room ${roomId}`, { roomId })
+  logger.info(`User ${nickname} joined room ${roomId} as ${role}`, { roomId })
   return { room, user }
 }
 
-export function leaveRoom(socketId: string): {
+export function leaveRoom(socketId: string, io?: TypedServer): {
   roomId: string
   user: User
   room: RoomData | null
@@ -102,31 +147,44 @@ export function leaveRoom(socketId: string): {
   const room = roomRepo.get(roomId)
   if (!room) return null
 
+  // Race condition guard: if the user has another active socket in this room
+  // (e.g. page refresh — new socket joined before old socket disconnected),
+  // only clean up the stale mapping without removing the user from the room.
+  if (roomRepo.hasOtherSocketForUser(roomId, userId, socketId)) {
+    roomRepo.deleteSocketMapping(socketId)
+    logger.info(`Stale disconnect for user ${userId} in room ${roomId} — newer socket exists`, { roomId })
+    return null
+  }
+
   const user = room.users.find((u) => u.id === userId)
   if (!user) return null
 
   room.users = room.users.filter((u) => u.id !== userId)
   roomRepo.deleteSocketMapping(socketId)
 
+  // Start role grace period for privileged users (host or admin)
+  // so they can reclaim their role on reconnect within the grace window
+  if (user.role === 'host' || user.role === 'admin') {
+    startRoleGrace(roomId, userId, user.role, io)
+  }
+
   // If room is empty, schedule deletion after grace period
   if (room.users.length === 0) {
-    scheduleDeletion(roomId)
+    scheduleDeletion(roomId, io)
     return { roomId, user, room, hostChanged: false }
   }
 
-  // If host left, transfer to next user
+  // hostChanged stays false — hostId is intentionally preserved during grace period
+  // The actual transfer happens when the grace timer expires in roomLifecycleService
   let hostChanged = false
-  if (room.hostId === userId && room.users.length > 0) {
-    const newHost = room.users[0]
-    room.hostId = newHost.id
-    newHost.role = 'host'
-    hostChanged = true
-    logger.info(`Host transferred from ${user.nickname} to ${newHost.nickname} in room ${roomId}`, { roomId })
-  }
 
   logger.info(`User ${user.nickname} left room ${roomId}`, { roomId })
   return { roomId, user, room, hostChanged }
 }
+
+// ---------------------------------------------------------------------------
+// Public API — Read / Settings / Roles
+// ---------------------------------------------------------------------------
 
 export function getRoom(roomId: string): RoomData | undefined {
   return roomRepo.get(roomId)
@@ -151,25 +209,6 @@ export function updateSettings(
   if (settings.password !== undefined) {
     room.password = settings.password
   }
-}
-
-/** 将内部 RoomData 转为客户端可见的 RoomState（不含密码） */
-export function toPublicRoomState(data: RoomData): RoomState {
-  return {
-    id: data.id,
-    name: data.name,
-    hostId: data.hostId,
-    hasPassword: data.password !== null,
-    users: data.users,
-    queue: data.queue,
-    currentTrack: data.currentTrack,
-    playState: data.playState,
-  }
-}
-
-/** 向 lobby 频道广播房间列表变更 */
-export function broadcastRoomList(io: TypedServer): void {
-  io.to('lobby').emit(EVENTS.ROOM_LIST_UPDATE, listRooms())
 }
 
 export function setUserRole(roomId: string, targetUserId: string, role: 'admin' | 'member'): boolean {
@@ -200,37 +239,61 @@ export function getRoomBySocket(socketId: string): { roomId: string; room: RoomD
 }
 
 // ---------------------------------------------------------------------------
-// Internal helpers
+// Join validation (business logic extracted from roomController)
 // ---------------------------------------------------------------------------
 
-function scheduleDeletion(roomId: string): void {
-  // Prevent duplicate timers if called multiple times for the same room
-  cancelDeletionTimer(roomId)
-
-  logger.info(
-    `Room ${roomId} is empty, will be deleted in ${config.room.gracePeriodMs / 1000}s unless someone rejoins`,
-    { roomId },
-  )
-  const timer = setTimeout(() => {
-    const r = roomRepo.get(roomId)
-    if (r && r.users.length === 0) {
-      roomRepo.delete(roomId)
-      chatRepo.deleteRoom(roomId)
-      cleanupPlayerRoom(roomId)
-      cleanupVoteRoom(roomId)
-      cleanupAuthRoom(roomId)
-      roomDeletionTimers.delete(roomId)
-      logger.info(`Room ${roomId} deleted after grace period`, { roomId })
-    }
-  }, config.room.gracePeriodMs)
-  roomDeletionTimers.set(roomId, timer)
+/** Constant-time string comparison to mitigate timing attacks */
+function safeCompare(a: string, b: string): boolean {
+  const bufA = Buffer.from(a)
+  const bufB = Buffer.from(b)
+  if (bufA.length !== bufB.length) return false
+  return timingSafeEqual(bufA, bufB)
 }
 
-function cancelDeletionTimer(roomId: string): void {
-  const timer = roomDeletionTimers.get(roomId)
-  if (timer) {
-    clearTimeout(timer)
-    roomDeletionTimers.delete(roomId)
-    logger.info(`Room ${roomId} deletion cancelled — user rejoined`, { roomId })
+export interface JoinValidationResult {
+  valid: boolean
+  errorCode?: string
+  errorMessage?: string
+  /** Whether this is a rejoin (user already in room or same socket mapping) — skip join notification */
+  isRejoin: boolean
+  /** Whether password should be bypassed (rejoin, already in room, or returning host) */
+  skipPassword: boolean
+}
+
+/**
+ * Validate a join request: check room existence, password, rejoin scenarios.
+ * Pure business logic — no socket operations.
+ */
+export function validateJoinRequest(
+  roomId: string,
+  socketId: string,
+  password?: string,
+  persistentUserId?: string,
+): JoinValidationResult {
+  const room = roomRepo.get(roomId)
+  if (!room) {
+    return { valid: false, errorCode: 'ROOM_NOT_FOUND', errorMessage: '房间不存在', isRejoin: false, skipPassword: false }
   }
+
+  const existingMapping = roomRepo.getSocketMapping(socketId)
+  const effectiveUserId = persistentUserId || socketId
+  const alreadyInRoom = room.users.some((u) => u.id === effectiveUserId)
+  const isReturningPrivileged = getGracedRole(roomId, effectiveUserId) !== null
+  const isReturningHost = room.hostId === effectiveUserId && !alreadyInRoom
+
+  // Password bypass: same socket mapping, already in room, returning host, or returning privileged user
+  const skipPassword = existingMapping?.roomId === roomId || alreadyInRoom || isReturningHost || isReturningPrivileged
+  // Notification skip: only when user is literally still in the room
+  const isRejoin = existingMapping?.roomId === roomId || alreadyInRoom
+
+  if (!skipPassword && room.password !== null) {
+    if (!password || !safeCompare(password, room.password)) {
+      return { valid: false, errorCode: 'WRONG_PASSWORD', errorMessage: '密码错误', isRejoin, skipPassword }
+    }
+  }
+
+  // Auto-leave check: if the socket is mapped to a different room, the caller
+  // should call leaveRoom before proceeding. We just flag the scenario here.
+
+  return { valid: true, isRejoin, skipPassword }
 }

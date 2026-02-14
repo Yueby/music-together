@@ -1,17 +1,11 @@
 import { Button } from '@/components/ui/button'
-import { useSocketContext } from '@/providers/SocketProvider'
+import { getVoteActionLabel } from '@/hooks/useVote'
+import { storage } from '@/lib/storage'
 import { TIMING } from '@music-together/shared'
-import type { VoteAction, VoteState } from '@music-together/shared'
+import type { VoteState } from '@music-together/shared'
 import { Check, X } from 'lucide-react'
 import { useEffect, useState } from 'react'
 import { motion, AnimatePresence } from 'motion/react'
-
-const ACTION_LABELS: Record<VoteAction, string> = {
-  pause: '暂停播放',
-  resume: '继续播放',
-  next: '下一首',
-  prev: '上一首',
-}
 
 interface VoteBannerProps {
   vote: VoteState
@@ -19,10 +13,10 @@ interface VoteBannerProps {
 }
 
 export function VoteBanner({ vote, onCastVote }: VoteBannerProps) {
-  const { socket } = useSocketContext()
   const [remainingMs, setRemainingMs] = useState(() => Math.max(0, vote.expiresAt - Date.now()))
 
-  const hasVoted = socket.id ? socket.id in vote.votes : false
+  const myUserId = storage.getUserId()
+  const hasVoted = myUserId in vote.votes
   const approveCount = Object.values(vote.votes).filter(Boolean).length
   const rejectCount = Object.values(vote.votes).filter((v) => !v).length
   const progressPercent = Math.max(0, (remainingMs / TIMING.VOTE_TIMEOUT_MS) * 100)
@@ -42,12 +36,12 @@ export function VoteBanner({ vote, onCastVote }: VoteBannerProps) {
         initial={{ opacity: 0, y: -8 }}
         animate={{ opacity: 1, y: 0 }}
         exit={{ opacity: 0, y: -8 }}
-        className="mx-auto w-full max-w-sm rounded-xl bg-white/10 px-4 py-3 backdrop-blur-md"
+        className="w-full rounded-xl bg-white/10 px-4 py-3 backdrop-blur-md"
       >
         {/* Title */}
         <div className="mb-2 text-center text-sm font-medium text-white/90">
           <span className="text-white/60">{vote.initiatorNickname}</span>{' '}
-          发起投票：{ACTION_LABELS[vote.action]}
+          发起投票：{getVoteActionLabel(vote.action, vote.payload)}
         </div>
 
         {/* Progress bar (time remaining) */}

@@ -1,9 +1,11 @@
-import { EVENTS, ERROR_CODE, TIMING, defineAbilityFor, voteStartSchema, voteCastSchema } from '@music-together/shared'
-import type { Actions, VoteAction } from '@music-together/shared'
+import { EVENTS, ERROR_CODE, TIMING, defineAbilityFor, voteStartSchema, voteCastSchema, playerSetModeSchema } from '@music-together/shared'
+import type { Actions, PlayMode, VoteAction } from '@music-together/shared'
 import { createWithRoom } from '../middleware/withRoom.js'
+import { roomRepo } from '../repositories/roomRepository.js'
 import * as voteService from '../services/voteService.js'
 import * as playerService from '../services/playerService.js'
 import * as queueService from '../services/queueService.js'
+import * as roomService from '../services/roomService.js'
 import { logger } from '../utils/logger.js'
 import type { TypedServer, TypedSocket } from '../middleware/types.js'
 
@@ -11,7 +13,7 @@ import type { TypedServer, TypedSocket } from '../middleware/types.js'
  * Execute the voted action on the player.
  * No initiatorSocket — broadcast to everyone since this is a collective decision.
  */
-async function executeAction(io: TypedServer, roomId: string, action: VoteAction): Promise<void> {
+async function executeAction(io: TypedServer, roomId: string, action: VoteAction, payload?: Record<string, unknown>): Promise<void> {
   switch (action) {
     case 'pause':
       playerService.pauseTrack(io, roomId)
@@ -33,6 +35,16 @@ async function executeAction(io: TypedServer, roomId: string, action: VoteAction
       }
       break
     }
+    case 'set-mode': {
+      const parsed = playerSetModeSchema.safeParse(payload)
+      if (!parsed.success) break
+      const room = roomRepo.get(roomId)
+      if (!room) break
+      room.playMode = parsed.data.mode
+      io.to(roomId).emit(EVENTS.ROOM_STATE, roomService.toPublicRoomState(room))
+      logger.info(`Play mode set to ${parsed.data.mode} via vote`, { roomId })
+      break
+    }
   }
 }
 
@@ -48,13 +60,16 @@ export function registerVoteController(io: TypedServer, socket: TypedSocket) {
         return
       }
 
-      const { action } = parsed.data
+      const { action, payload } = parsed.data
 
-      // Check if user has direct permission (host/admin don't need to vote)
-      // VoteAction includes 'resume' which is not in CASL Actions — cast is intentional
+      // Check if user has direct permission (host/admin don't need to vote).
+      // VoteAction includes 'resume' which is not in CASL Actions — cast is intentional.
+      // Safety net: if the client mistakenly routes through VOTE_START (e.g. due to
+      // client-server role desync), execute the action directly instead of returning an error.
       const ability = defineAbilityFor(ctx.user.role)
       if (ability.can(action as Actions, 'Player')) {
-        ctx.socket.emit(EVENTS.ROOM_ERROR, { code: ERROR_CODE.NO_VOTE_NEEDED, message: '你有直接操作权限，无需投票' })
+        await executeAction(io, ctx.roomId, action, payload)
+        logger.info(`Direct-executed ${action} for privileged user ${ctx.user.nickname} (role: ${ctx.user.role})`, { roomId: ctx.roomId })
         return
       }
 
@@ -70,6 +85,7 @@ export function registerVoteController(io: TypedServer, socket: TypedSocket) {
         ctx.user,
         action,
         ctx.room.users.length,
+        payload,
       )
 
       if (!vote) {
@@ -82,7 +98,7 @@ export function registerVoteController(io: TypedServer, socket: TypedSocket) {
       if (approveCount >= vote.requiredVotes) {
         // Auto-pass: execute immediately
         clearTimeout(vote.timeoutHandle)
-        await executeAction(io, ctx.roomId, action)
+        await executeAction(io, ctx.roomId, action, vote.payload)
         io.to(ctx.roomId).emit(EVENTS.VOTE_RESULT, { passed: true, action })
         voteService.cancelVote(ctx.roomId)
         return
@@ -122,7 +138,7 @@ export function registerVoteController(io: TypedServer, socket: TypedSocket) {
         clearTimeout(result.vote.timeoutHandle)
 
         if (result.passed) {
-          await executeAction(io, ctx.roomId, result.vote.action)
+          await executeAction(io, ctx.roomId, result.vote.action, result.vote.payload)
         }
 
         io.to(ctx.roomId).emit(EVENTS.VOTE_RESULT, {

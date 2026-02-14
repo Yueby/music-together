@@ -1,0 +1,10 @@
+node_modules
+dist
+docs
+.git
+.cursor
+.agent
+.shared
+.env
+screenshots
+*.md

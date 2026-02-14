@@ -123,7 +123,10 @@ export function LyricDisplay() {
   return (
     <div
       className="amll-container h-full w-full"
-      style={{ fontWeight, fontSize: `${fontSize}%` }}
+      style={{
+        fontWeight,
+        '--amll-lp-font-size': `clamp(16px, calc(min(5vh, 6vw) * ${fontSize / 100}), 80px)`,
+      } as React.CSSProperties}
     >
       <LyricPlayer
         lyricLines={amllLines}

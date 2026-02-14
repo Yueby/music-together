@@ -79,10 +79,17 @@ export function getClockOffset(): number {
  */
 export function recordPing(): number {
   const id = ++pingCounter
+  const now = Date.now()
   pending.set(id, {
     sentAt: performance.now(),
-    localTime: Date.now(),
+    localTime: now,
   })
+  // Purge stale entries older than 10 seconds (server never responded)
+  const staleThreshold = now - 10_000
+  for (const [k, v] of pending) {
+    if (v.localTime < staleThreshold) pending.delete(k)
+    else break // Map preserves insertion order; once we hit a fresh entry, stop
+  }
   return id
 }
 
