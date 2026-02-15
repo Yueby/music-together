@@ -1,5 +1,4 @@
 import { useEffect, useState } from 'react'
-import { AnimatePresence, motion } from 'motion/react'
 import { Lock, Music, Loader2 } from 'lucide-react'
 import { LIMITS } from '@music-together/shared'
 import {
@@ -102,25 +101,16 @@ export function CreateRoomDialog({
               </Label>
             </div>
 
-            <AnimatePresence>
-              {passwordEnabled && (
-                <motion.div
-                  initial={{ height: 0, opacity: 0 }}
-                  animate={{ height: 'auto', opacity: 1 }}
-                  exit={{ height: 0, opacity: 0 }}
-                  transition={{ duration: 0.2 }}
-                  className="overflow-hidden"
-                >
-                  <Input
-                    type="password"
-                    placeholder="设置房间密码..."
-                    value={password}
-                    onChange={(e) => setPassword(e.target.value)}
-                    maxLength={LIMITS.ROOM_PASSWORD_MAX_LENGTH}
-                  />
-                </motion.div>
-              )}
-            </AnimatePresence>
+            {passwordEnabled && (
+              <Input
+                type="password"
+                placeholder="设置房间密码..."
+                value={password}
+                onChange={(e) => setPassword(e.target.value)}
+                maxLength={LIMITS.ROOM_PASSWORD_MAX_LENGTH}
+                autoFocus
+              />
+            )}
           </div>
 
           <Button

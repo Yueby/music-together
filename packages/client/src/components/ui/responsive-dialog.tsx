@@ -170,7 +170,7 @@ function ResponsiveDialogBody({
   ...props
 }: React.ComponentProps<'div'>) {
   const isMobile = useIsResponsiveMobile()
-  return <div className={cn(isMobile && 'px-4 pb-4', className)} {...props} />
+  return <div className={cn(isMobile && 'overflow-y-auto px-4 pb-4', className)} {...props} />
 }
 
 // ---------------------------------------------------------------------------

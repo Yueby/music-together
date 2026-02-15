@@ -1,8 +1,11 @@
 import { motion, useReducedMotion } from 'motion/react'
-import { Headphones, Lock } from 'lucide-react'
+import { Headphones, Lock, UserRound } from 'lucide-react'
+import { LIMITS } from '@music-together/shared'
 import { Button } from '@/components/ui/button'
 import { Input } from '@/components/ui/input'
+import { Label } from '@/components/ui/label'
 import { useState } from 'react'
+import { storage } from '@/lib/storage'
 
 interface InteractionGateProps {
   onStart: (password?: string) => void
@@ -20,16 +23,25 @@ export function InteractionGate({
   const prefersReducedMotion = useReducedMotion()
   const [password, setPassword] = useState('')
 
-  const canStart = !hasPassword || password.trim().length > 0
+  const savedNickname = storage.getNickname()
+  const needsNickname = !savedNickname
+  const [nickname, setNickname] = useState(savedNickname)
+
+  const canStart =
+    (!needsNickname || nickname.trim().length > 0) &&
+    (!hasPassword || password.trim().length > 0)
 
   const handleSubmit = (e: React.FormEvent) => {
     e.preventDefault()
     if (!canStart) return
+    if (needsNickname) {
+      storage.setNickname(nickname.trim())
+    }
     onStart(hasPassword ? password.trim() : undefined)
   }
 
   return (
-    <div className="fixed inset-0 z-50 flex items-center justify-center bg-background">
+    <div className="fixed inset-0 z-50 flex items-center justify-center bg-background px-4">
       <motion.div
         initial={{ opacity: 0, scale: 0.9 }}
         animate={{ opacity: 1, scale: 1 }}
@@ -55,6 +67,23 @@ export function InteractionGate({
         </div>
 
         <form onSubmit={handleSubmit} className="flex w-full flex-col gap-4">
+          {needsNickname && (
+            <div className="flex flex-col gap-2">
+              <Label htmlFor="gate-nickname" className="flex items-center gap-1.5 text-xs text-muted-foreground">
+                <UserRound className="h-3.5 w-3.5" />
+                <span>设置你的昵称</span>
+              </Label>
+              <Input
+                id="gate-nickname"
+                placeholder="你的昵称..."
+                value={nickname}
+                onChange={(e) => setNickname(e.target.value)}
+                maxLength={LIMITS.NICKNAME_MAX_LENGTH}
+                autoFocus
+              />
+            </div>
+          )}
+
           {hasPassword && (
             <div className="flex flex-col gap-2">
               <div className="flex items-center gap-1.5 text-xs text-muted-foreground">
@@ -70,7 +99,7 @@ export function InteractionGate({
                   placeholder="输入房间密码..."
                   value={password}
                   onChange={(e) => setPassword(e.target.value)}
-                  autoFocus
+                  autoFocus={!needsNickname}
                   className={passwordError ? 'border-destructive' : ''}
                 />
                 {passwordError && (

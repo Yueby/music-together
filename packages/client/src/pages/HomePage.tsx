@@ -43,6 +43,7 @@ export default function HomePage() {
   passwordDialogRef.current = passwordDialog
   const directRoomIdRef = useRef(directRoomId)
   directRoomIdRef.current = directRoomId
+  const lastJoinedRoomIdRef = useRef('')
 
   const setRoom = useRoomStore((s) => s.setRoom)
   const savedNickname = storage.getNickname()
@@ -94,7 +95,7 @@ export default function HomePage() {
           setPasswordError('密码错误，请重试')
         } else {
           // Direct join hit a password-protected room — open password dialog
-          const targetRoomId = directRoomIdRef.current.trim()
+          const targetRoomId = lastJoinedRoomIdRef.current || directRoomIdRef.current.trim()
           if (targetRoomId) {
             setPasswordDialog({
               open: true,
@@ -149,10 +150,10 @@ export default function HomePage() {
 
   const handlePasswordSubmit = (password: string) => {
     if (!passwordDialog.room) return
-    const nickname = savedNickname || 'Guest'
+    if (!savedNickname) return
     setActionLoading(true)
     setPasswordError(null)
-    joinRoom(passwordDialog.room.id, nickname, password)
+    joinRoom(passwordDialog.room.id, savedNickname, password)
   }
 
   const handleDirectJoin = async () => {
@@ -167,6 +168,7 @@ export default function HomePage() {
       return
     }
     await unlockAudio()
+    lastJoinedRoomIdRef.current = directRoomId.trim()
     setActionLoading(true)
     joinRoom(directRoomId.trim(), savedNickname)
   }
@@ -190,6 +192,7 @@ export default function HomePage() {
         joinRoom(room.id, nickname)
       }
     } else {
+      lastJoinedRoomIdRef.current = pending.roomId
       setActionLoading(true)
       joinRoom(pending.roomId, nickname)
     }

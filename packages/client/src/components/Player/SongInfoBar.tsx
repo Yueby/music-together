@@ -1,4 +1,7 @@
 import { Button } from '@/components/ui/button'
+import { Popover, PopoverContent, PopoverTrigger } from '@/components/ui/popover'
+import { Slider } from '@/components/ui/slider'
+import { Tooltip, TooltipContent, TooltipTrigger } from '@/components/ui/tooltip'
 import { usePlayerStore } from '@/stores/playerStore'
 import { MessageSquare, Volume2, VolumeX } from 'lucide-react'
 import { motion } from 'motion/react'
@@ -72,33 +75,72 @@ export const SongInfoBar = memo(function SongInfoBar({ onOpenChat, chatUnreadCou
 
         {/* Right-bottom: volume + chat buttons (always visible, aligned to bottom) */}
         <div className="flex shrink-0 items-center">
-          <motion.div whileTap={{ scale: 0.9 }}>
-            <Button
-              variant="ghost"
-              size="icon"
-              className="h-9 w-9 text-white/70 hover:bg-white/10"
-              onClick={toggleMute}
-              aria-label={volume === 0 ? '取消静音' : '静音'}
-            >
-              {volume === 0 ? <VolumeX className="size-5" /> : <Volume2 className="size-5" />}
-            </Button>
-          </motion.div>
-          <motion.div whileTap={{ scale: 0.9 }}>
-            <Button
-              variant="ghost"
-              size="icon"
-              className="relative h-9 w-9 text-white/70 hover:bg-white/10"
-              onClick={onOpenChat}
-              aria-label="聊天"
-            >
-              <MessageSquare className="size-5" />
-              {chatUnreadCount > 0 && (
-                <span className="absolute -right-1 -top-1 flex h-4 min-w-4 items-center justify-center rounded-full bg-white/90 px-1 text-[10px] font-semibold leading-none text-black">
-                  {chatUnreadCount > 99 ? '99+' : chatUnreadCount}
+          <Tooltip delayDuration={300}>
+            <Popover>
+              <TooltipTrigger asChild>
+                <PopoverTrigger asChild>
+                  <Button
+                    variant="ghost"
+                    size="icon"
+                    className="h-9 w-9 text-white/70 hover:bg-white/10 active:scale-90 transition-transform"
+                    aria-label={volume === 0 ? '取消静音' : '调节音量'}
+                  >
+                    {volume === 0 ? <VolumeX className="size-5" /> : <Volume2 className="size-5" />}
+                  </Button>
+                </PopoverTrigger>
+              </TooltipTrigger>
+              <TooltipContent>音量</TooltipContent>
+              <PopoverContent
+                side="top"
+                align="center"
+                className="flex w-44 items-center gap-2 rounded-xl px-3 py-2"
+              >
+                <Tooltip delayDuration={300}>
+                  <TooltipTrigger asChild>
+                    <Button
+                      variant="ghost"
+                      size="icon"
+                      className="h-7 w-7 shrink-0 text-white/70"
+                      onClick={toggleMute}
+                    >
+                      {volume === 0 ? <VolumeX className="size-4" /> : <Volume2 className="size-4" />}
+                    </Button>
+                  </TooltipTrigger>
+                  <TooltipContent>{volume === 0 ? '取消静音' : '静音'}</TooltipContent>
+                </Tooltip>
+                <Slider
+                  min={0}
+                  max={100}
+                  value={[volume * 100]}
+                  onValueChange={([v]) => setVolume(v / 100)}
+                />
+                <span className="w-8 shrink-0 text-right text-xs tabular-nums text-white/50">
+                  {Math.round(volume * 100)}
                 </span>
-              )}
-            </Button>
-          </motion.div>
+              </PopoverContent>
+            </Popover>
+          </Tooltip>
+          <Tooltip delayDuration={300}>
+            <TooltipTrigger asChild>
+              <motion.div whileTap={{ scale: 0.9 }}>
+                <Button
+                  variant="ghost"
+                  size="icon"
+                  className="relative h-9 w-9 text-white/70 hover:bg-white/10"
+                  onClick={onOpenChat}
+                  aria-label="聊天"
+                >
+                  <MessageSquare className="size-5" />
+                  {chatUnreadCount > 0 && (
+                    <span className="absolute -right-1 -top-1 flex h-4 min-w-4 items-center justify-center rounded-full bg-white/90 px-1 text-[10px] font-semibold leading-none text-black">
+                      {chatUnreadCount > 99 ? '99+' : chatUnreadCount}
+                    </span>
+                  )}
+                </Button>
+              </motion.div>
+            </TooltipTrigger>
+            <TooltipContent>聊天</TooltipContent>
+          </Tooltip>
         </div>
       </div>
     </div>
