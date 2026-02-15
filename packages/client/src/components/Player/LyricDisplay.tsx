@@ -108,6 +108,7 @@ export function LyricDisplay() {
   const enableScale = useSettingsStore((s) => s.lyricEnableScale)
   const fontWeight = useSettingsStore((s) => s.lyricFontWeight)
   const fontSize = useSettingsStore((s) => s.lyricFontSize)
+  const translationFontSize = useSettingsStore((s) => s.lyricTranslationFontSize)
 
   const lines = useMemo(() => mergeLyrics(lyric, tlyric), [lyric, tlyric])
   const amllLines = useMemo(() => toAMLLLines(lines), [lines])
@@ -125,7 +126,8 @@ export function LyricDisplay() {
       className="amll-container h-full w-full"
       style={{
         fontWeight,
-        '--amll-lp-font-size': `clamp(16px, calc(min(5vh, 6vw) * ${fontSize / 100}), 80px)`,
+        '--amll-lp-font-size': `clamp(16px, calc(min(5vh, 7vw) * ${fontSize / 100}), 80px)`,
+        '--amll-translated-font-size': `${translationFontSize / 100}em`,
       } as React.CSSProperties}
     >
       <LyricPlayer

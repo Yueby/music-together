@@ -75,7 +75,7 @@ export function useHowl(onTrackEnd: () => void) {
       const howl = new Howl({
         src: [track.streamUrl],
         html5: true,
-        format: ['mp3'],
+        format: ['flac', 'm4a', 'ogg', 'mp3'],
         volume: 0,
         onload: () => {
           if (howlRef.current !== howl) return // Stale instance guard

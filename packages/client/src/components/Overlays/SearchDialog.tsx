@@ -154,7 +154,7 @@ export function SearchDialog({ open, onOpenChange, onAddToQueue }: SearchDialogP
 
   return (
     <ResponsiveDialog open={open} onOpenChange={handleOpenChange}>
-      <ResponsiveDialogContent className="flex max-h-[85vh] flex-col overflow-hidden sm:max-h-[80vh] sm:max-w-2xl">
+      <ResponsiveDialogContent className="flex h-[70vh] flex-col overflow-hidden sm:h-auto sm:max-h-[80vh] sm:max-w-2xl">
         <ResponsiveDialogHeader>
           <ResponsiveDialogTitle>搜索点歌</ResponsiveDialogTitle>
         </ResponsiveDialogHeader>

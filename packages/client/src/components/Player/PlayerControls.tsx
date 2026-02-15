@@ -2,14 +2,13 @@ import { Button } from '@/components/ui/button'
 import { Slider } from '@/components/ui/slider'
 import { Tooltip, TooltipContent, TooltipTrigger } from '@/components/ui/tooltip'
 import { formatTime } from '@/lib/format'
-import { cn } from '@/lib/utils'
 import { AbilityContext } from '@/providers/AbilityProvider'
 import { useSocketContext } from '@/providers/SocketProvider'
 import { usePlayerStore } from '@/stores/playerStore'
 import { useRoomStore } from '@/stores/roomStore'
 import type { PlayMode, VoteAction } from '@music-together/shared'
 import { EVENTS, TIMING } from '@music-together/shared'
-import { ArrowRightToLine, ListMusic, MessageSquare, Pause, Play, Repeat, Repeat1, Shuffle, SkipBack, SkipForward, Volume2, VolumeX } from 'lucide-react'
+import { ArrowRightToLine, ListMusic, Pause, Play, Repeat, Repeat1, Shuffle, SkipBack, SkipForward } from 'lucide-react'
 import { AnimatePresence, motion } from 'motion/react'
 import { memo, useContext, useEffect, useLayoutEffect, useRef, useState } from 'react'
 
@@ -31,19 +30,15 @@ interface PlayerControlsProps {
   onSeek: (time: number) => void
   onNext: () => void
   onPrev: () => void
-  onOpenChat: () => void
   onOpenQueue: () => void
-  chatUnreadCount: number
   onStartVote: (action: VoteAction, payload?: Record<string, unknown>) => void
 }
 
-export const PlayerControls = memo(function PlayerControls({ onPlay, onPause, onSeek, onNext, onPrev, onOpenChat, onOpenQueue, chatUnreadCount, onStartVote }: PlayerControlsProps) {
+export const PlayerControls = memo(function PlayerControls({ onPlay, onPause, onSeek, onNext, onPrev, onOpenQueue, onStartVote }: PlayerControlsProps) {
   const { socket } = useSocketContext()
   const isPlaying = usePlayerStore((s) => s.isPlaying)
   const currentTime = usePlayerStore((s) => s.currentTime)
   const duration = usePlayerStore((s) => s.duration)
-  const volume = usePlayerStore((s) => s.volume)
-  const setVolume = usePlayerStore((s) => s.setVolume)
   const currentTrack = usePlayerStore((s) => s.currentTrack)
   const queueLength = useRoomStore((s) => s.room?.queue?.length ?? 0)
   const playMode = useRoomStore((s) => s.room?.playMode ?? 'sequential')
@@ -52,17 +47,14 @@ export const PlayerControls = memo(function PlayerControls({ onPlay, onPause, on
   const canPlay = ability.can('play', 'Player')
   const canSetMode = ability.can('set-mode', 'Player')
   const canVote = ability.can('vote', 'Player')
-  const prevVolumeRef = useRef(0.8)
   const [skipCooldown, setSkipCooldown] = useState(false)
   const [playCooldown, setPlayCooldown] = useState(false)
   const [isSeeking, setIsSeeking] = useState(false)
   const [seekTime, setSeekTime] = useState(0)
-  const [volumeOpen, setVolumeOpen] = useState(false)
   const cooldownTimer = useRef<ReturnType<typeof setTimeout>>(null)
   const playCooldownTimer = useRef<ReturnType<typeof setTimeout>>(null)
   const wrapperRef = useRef<HTMLDivElement>(null)
   const innerRef = useRef<HTMLDivElement>(null)
-  const volumeRef = useRef<HTMLDivElement>(null)
 
   const disabled = !currentTrack
 
@@ -118,39 +110,6 @@ export const PlayerControls = memo(function PlayerControls({ onPlay, onPause, on
     )
   }
 
-  const toggleMute = () => {
-    if (volume === 0) {
-      setVolume(prevVolumeRef.current)
-    } else {
-      prevVolumeRef.current = volume
-      setVolume(0)
-    }
-  }
-
-  // Track hover so desktop users can toggleMute on first click (slider already visible via CSS hover)
-  const isHoveringRef = useRef(false)
-
-  // Volume button: if slider already visible (hover or state-open), toggleMute; otherwise open slider
-  const handleVolumeClick = () => {
-    if (volumeOpen || isHoveringRef.current) {
-      toggleMute()
-    } else {
-      setVolumeOpen(true)
-    }
-  }
-
-  // Close volume slider when clicking outside
-  useEffect(() => {
-    if (!volumeOpen) return
-    const handler = (e: PointerEvent) => {
-      if (volumeRef.current && !volumeRef.current.contains(e.target as Node)) {
-        setVolumeOpen(false)
-      }
-    }
-    document.addEventListener('pointerdown', handler)
-    return () => document.removeEventListener('pointerdown', handler)
-  }, [volumeOpen])
-
   const handlePlayModeToggle = () => {
     const currentIdx = PLAY_MODE_CYCLE.indexOf(playMode)
     const nextMode = PLAY_MODE_CYCLE[(currentIdx + 1) % PLAY_MODE_CYCLE.length]
@@ -166,7 +125,7 @@ export const PlayerControls = memo(function PlayerControls({ onPlay, onPause, on
 
   return (
     <div ref={wrapperRef} className="w-full">
-      <div ref={innerRef} className="flex flex-col gap-2" style={{ width: DESIGN_WIDTH }}>
+        <div ref={innerRef} className="flex flex-col gap-6" style={{ width: DESIGN_WIDTH }}>
         {/* 1. Progress bar */}
         <div className="flex w-full flex-col gap-1">
           <Slider
@@ -200,60 +159,15 @@ export const PlayerControls = memo(function PlayerControls({ onPlay, onPause, on
 
         {/* 2. Controls row — left/right flex-1 keeps center truly centered */}
         <div className="flex w-full items-center">
-          {/* Left: volume + play mode */}
+          {/* Left: play mode */}
           <div className="flex flex-1 items-center justify-start">
-            <Tooltip delayDuration={300}>
-              <TooltipTrigger asChild>
-                <div ref={volumeRef} className="group/volume relative" onPointerEnter={() => { isHoveringRef.current = true }} onPointerLeave={() => { isHoveringRef.current = false }}>
-                  <motion.div whileTap={{ scale: 0.9 }}>
-                    <Button
-                      variant="ghost"
-                      size="icon"
-                      className="h-8 w-8 text-white/70 hover:bg-white/10"
-                      onClick={handleVolumeClick}
-                      aria-label={volume === 0 ? '取消静音' : '静音'}
-                    >
-                      {volume === 0 ? (
-                        <VolumeX className="h-5 w-5" />
-                      ) : (
-                        <Volume2 className="h-5 w-5" />
-                      )}
-                    </Button>
-                  </motion.div>
-
-                  {/* Horizontal volume slider panel — state-controlled + hover for desktop */}
-                  <div className={cn(
-                    'pointer-events-none absolute bottom-full left-0 z-50 pb-2 opacity-0 transition-opacity',
-                    'group-hover/volume:pointer-events-auto group-hover/volume:opacity-100',
-                    volumeOpen && 'pointer-events-auto opacity-100',
-                  )}>
-                    <div className="flex items-center gap-2 rounded-full bg-white/15 px-4 py-2 shadow-lg">
-                      <Slider
-                        value={[volume * 100]}
-                        max={100}
-                        step={1}
-                        onValueChange={(val) => setVolume(val[0] / 100)}
-                        className="w-24"
-                        aria-label="音量"
-                      />
-                      <span className="text-[10px] font-medium tabular-nums text-white/70">
-                        {Math.round(volume * 100)}
-                      </span>
-                    </div>
-                  </div>
-                </div>
-              </TooltipTrigger>
-              <TooltipContent side="bottom">{volumeOpen ? (volume === 0 ? '取消静音' : '静音') : '音量'}</TooltipContent>
-            </Tooltip>
-
-            {/* Play mode toggle */}
             <Tooltip delayDuration={300}>
               <TooltipTrigger asChild>
                 <motion.div whileTap={{ scale: 0.9 }}>
                   <Button
                     variant="ghost"
                     size="icon"
-                    className="h-8 w-8 text-white/70 hover:bg-white/10"
+                    className="h-9 w-9 text-white/70 hover:bg-white/10"
                     onClick={handlePlayModeToggle}
                     disabled={!canSetMode && !canVote}
                     aria-label={modeConfig.label}
@@ -266,7 +180,7 @@ export const PlayerControls = memo(function PlayerControls({ onPlay, onPause, on
                         exit={{ scale: 0.6, opacity: 0 }}
                         transition={{ duration: 0.15 }}
                       >
-                        <ModeIcon className="h-4 w-4" />
+                        <ModeIcon className="size-5" />
                       </motion.div>
                     </AnimatePresence>
                   </Button>
@@ -284,12 +198,12 @@ export const PlayerControls = memo(function PlayerControls({ onPlay, onPause, on
                   <Button
                     variant="ghost"
                     size="icon"
-                    className="h-8 w-8 text-white/70 hover:bg-white/10"
+                    className="h-9 w-9 text-white/70 hover:bg-white/10"
                     disabled={disabled || skipCooldown}
                     onClick={() => handleSkip(onPrev, 'prev')}
                     aria-label="上一首"
                   >
-                    <SkipBack className="h-6 w-6" fill="currentColor" />
+                    <SkipBack className="size-5" fill="currentColor" />
                   </Button>
                 </motion.div>
               </TooltipTrigger>
@@ -302,15 +216,15 @@ export const PlayerControls = memo(function PlayerControls({ onPlay, onPause, on
                   <Button
                     variant="ghost"
                     size="icon"
-                    className="h-12 w-12 rounded-full bg-white/20 text-white/90 hover:bg-white/30 hover:text-white"
+                    className="h-14 w-14 rounded-full bg-white/20 text-white/90 hover:bg-white/30 hover:text-white"
                     disabled={disabled || playCooldown}
                     onClick={handlePlayPause}
                     aria-label={isPlaying ? '暂停' : '播放'}
                   >
                     {isPlaying ? (
-                      <Pause className="h-7 w-7" fill="currentColor" />
+                      <Pause className="size-7" fill="currentColor" />
                     ) : (
-                      <Play className="ml-0.5 h-7 w-7" fill="currentColor" />
+                      <Play className="ml-0.5 size-7" fill="currentColor" />
                     )}
                   </Button>
                 </motion.div>
@@ -324,12 +238,12 @@ export const PlayerControls = memo(function PlayerControls({ onPlay, onPause, on
                   <Button
                     variant="ghost"
                     size="icon"
-                    className="h-8 w-8 text-white/70 hover:bg-white/10"
+                    className="h-9 w-9 text-white/70 hover:bg-white/10"
                     disabled={disabled || skipCooldown}
                     onClick={() => handleSkip(onNext, 'next')}
                     aria-label="下一首"
                   >
-                    <SkipForward className="h-6 w-6" fill="currentColor" />
+                    <SkipForward className="size-5" fill="currentColor" />
                   </Button>
                 </motion.div>
               </TooltipTrigger>
@@ -337,7 +251,7 @@ export const PlayerControls = memo(function PlayerControls({ onPlay, onPause, on
             </Tooltip>
           </div>
 
-          {/* Right: chat + queue */}
+          {/* Right: queue */}
           <div className="flex flex-1 items-center justify-end">
             <Tooltip delayDuration={300}>
               <TooltipTrigger asChild>
@@ -345,33 +259,11 @@ export const PlayerControls = memo(function PlayerControls({ onPlay, onPause, on
                   <Button
                     variant="ghost"
                     size="icon"
-                    className="relative h-8 w-8 text-white/70 hover:bg-white/10"
-                    onClick={onOpenChat}
-                    aria-label="聊天"
-                  >
-                    <MessageSquare className="h-5 w-5" />
-                    {chatUnreadCount > 0 && (
-                      <span className="absolute -right-1 -top-1 flex h-4 min-w-4 items-center justify-center rounded-full bg-white/90 px-1 text-[10px] font-semibold leading-none text-black">
-                        {chatUnreadCount > 99 ? '99+' : chatUnreadCount}
-                      </span>
-                    )}
-                  </Button>
-                </motion.div>
-              </TooltipTrigger>
-              <TooltipContent>聊天</TooltipContent>
-            </Tooltip>
-
-            <Tooltip delayDuration={300}>
-              <TooltipTrigger asChild>
-                <motion.div whileTap={{ scale: 0.9 }}>
-                  <Button
-                    variant="ghost"
-                    size="icon"
-                    className="relative h-8 w-8 text-white/70 hover:bg-white/10"
+                    className="relative h-9 w-9 text-white/70 hover:bg-white/10"
                     onClick={onOpenQueue}
                     aria-label="播放列表"
                   >
-                    <ListMusic className="h-6 w-6" />
+                    <ListMusic className="size-5" />
                     {queueLength > 0 && (
                       <span className="absolute -right-1 -top-1 flex h-4 min-w-4 items-center justify-center rounded-full bg-white/90 px-1 text-[10px] font-semibold leading-none text-black">
                         {queueLength > 99 ? '99+' : queueLength}

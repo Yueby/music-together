@@ -2,9 +2,6 @@ import { create } from 'zustand'
 import { storage } from '@/lib/storage'
 
 interface SettingsStore {
-  // Mobile layout
-  mobileLyricPosition: 'below' | 'above'
-
   // AMLL Lyrics
   lyricAlignAnchor: 'top' | 'center' | 'bottom'
   lyricAlignPosition: number
@@ -13,6 +10,7 @@ interface SettingsStore {
   lyricEnableScale: boolean
   lyricFontWeight: number
   lyricFontSize: number
+  lyricTranslationFontSize: number
 
   // Background
   bgFps: number
@@ -20,7 +18,6 @@ interface SettingsStore {
   bgRenderScale: number
 
   // Setters
-  setMobileLyricPosition: (v: 'below' | 'above') => void
   setLyricAlignAnchor: (v: 'top' | 'center' | 'bottom') => void
   setLyricAlignPosition: (v: number) => void
   setLyricEnableSpring: (v: boolean) => void
@@ -28,6 +25,7 @@ interface SettingsStore {
   setLyricEnableScale: (v: boolean) => void
   setLyricFontWeight: (v: number) => void
   setLyricFontSize: (v: number) => void
+  setLyricTranslationFontSize: (v: number) => void
   setBgFps: (v: number) => void
   setBgFlowSpeed: (v: number) => void
   setBgRenderScale: (v: number) => void
@@ -35,7 +33,6 @@ interface SettingsStore {
 
 export const useSettingsStore = create<SettingsStore>((set) => ({
   // Defaults from localStorage
-  mobileLyricPosition: storage.getMobileLyricPosition(),
   lyricAlignAnchor: storage.getLyricAlignAnchor(),
   lyricAlignPosition: storage.getLyricAlignPosition(),
   lyricEnableSpring: storage.getLyricEnableSpring(),
@@ -43,16 +40,13 @@ export const useSettingsStore = create<SettingsStore>((set) => ({
   lyricEnableScale: storage.getLyricEnableScale(),
   lyricFontWeight: storage.getLyricFontWeight(),
   lyricFontSize: storage.getLyricFontSize(),
+  lyricTranslationFontSize: storage.getLyricTranslationFontSize(),
 
   bgFps: storage.getBgFps(),
   bgFlowSpeed: storage.getBgFlowSpeed(),
   bgRenderScale: storage.getBgRenderScale(),
 
   // Setters (persist + update state)
-  setMobileLyricPosition: (v) => {
-    storage.setMobileLyricPosition(v)
-    set({ mobileLyricPosition: v })
-  },
   setLyricAlignAnchor: (v) => {
     storage.setLyricAlignAnchor(v)
     set({ lyricAlignAnchor: v })
@@ -80,6 +74,10 @@ export const useSettingsStore = create<SettingsStore>((set) => ({
   setLyricFontSize: (v) => {
     storage.setLyricFontSize(v)
     set({ lyricFontSize: v })
+  },
+  setLyricTranslationFontSize: (v) => {
+    storage.setLyricTranslationFontSize(v)
+    set({ lyricTranslationFontSize: v })
   },
   setBgFps: (v) => {
     storage.setBgFps(v)

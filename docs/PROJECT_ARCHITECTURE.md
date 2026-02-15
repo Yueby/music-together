@@ -92,9 +92,9 @@ src/
 │   │       ├── ManualCookieDialog.tsx      # 手动输入 Cookie 弹窗
 │   │       └── NeteaseQrDialog.tsx         # 网易云 QR 扫码登录弹窗
 │   ├── Player/
-│   │   ├── AudioPlayer.tsx     #     主播放器布局（封面+控件+歌词）
+│   │   ├── AudioPlayer.tsx     #     主播放器布局（桌面：左右分栏；移动：双模式封面/歌词切换）
 │   │   ├── LyricDisplay.tsx    #     AMLL 歌词渲染（LRC 正则支持 [mm:ss] / [mm:ss.x] / [mm:ss.xx] / [mm:ss.xxx]）
-│   │   ├── NowPlaying.tsx      #     当前曲目信息展示
+│   │   ├── NowPlaying.tsx      #     当前曲目展示（支持 compact 小封面横排模式 + layoutId 共享动画）
 │   │   └── PlayerControls.tsx  #     进度条+播放控制+音量+播放模式切换
 │   ├── Room/
 │   │   └── RoomHeader.tsx      #     房间头部（房间名/人数/连接状态/操作按钮）
@@ -150,7 +150,7 @@ src/
 │   ├── roomStore.ts            #   房间状态（room, currentUser, users）
 │   ├── chatStore.ts            #   聊天（messages, unreadCount, isChatOpen）
 │   ├── lobbyStore.ts           #   大厅（rooms 列表, isLoading）
-│   └── settingsStore.ts        #   设置（移动端布局、歌词参数、背景参数，持久化到 localStorage）
+│   └── settingsStore.ts        #   设置（歌词参数、背景参数，持久化到 localStorage）
 │
 ├── providers/                  # React Context Provider
 │   ├── SocketProvider.tsx      #   Socket.IO 连接管理，提供 socket + isConnected + 断线/重连 Toast
@@ -336,12 +336,12 @@ interface ChatMessage {
 
 ### 播放同步机制
 
-采用**事件驱动同步 + 周期性三级漂移校正**架构：NTP 时钟同步 + Scheduled Execution + 三级漂移校正（rate 微调 + hard seek）。
+采用**事件驱动同步 + 周期性比例漂移校正**架构：NTP 时钟同步 + Scheduled Execution + 比例控制漂移校正（EMA 平滑 + proportional rate + hard seek）。
 
 **三层防护**：
-1. **NTP 时钟同步**：保证各客户端时钟与服务器对齐
-2. **Scheduled Execution**：离散事件（play/pause/seek/resume）通过预定执行消除网络延迟差异
-3. **周期性三级漂移校正**：客户端每 2 秒发起 `PLAYER_SYNC_REQUEST`，服务端返回当前预期位置；漂移 15~500ms 用 rate 微调（2%，人耳不可感知）渐进追赶，漂移 >500ms 用 hard seek 跳转（覆盖手机息屏、后台标签页等场景）
+1. **NTP 时钟同步**：保证各客户端时钟与服务器对齐（时间衰减加权中位数）
+2. **Scheduled Execution**：离散事件（play/pause/seek/resume）通过预定执行消除网络延迟差异（P90 RTT 自适应调度）
+3. **周期性比例漂移校正**：客户端每 2 秒发起 `PLAYER_SYNC_REQUEST`，服务端返回当前预期位置；漂移经 EMA 低通滤波后进入比例控制器，rate 调整幅度与漂移成正比（自然收敛无振荡），>200ms 用 hard seek 跳转
 
 #### Layer 1：NTP 时钟同步 + RTT 回报
 
@@ -350,35 +350,36 @@ interface ChatMessage {
 - 初始阶段：快速采样（每 50ms）收集 20 个样本，使用 `switchedRef` 保证仅在首次校准完成时切换到稳定阶段
 - 稳定阶段：每 5 秒一次 NTP 心跳
 - NTP 仅在用户进入房间后启动（`ClockSyncRunner` 渲染在 `RoomPage` 中），大厅用户不运行时钟同步
-- 取中位数作为 offset（对 GC 暂停/网络抖动鲁棒）
+- 使用**时间衰减加权中位数**计算 offset：每个样本按 `exp(-age / halfLife)` 衰减（halfLife=30s），兼具中位数的异常值鲁棒性和对网络环境突变的快速收敛能力
 - **RTT 回报**：每次 `ntp:ping` 附带 `lastRttMs`（客户端中位 RTT），服务端在 `NTP_PING` handler 中调用 `roomRepo.setSocketRTT()` 存储，用于自适应调度延迟计算
-- 核心模块：`clockSync.ts`（采样引擎 + `getServerTime()` + `getMedianRTT()`）、`useClockSync.ts`（React Hook，在 SocketProvider 中运行）
+- 核心模块：`clockSync.ts`（采样引擎 + `getServerTime()` + `getMedianRTT()` + `computeWeightedMedian()`）、`useClockSync.ts`（React Hook，在 SocketProvider 中运行）
 
 #### Layer 2：Scheduled Execution（预定执行）
 
 所有多客户端同步动作（play、pause、seek、resume）由服务端广播 `ScheduledPlayState`，包含 `serverTimeToExecute` 字段。客户端收到后通过 `setTimeout(execute, serverTimeToExecute - getServerTime())` 在同一时刻执行，消除网络延迟差异。
 
-- 服务端根据房间最大 RTT 动态计算调度延迟：`max(maxRTT * 1.5 + 100, 300ms)`，上限 3000ms
+- 服务端根据房间 **P90 RTT** 动态计算调度延迟：`max(P90RTT * 1.5 + 100, 300ms)`，上限 3000ms。P90 避免单个慢连接拖累整个房间，房间人数 ≤3 时退化为取 max
 - RTT 由客户端 NTP 测量后通过 `ntp:ping` 事件回报，服务端以指数移动平均（alpha=0.2）平滑存储在 `roomRepository` 的 per-socket RTT map
 - 全部客户端（含操作发起者）统一收到广播并在预定时刻执行
 - **serverTimestamp 对齐**：播放中的动作（play/resume/seek）将 `room.playState.serverTimestamp` 设为 `serverTimeToExecute` 而非 `Date.now()`，确保 `estimateCurrentTime()` 在下一次 Host 上报前也能准确估算位置
 - Scheduled action（seek/pause/resume）执行时自动重置 `rate(1)`，避免残留非正常速率
 
-#### Layer 3：周期性三级漂移校正（Rate + Hard Seek）
+#### Layer 3：周期性比例漂移校正（EMA + Proportional Rate + Hard Seek）
 
-客户端每 `SYNC_REQUEST_INTERVAL_MS`（2s）向服务端发送 `PLAYER_SYNC_REQUEST`，服务端通过 `estimateCurrentTime()` 计算当前预期位置后回复 `PLAYER_SYNC_RESPONSE`。客户端利用 NTP 校准时钟补偿网络延迟，计算实际漂移量，三级处理：
+客户端每 `SYNC_REQUEST_INTERVAL_MS`（2s）向服务端发送 `PLAYER_SYNC_REQUEST`，服务端通过 `estimateCurrentTime()` 计算当前预期位置后回复 `PLAYER_SYNC_RESPONSE`。客户端利用 NTP 校准时钟补偿网络延迟，计算原始漂移量后经 **EMA 低通滤波**（alpha=0.3）得到 `smoothedDrift`，再进入比例控制器：
 
-- 漂移 > `DRIFT_THRESHOLD_MS`（500ms）→ hard seek 到预期位置 + rate(1)
-- 漂移 15~500ms（`DRIFT_RATE_THRESHOLD_MS` ~ `DRIFT_THRESHOLD_MS`）→ `rate(1.02)` 或 `rate(0.98)` 渐进追赶（2% 偏移量人耳不可感知，约 5 秒消除 100ms 偏差）
-- 漂移 < 15ms → 恢复正常速率 rate(1)
-- 每次漂移计算结果写入 `playerStore.syncDrift`，供房间设置 UI 实时展示偏移量
-- **插件干扰自动降级**：设置 rate 后通过 `setTimeout(50ms)` 验证是否生效（避免 rAF 后台标签页节流导致误判），若连续 3 次检测到被浏览器倍速插件覆盖才标记 `rateDisabled`；禁用后自动将 hard seek 阈值降至 15ms（`DRIFT_RATE_THRESHOLD_MS`），消除 15–500ms 的校正死区；新曲加载时重置标记和计数器，给予重试机会
+- **EMA 平滑**：`smoothed = alpha * rawDrift + (1 - alpha) * prevSmoothed`，消除测量噪声导致的正负跳动
+- `|smoothedDrift|` > `DRIFT_SEEK_THRESHOLD_MS`（200ms）→ hard seek 到预期位置 + rate(1) + 重置 smoothedDrift
+- `|smoothedDrift|` 5~200ms（死区之上） → **比例控制**：`rate = 1 - clamp(smoothedDrift * Kp, ±MAX_RATE_ADJUSTMENT)`（Kp=0.5，最大 ±2%）。漂移越大修正越强，接近目标时自然减速——数学上保证不振荡
+- `|smoothedDrift|` < `DRIFT_DEAD_ZONE_MS`（5ms）→ 恢复正常速率 rate(1)（消除稳态微小抖动）
+- UI 展示 smoothedDrift 而非 rawDrift，界面数值更稳定
+- **插件干扰自动降级**：设置 rate 后通过 `setTimeout(50ms)` 验证是否生效（避免 rAF 后台标签页节流导致误判），若连续 3 次检测到被浏览器倍速插件覆盖才标记 `rateDisabled`；禁用后 hard seek 阈值降至 `DRIFT_PLUGIN_SEEK_THRESHOLD_MS`（30ms）；新曲加载时重置标记和计数器
 
 典型场景：手机息屏暂停后解锁、浏览器后台标签页节流、网络波动导致的累积偏移。
 
 #### Host 上报与服务端状态维护
 
-Host（房主）每 2 秒上报当前播放位置到服务端，仅用于维护 `room.playState` 的准确性（供 mid-song join、reconnect recovery 和漂移校正使用），**不会转发给其他客户端**。服务端会校验 Host 上报位置与 `estimateCurrentTime()` 预估值的偏差，超过 1 秒的报告视为过时数据（如手机息屏后恢复）被拒绝；但连续拒绝 3 次后强制接受以打破僵局（防止服务端估算与实际 Host 位置长期分歧）。Host 切换时自动刷新 `playState.serverTimestamp` 和 `currentTime`，确保新 Host 的首个报告不会被误拒。
+Host（房主）**自适应频率**上报当前播放位置到服务端：新曲开始后前 10 秒高频上报（每 2 秒，`HOST_REPORT_FAST_INTERVAL_MS`），之后回到正常频率（每 5 秒，`HOST_REPORT_INTERVAL_MS`），使用动态 `setTimeout` 链实现。仅用于维护 `room.playState` 的准确性（供 mid-song join、reconnect recovery 和漂移校正使用），**不会转发给其他客户端**。服务端通过 `playerService.validateHostReport()` 校验 Host 上报位置与 `estimateCurrentTime()` 预估值的偏差，超过 1 秒的报告视为过时数据（如手机息屏后恢复）被拒绝；但连续拒绝 3 次后强制接受以打破僵局。`hostRejectCount` 和 `lastNextTimestamp` 统一在 `playerService.cleanupRoom()` 中清理，避免内存泄漏。Host 切换时自动刷新 `playState.serverTimestamp` 和 `currentTime`，确保新 Host 的首个报告不会被误拒。
 
 - `syncService.estimateCurrentTime()` 基于 Host 上报的位置 + 经过时间估算当前位置，对 `elapsed` 做 `Math.max(0, ...)` 防护（`serverTimestamp` 可能是未来的 `scheduleTime`）
 - 新用户加入时，通过 `ROOM_STATE` 获取 `playState` 并计算应跳转到的位置
@@ -545,7 +546,7 @@ Host（房主）每 2 秒上报当前播放位置到服务端，仅用于维护 
 | `roomStore` | 房间状态（room、currentUser 自动推导自 room.users） | 无 |
 | `chatStore` | 聊天（消息列表、未读数、开关状态） | 无 |
 | `lobbyStore` | 大厅（房间列表、加载状态） | 无 |
-| `settingsStore` | 设置（移动端歌词位置、歌词对齐/动画、背景参数） | 全部持久化到 localStorage |
+| `settingsStore` | 设置（歌词对齐/动画、背景参数） | 全部持久化到 localStorage |
 
 使用方式：通过选择器订阅特定字段，避免不必要的渲染：
 
@@ -617,6 +618,25 @@ const { socket, isConnected } = useSocketContext()
 #### 组件组合模式
 
 `AudioPlayer` 组合 `NowPlaying` + `PlayerControls` + `LyricDisplay`，各组件独立负责自己的渲染逻辑。`RoomPage` 组合所有功能区域和覆盖层弹窗。
+
+#### 移动端双模式播放页面
+
+移动端（竖屏）播放页面通过 `lyricExpanded` 状态实现两种模式切换，模仿 Apple Music 移动端交互：
+
+- **默认模式**（`lyricExpanded=false`）：大封面 + 歌曲信息 + 控制器，封面自适应剩余空间（`flex-1 min-h-0` + `aspect-square max-h-full max-w-full`），控制器固定底部，不显示歌词
+- **歌词模式**（`lyricExpanded=true`）：点击封面后，封面缩小到顶部变为 compact 横排（48px 小封面 `rounded-md` + 标题 `text-base` / 艺术家 `text-sm`），歌词区域 fade+slide-up 入场占满中间空间，控制器固定底部
+
+布局策略：
+- 移动端外层 padding `px-5 py-7`（水平 20px，垂直 28px），所有子元素 `w-full`，不使用 `max-w` 约束，边距由外层 padding 统一控制
+- `NowPlaying` wrapper 使用 `flex-1 min-h-0`，默认模式下封面在剩余空间内居中缩放（`aspect-square max-h-full max-w-full`），避免封面过大挤压控件
+
+关键技术：
+- `NowPlaying` 组件支持 `compact` prop 切换大图/小图布局，`onCoverClick` 触发模式切换
+- `framer-motion` 的 `layoutId`（"cover-art" / "song-info"）实现封面和文字在两种布局间的共享布局动画（0.45s Apple 风格贝塞尔缓动）
+- `LayoutGroup` 包裹移动端内容区，确保跨组件 `layoutId` 动画生效
+- `AnimatePresence` + `motion.div` 实现歌词区域的 fade+slide-up 入场/退场
+- 新曲播放时自动折叠回默认模式（`useEffect` 监听 `currentTrack.id`）
+- 桌面端保持左右分栏布局不受影响
 
 ### 后端模式
 
@@ -760,7 +780,7 @@ updateRoom: (partial) =>
 - **外部 API 超时保护**：`musicProvider` 所有 `@meting/core` 调用使用 `Promise.race` 包裹 15s 超时
 - **外部 API LRU 缓存**：`musicProvider` 对 search（10min TTL）、streamUrl（1h）、cover（24h）、lyric（24h）使用 `lru-cache` 做内存级缓存，同一首歌被多人/多房间播放时避免重复外部请求；VIP cookie 请求不走缓存
 - **广播防抖**：`broadcastRoomList` 使用 100ms trailing debounce，多次快速操作（create+join、多人 leave）合并为一次广播
-- **反向索引优化**：`roomRepository` 维护 `roomToSockets` 反向索引（`Map<string, Set<string>>`），使 `getMaxRTT` 从 O(全局 socket 数) 降为 O(房间内 socket 数)
+- **反向索引优化**：`roomRepository` 维护 `roomToSockets` 反向索引（`Map<string, Set<string>>`），使 `getP90RTT` 从 O(全局 socket 数) 降为 O(房间内 socket 数)
 - **Timer 泄漏防护**：`usePlayer`/`useHowl`/`usePlayerSync`/`PlayerControls` 中所有 `setTimeout` 均存入 ref 并在组件卸载时清理
 
 ### ESLint 配置
@@ -852,7 +872,7 @@ import { Play, Pause, SkipForward, Volume2 } from 'lucide-react'
 
 - **AMLL** (`@applemusic-like-lyrics/react`)：Apple Music 风格逐行歌词动画
 - **PixiJS 背景**：`BackgroundRender` 组件使用 PixiJS 渲染动态专辑封面背景
-- 歌词设置可调：对齐锚点、弹簧动画、模糊效果、缩放效果、字重
+- 歌词设置可调：对齐锚点、弹簧动画、模糊效果、缩放效果、字重、字体大小、翻译字体大小
 
 ### 样式工具函数
 
