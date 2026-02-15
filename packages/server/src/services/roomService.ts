@@ -50,7 +50,7 @@ export function createRoom(
       currentTime: 0,
       serverTimestamp: Date.now(),
     },
-    playMode: 'sequential',
+    playMode: 'loop-all',
   }
 
   roomRepo.set(roomId, room)

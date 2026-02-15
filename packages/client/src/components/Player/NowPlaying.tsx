@@ -1,48 +1,90 @@
+import { cn } from '@/lib/utils'
 import { usePlayerStore } from '@/stores/playerStore'
 import { Disc3 } from 'lucide-react'
 import { motion } from 'motion/react'
 
-export function NowPlaying() {
+/** Apple-style easing: fast launch, graceful deceleration */
+const SPRING = { type: 'spring' as const, duration: 0.5, bounce: 0.1 }
+const LAYOUT_TRANSITION = { layout: SPRING, borderRadius: SPRING }
+
+interface NowPlayingProps {
+  /** Compact mode: small cover + song info in a single row (lyric view top bar) */
+  compact?: boolean
+  /** Called when the cover art is tapped (toggle lyric view) */
+  onCoverClick?: () => void
+}
+
+export function NowPlaying({ compact = false, onCoverClick }: NowPlayingProps) {
   const currentTrack = usePlayerStore((s) => s.currentTrack)
 
-  return (
-    <div className="relative z-0 flex w-full flex-col gap-4 md:gap-6">
-      {/* Album Cover — rectangular with soft shadow */}
-      <div className="relative aspect-square w-full">
+  const coverContent = currentTrack?.cover ? (
+    <img
+      src={currentTrack.cover}
+      alt={currentTrack.title}
+      className="h-full w-full object-cover"
+    />
+  ) : (
+    <div className="flex h-full w-full items-center justify-center bg-secondary">
+      <Disc3 className={cn('text-white/20', compact ? 'h-6 w-6' : 'h-1/3 w-1/3')} />
+    </div>
+  )
+
+  // ---------------------------------------------------------------------------
+  // Compact mode: small cover + song info in a horizontal row (lyric view)
+  // ---------------------------------------------------------------------------
+  if (compact) {
+    return (
+      <div className="flex w-full items-center gap-3 pb-1">
         <motion.div
-          className="relative h-full w-full overflow-hidden rounded-3xl shadow-lg shadow-black/15"
-          initial={{ opacity: 0, scale: 0.95 }}
-          animate={{ opacity: 1, scale: 1 }}
-          transition={{ duration: 0.4, ease: 'easeOut' }}
+          layoutId="cover-art"
+          onClick={onCoverClick}
+          whileTap={{ scale: 0.92 }}
+          transition={LAYOUT_TRANSITION}
+          animate={{ borderRadius: 6 }}
+          className="h-12 w-12 shrink-0 cursor-pointer overflow-hidden shadow-md shadow-black/20"
         >
-          {currentTrack?.cover ? (
-            <img
-              src={currentTrack.cover}
-              alt={currentTrack.title}
-              className="h-full w-full object-cover"
-            />
-          ) : (
-            <div className="flex h-full w-full items-center justify-center bg-secondary">
-              <Disc3 className="h-1/3 w-1/3 text-white/20" />
-            </div>
-          )}
+          {coverContent}
+        </motion.div>
+        <motion.div layoutId="song-info" transition={LAYOUT_TRANSITION} className="min-w-0 flex-1">
+          <motion.p
+            initial={{ fontSize: 20 }}
+            animate={{ fontSize: 18 }}
+            transition={SPRING}
+            className="truncate font-semibold leading-tight text-white/90"
+          >
+            {currentTrack?.title ?? '暂无歌曲'}
+          </motion.p>
+          <motion.p
+            initial={{ fontSize: 14 }}
+            animate={{ fontSize: 16 }}
+            transition={SPRING}
+            className="truncate text-white/50"
+          >
+            {currentTrack ? currentTrack.artist.join(' / ') : '...'}
+          </motion.p>
         </motion.div>
       </div>
+    )
+  }
 
-      {/* Song Info — title + artist only (Apple Music style) */}
-      <div className="flex w-full flex-col items-start gap-1 md:gap-1.5">
-        <motion.h2
-          key={currentTrack?.id ?? 'empty'}
-          initial={{ opacity: 0, y: 8 }}
-          animate={{ opacity: 1, y: 0 }}
-          className="w-full truncate text-2xl font-bold leading-tight text-white/90 md:text-2xl lg:text-3xl"
-        >
-          {currentTrack?.title ?? '暂无歌曲'}
-        </motion.h2>
-        <p className="w-full truncate text-base text-white/50 md:text-base lg:text-lg">
-          {currentTrack ? currentTrack.artist.join(' / ') : '点击搜索添加歌曲到队列'}
-        </p>
-      </div>
+  // ---------------------------------------------------------------------------
+  // Default mode: cover only (song info is handled by SongInfoBar)
+  // ---------------------------------------------------------------------------
+  return (
+    <div className="relative aspect-square w-full">
+      <motion.div
+        layoutId="cover-art"
+        onClick={onCoverClick}
+        whileTap={onCoverClick ? { scale: 0.96 } : undefined}
+        transition={LAYOUT_TRANSITION}
+        animate={{ borderRadius: 24 }}
+        className={cn(
+          'relative h-full w-full overflow-hidden shadow-lg shadow-black/15',
+          onCoverClick && 'cursor-pointer',
+        )}
+      >
+        {coverContent}
+      </motion.div>
     </div>
   )
 }

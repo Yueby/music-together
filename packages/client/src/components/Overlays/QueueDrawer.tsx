@@ -44,6 +44,8 @@ export function QueueDrawer({ open, onOpenChange, onRemoveFromQueue, onReorderQu
   const canReorder = ability.can('reorder', 'Queue')
   const [confirmClear, setConfirmClear] = useState(false)
   const confirmTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null)
+  // Mobile: track which item has its action toolbar visible
+  const [activeTrackId, setActiveTrackId] = useState<string | null>(null)
 
   // Clear the confirm-dismiss timer on unmount
   useEffect(() => () => {
@@ -88,7 +90,7 @@ export function QueueDrawer({ open, onOpenChange, onRemoveFromQueue, onReorderQu
       <DrawerContent
         className={cn(
           'flex flex-col p-0',
-          isMobile && 'h-[75vh]',
+          isMobile && 'h-[70vh]',
         )}
       >
         <DrawerHeader className="shrink-0 border-b px-4 py-3">
@@ -153,6 +155,11 @@ export function QueueDrawer({ open, onOpenChange, onRemoveFromQueue, onReorderQu
                     'group relative flex items-center gap-2 rounded-lg px-2 py-2 transition-colors hover:bg-accent/50',
                     currentTrack?.id === track.id && 'bg-primary/10',
                   )}
+                  onClick={() => {
+                    if (isMobile && (canReorder || canRemove)) {
+                      setActiveTrackId((prev) => prev === track.id ? null : track.id)
+                    }
+                  }}
                 >
                   {/* Index */}
                   <span className="w-5 shrink-0 text-center text-xs tabular-nums text-muted-foreground">
@@ -205,14 +212,18 @@ export function QueueDrawer({ open, onOpenChange, onRemoveFromQueue, onReorderQu
                     </Badge>
                   )}
 
-                  {/* Actions — visible on hover or focus-within, permission-gated */}
+                  {/* Actions — visible on hover (desktop) or tap (mobile), permission-gated */}
                   {(canReorder || canRemove) && (
                   <div
                     className={cn(
                       'absolute right-1 top-1/2 z-20 flex -translate-y-1/2 items-center gap-0.5',
                       'rounded-md border border-border/50 bg-popover px-1 py-0.5 shadow-md backdrop-blur-md',
-                      'opacity-0 transition-opacity group-hover:opacity-100 group-focus-within:opacity-100',
+                      'opacity-0 pointer-events-none transition-opacity',
+                      'group-hover:opacity-100 group-hover:pointer-events-auto',
+                      'group-focus-within:opacity-100 group-focus-within:pointer-events-auto',
+                      isMobile && activeTrackId === track.id && 'opacity-100 pointer-events-auto',
                     )}
+                    onClick={(e) => e.stopPropagation()}
                   >
                     {canReorder && (
                     <>

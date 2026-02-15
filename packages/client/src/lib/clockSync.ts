@@ -12,8 +12,10 @@
  *      and `t2` (when pong arrived, via `performance.now()`).
  *   4. RTT  = t2 - t0
  *      offset = serverTime - (clientLocalTimeAtPing + RTT / 2)
- *   5. We keep a sliding window of samples and take the **median** offset
- *      (most robust against outliers / GC pauses).
+ *   5. We keep a sliding window of samples and compute a **time-decayed
+ *      weighted median** offset — recent samples contribute more, giving
+ *      both the robustness of median filtering and fast convergence when
+ *      network conditions change (e.g. WiFi → cellular handoff).
  */
 
 import { NTP } from '@music-together/shared'
@@ -25,6 +27,8 @@ import { NTP } from '@music-together/shared'
 interface NTPSample {
   rttMs: number
   offsetMs: number
+  /** `Date.now()` when the sample was recorded */
+  timestamp: number
 }
 
 interface PendingPing {
@@ -35,6 +39,14 @@ interface PendingPing {
 }
 
 // ---------------------------------------------------------------------------
+// Constants
+// ---------------------------------------------------------------------------
+
+/** Half-life (ms) for exponential decay weighting of NTP samples.
+ *  Samples older than ~30s contribute roughly half the weight of fresh ones. */
+const DECAY_HALF_LIFE_MS = 30_000
+
+// ---------------------------------------------------------------------------
 // State (module-level singleton – one clock per app)
 // ---------------------------------------------------------------------------
 
@@ -43,6 +55,45 @@ const pending = new Map<number, PendingPing>()
 let pingCounter = 0
 let medianOffset = 0
 let calibrated = false
+
+// ---------------------------------------------------------------------------
+// Internal helpers
+// ---------------------------------------------------------------------------
+
+/**
+ * Compute time-decayed weighted median of offset values.
+ * Each sample's weight = exp(-age / halfLife), so recent samples dominate.
+ * We find the offset where cumulative weight first exceeds 50% of total.
+ */
+function computeWeightedMedian(now: number): number {
+  if (samples.length === 0) return 0
+  if (samples.length === 1) return samples[0].offsetMs
+
+  // Build (offset, weight) pairs
+  const pairs: { offset: number; weight: number }[] = []
+  for (const s of samples) {
+    const age = now - s.timestamp
+    const weight = Math.exp((-age * Math.LN2) / DECAY_HALF_LIFE_MS)
+    pairs.push({ offset: s.offsetMs, weight })
+  }
+
+  // Sort by offset ascending
+  pairs.sort((a, b) => a.offset - b.offset)
+
+  // Find weighted median
+  let totalWeight = 0
+  for (const p of pairs) totalWeight += p.weight
+  const halfWeight = totalWeight / 2
+
+  let cumWeight = 0
+  for (const p of pairs) {
+    cumWeight += p.weight
+    if (cumWeight >= halfWeight) return p.offset
+  }
+
+  // Fallback (should not reach here)
+  return pairs[pairs.length - 1].offset
+}
 
 // ---------------------------------------------------------------------------
 // Public API
@@ -107,18 +158,18 @@ export function processPong(clientPingId: number, serverTime: number): number | 
   // Discard obviously bad samples (negative or huge RTT)
   if (rttMs < 0 || rttMs > 10_000) return null
 
+  const now = Date.now()
   const oneWay = rttMs / 2
   const offsetMs = serverTime - (ping.localTime + oneWay)
 
-  samples.push({ rttMs, offsetMs })
+  samples.push({ rttMs, offsetMs, timestamp: now })
   // Keep sliding window bounded
   if (samples.length > NTP.MAX_MEASUREMENTS) {
     samples.shift()
   }
 
-  // Recalculate median offset
-  const sorted = samples.map((s) => s.offsetMs).sort((a, b) => a - b)
-  medianOffset = sorted[Math.floor(sorted.length / 2)]
+  // Recalculate time-decayed weighted median offset
+  medianOffset = computeWeightedMedian(now)
 
   if (!calibrated && samples.length >= NTP.MAX_INITIAL_SAMPLES) {
     calibrated = true

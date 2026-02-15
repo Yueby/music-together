@@ -124,3 +124,7 @@
   color: var(--foreground);
   opacity: 0.9;
 }
+
+.amll-container [class*='lyricSubLine'] {
+  font-size: max(var(--amll-translated-font-size, 0.65em), 10px) !important;
+}

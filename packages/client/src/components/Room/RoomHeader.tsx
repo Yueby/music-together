@@ -1,6 +1,13 @@
-import { Copy, LogOut, Search, Settings, Users, Wifi, WifiOff } from 'lucide-react'
+import { Copy, Ellipsis, LogOut, Search, Settings, Users, Wifi, WifiOff } from 'lucide-react'
 import { useEffect, useState } from 'react'
 import { Button } from '@/components/ui/button'
+import {
+  DropdownMenu,
+  DropdownMenuContent,
+  DropdownMenuItem,
+  DropdownMenuSeparator,
+  DropdownMenuTrigger,
+} from '@/components/ui/dropdown-menu'
 import { Tooltip, TooltipContent, TooltipTrigger } from '@/components/ui/tooltip'
 import { getMedianRTT } from '@/lib/clockSync'
 import { useRoomStore } from '@/stores/roomStore'
@@ -50,7 +57,10 @@ export function RoomHeader({ onOpenSearch, onOpenSettings, onOpenMembers, onLeav
       <div className="flex min-w-0 items-center gap-1.5 sm:gap-3">
         {roomId && (
           <>
-            <span className="max-w-[120px] truncate text-sm font-semibold text-foreground sm:max-w-[200px]">
+            <span
+              className="max-w-[120px] cursor-pointer truncate text-sm font-semibold text-foreground active:opacity-70 sm:max-w-[200px] sm:cursor-default"
+              onClick={copyRoomId}
+            >
               {roomName}
             </span>
             <Tooltip>
@@ -58,7 +68,7 @@ export function RoomHeader({ onOpenSearch, onOpenSettings, onOpenMembers, onLeav
                 <Button
                   variant="outline"
                   size="sm"
-                  className="h-7 gap-1 px-2 text-xs font-mono border-border/50"
+                  className="hidden h-7 gap-1 border-border/50 px-2 font-mono text-xs sm:flex"
                   onClick={copyRoomId}
                   aria-label="复制房间号"
                 >
@@ -90,12 +100,12 @@ export function RoomHeader({ onOpenSearch, onOpenSettings, onOpenMembers, onLeav
           <TooltipTrigger asChild>
             <span className="flex items-center gap-1" role="status" aria-live="polite" aria-label={isConnected ? `已连接 · 延迟 ${Math.round(rtt)}ms` : '连接断开，正在重连'}>
               {isConnected ? (
-                <Wifi className={`h-3.5 w-3.5 ${rttColor}`} />
+                <Wifi className={`h-4 w-4 ${rttColor}`} />
               ) : (
-                <WifiOff className="h-3.5 w-3.5 text-destructive animate-pulse" />
+                <WifiOff className="h-4 w-4 animate-pulse text-destructive" />
               )}
               {isConnected && (
-                <span className={`text-xs font-mono tabular-nums ${rttColor}`}>
+                <span className={`font-mono text-xs tabular-nums ${rttColor}`}>
                   {Math.round(rtt)}ms
                 </span>
               )}
@@ -117,9 +127,10 @@ export function RoomHeader({ onOpenSearch, onOpenSettings, onOpenMembers, onLeav
           <TooltipContent>搜索点歌</TooltipContent>
         </Tooltip>
 
+        {/* Desktop: inline settings & leave buttons */}
         <Tooltip>
           <TooltipTrigger asChild>
-            <Button variant="ghost" size="icon" className="h-8 w-8" onClick={onOpenSettings} aria-label="设置">
+            <Button variant="ghost" size="icon" className="hidden h-8 w-8 sm:flex" onClick={onOpenSettings} aria-label="设置">
               <Settings className="h-4 w-4" />
             </Button>
           </TooltipTrigger>
@@ -128,12 +139,39 @@ export function RoomHeader({ onOpenSearch, onOpenSettings, onOpenMembers, onLeav
 
         <Tooltip>
           <TooltipTrigger asChild>
-            <Button variant="ghost" size="icon" className="h-8 w-8" onClick={onLeaveRoom} aria-label="离开房间">
+            <Button variant="ghost" size="icon" className="hidden h-8 w-8 sm:flex" onClick={onLeaveRoom} aria-label="离开房间">
               <LogOut className="h-4 w-4" />
             </Button>
           </TooltipTrigger>
           <TooltipContent>离开房间</TooltipContent>
         </Tooltip>
+
+        {/* Mobile: dropdown menu */}
+        <DropdownMenu>
+          <DropdownMenuTrigger asChild>
+            <Button variant="ghost" size="icon" className="h-8 w-8 sm:hidden" aria-label="更多操作">
+              <Ellipsis className="h-4 w-4" />
+            </Button>
+          </DropdownMenuTrigger>
+          <DropdownMenuContent align="end">
+            <DropdownMenuItem onClick={onOpenSettings}>
+              <Settings className="mr-2 h-4 w-4" />
+              设置
+            </DropdownMenuItem>
+            <DropdownMenuSeparator />
+            <DropdownMenuItem onClick={copyRoomId}>
+              <Copy className="mr-2 h-4 w-4" />
+              复制房间号
+            </DropdownMenuItem>
+            <DropdownMenuItem
+              className="text-destructive focus:text-destructive"
+              onClick={onLeaveRoom}
+            >
+              <LogOut className="mr-2 h-4 w-4" />
+              离开房间
+            </DropdownMenuItem>
+          </DropdownMenuContent>
+        </DropdownMenu>
       </div>
     </header>
   )

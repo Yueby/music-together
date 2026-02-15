@@ -8,10 +8,6 @@ import * as roomService from '../services/roomService.js'
 import { estimateCurrentTime } from '../services/syncService.js'
 import { logger } from '../utils/logger.js'
 
-/** Track consecutive rejected host reports per room to break deadlocks */
-const hostRejectCount = new Map<string, number>()
-const HOST_REJECT_FORCE_ACCEPT = 3
-
 export function registerPlayerController(io: TypedServer, socket: TypedSocket) {
   const withPermission = createWithPermission(io)
 
@@ -142,21 +138,11 @@ export function registerPlayerController(io: TypedServer, socket: TypedSocket) {
       // state and cause all other clients to seek backwards.
       if (room.playState.isPlaying) {
         const estimated = estimateCurrentTime(mapping.roomId)
-        if (estimated - currentTime > 1) {
-          const count = (hostRejectCount.get(mapping.roomId) ?? 0) + 1
-          hostRejectCount.set(mapping.roomId, count)
-          if (count < HOST_REJECT_FORCE_ACCEPT) {
-            // Still within tolerance — reject this report
-            return
-          }
-          // Too many consecutive rejections — force accept to break deadlock.
-          // The server estimate has likely diverged from reality.
-          logger.warn(`Force-accepting host report after ${count} consecutive rejections`, { roomId: mapping.roomId })
+        if (!playerService.validateHostReport(mapping.roomId, currentTime, estimated)) {
+          return
         }
       }
 
-      // Report accepted — reset rejection counter
-      hostRejectCount.delete(mapping.roomId)
       room.playState = { ...room.playState, currentTime, serverTimestamp: Date.now() }
     } catch (err) {
       // Sync is best-effort; log but don't emit error to avoid noise

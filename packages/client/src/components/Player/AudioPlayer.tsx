@@ -4,12 +4,20 @@ import { cn } from '@/lib/utils'
 import { usePlayerStore } from '@/stores/playerStore'
 import { useSettingsStore } from '@/stores/settingsStore'
 import { BackgroundRender } from '@applemusic-like-lyrics/react'
+import { AnimatePresence, LayoutGroup, motion } from 'motion/react'
+import { useCallback, useState } from 'react'
 import { VoteBanner } from '../Vote/VoteBanner'
 import { LyricDisplay } from './LyricDisplay'
 import { NowPlaying } from './NowPlaying'
 import { PlayerControls } from './PlayerControls'
+import { SongInfoBar } from './SongInfoBar'
 
 const FULL_SIZE_STYLE = { width: '100%', height: '100%' } as const
+
+const LYRIC_MASK_STYLE = {
+  maskImage: 'linear-gradient(to bottom, transparent 0%, black 8%, black 92%, transparent 100%)',
+  WebkitMaskImage: 'linear-gradient(to bottom, transparent 0%, black 8%, black 92%, transparent 100%)',
+} as const
 
 interface AudioPlayerProps {
   onPlay: () => void
@@ -28,28 +36,22 @@ export function AudioPlayer({ onPlay, onPause, onSeek, onNext, onPrev, onOpenCha
   const bgFps = useSettingsStore((s) => s.bgFps)
   const bgFlowSpeed = useSettingsStore((s) => s.bgFlowSpeed)
   const bgRenderScale = useSettingsStore((s) => s.bgRenderScale)
-  const mobileLyricPosition = useSettingsStore((s) => s.mobileLyricPosition)
   const isMobile = useIsMobile()
+
+  // Mobile: toggle between cover view and lyric view
+  const [lyricExpanded, setLyricExpanded] = useState(false)
+  const toggleLyricView = useCallback(() => setLyricExpanded((v) => !v), [])
 
   const playerControlsProps = {
     onPlay, onPause, onSeek, onNext, onPrev,
-    onOpenChat, onOpenQueue, chatUnreadCount,
+    onOpenQueue,
     onStartVote: startVote,
   } as const
 
-  const showLyricsAboveControls = isMobile && mobileLyricPosition === 'above'
-
-  const lyricsSection = (
-    <div
-      className={cn(
-        'min-h-0 w-full flex-1 overflow-hidden',
-        showLyricsAboveControls ? '' : isMobile && 'px-4',
-      )}
-      style={{ maskImage: 'linear-gradient(to bottom, transparent 0%, black 8%, black 92%, transparent 100%)', WebkitMaskImage: 'linear-gradient(to bottom, transparent 0%, black 8%, black 92%, transparent 100%)' }}
-    >
-      <LyricDisplay />
-    </div>
-  )
+  const songInfoProps = {
+    onOpenChat,
+    chatUnreadCount,
+  } as const
 
   return (
     <div className="relative flex h-full flex-col overflow-hidden">
@@ -68,43 +70,86 @@ export function AudioPlayer({ onPlay, onPause, onSeek, onNext, onPrev, onOpenCha
       )}
 
       {/* Content with padding */}
-      <div className="relative z-10 h-full p-[5%]">
+      <div className="relative z-10 h-full px-5 py-7 md:p-[5%]">
         <div className={cn('flex h-full', isMobile ? 'flex-col' : 'flex-row')}>
-          {/* Left: cover + song info + controls (Apple Music style) */}
-          <div className={cn(
-            'relative flex flex-col items-center',
-            isMobile ? 'gap-4' : 'gap-8 w-[40%] justify-center lg:w-[38%]',
-            showLyricsAboveControls && 'flex-1',
-          )}>
-            {showLyricsAboveControls ? (
-              <>
-                <div className="w-full max-w-[min(90%,38vh)]">
-                  <NowPlaying />
-                </div>
-                <div className="flex min-h-0 w-full max-w-[min(90%,38vh)] flex-1 flex-col">
-                  {lyricsSection}
-                </div>
-                <div className="relative z-10 mt-auto w-full max-w-[min(90%,38vh)]">
+
+          {/* ----------------------------------------------------------------- */}
+          {/* Mobile layout: dual-mode (cover view / lyric view)                */}
+          {/* ----------------------------------------------------------------- */}
+          {isMobile ? (
+            <LayoutGroup>
+              <div className="relative mx-auto flex h-full w-full max-w-sm flex-col items-center gap-6">
+                {/* 1. Cover — fills remaining space in cover mode */}
+                <motion.div layout transition={{ layout: { type: 'spring' as const, duration: 0.5, bounce: 0.1 } }} className={cn('w-full', !lyricExpanded && 'flex-1 min-h-0')}>
+                  <NowPlaying compact={lyricExpanded} onCoverClick={toggleLyricView} />
+                </motion.div>
+
+                {/* Lyrics — AnimatePresence always mounted so exit animation fires */}
+                <AnimatePresence mode="wait">
+                  {lyricExpanded && (
+                    <motion.div
+                      key="lyrics"
+                      initial={{ opacity: 0, y: 20 }}
+                      animate={{ opacity: 1, y: 0 }}
+                      exit={{ opacity: 0, y: 20 }}
+                      transition={{ duration: 0.3, ease: 'easeOut' }}
+                      className="min-h-0 w-full flex-1 overflow-hidden"
+                      style={LYRIC_MASK_STYLE}
+                    >
+                      <LyricDisplay />
+                    </motion.div>
+                  )}
+                </AnimatePresence>
+
+                {/* 2. Song info + action buttons (independent zoom module) */}
+                {!lyricExpanded && (
+                  <div className="w-full">
+                    <SongInfoBar {...songInfoProps} />
+                  </div>
+                )}
+
+                {/* 3. Controls (independent zoom module) */}
+                <div className="relative z-10 w-full">
                   <PlayerControls {...playerControlsProps} />
                 </div>
-              </>
-            ) : (
-              <div className={cn('flex w-full max-w-[min(90%,38vh)] flex-col', isMobile ? 'gap-4' : 'gap-8')}>
-                <NowPlaying />
-                <PlayerControls {...playerControlsProps} />
-              </div>
-            )}
 
-            {/* Vote banner: absolute overlay at the bottom, does not displace controls */}
-            {activeVote && (
-              <div className="absolute bottom-0 left-1/2 z-20 w-full max-w-[min(90%,38vh)] -translate-x-1/2 px-2 pb-2">
-                <VoteBanner vote={activeVote} onCastVote={castVote} />
+                {/* Vote banner: absolute overlay at the bottom */}
+                {activeVote && (
+                  <div className="absolute bottom-0 left-1/2 z-20 w-full -translate-x-1/2 px-2 pb-2">
+                    <VoteBanner vote={activeVote} onCastVote={castVote} />
+                  </div>
+                )}
               </div>
-            )}
-          </div>
+            </LayoutGroup>
+          ) : (
+            // ---------------------------------------------------------------
+            // Desktop layout: left panel (cover + info + controls) + right lyrics
+            // ---------------------------------------------------------------
+            <>
+              <div className="relative flex w-[40%] flex-col items-center justify-center gap-8 lg:w-[38%]">
+                <div className="flex w-full max-w-[min(90%,55vh)] flex-col gap-8">
+                  {/* 1. Cover */}
+                  <NowPlaying />
+                  {/* 2. Song info + action buttons */}
+                  <SongInfoBar {...songInfoProps} />
+                  {/* 3. Controls */}
+                  <PlayerControls {...playerControlsProps} />
+                </div>
+                {activeVote && (
+                  <div className="absolute bottom-0 left-1/2 z-20 w-full max-w-[min(90%,55vh)] -translate-x-1/2 px-2 pb-2">
+                    <VoteBanner vote={activeVote} onCastVote={castVote} />
+                  </div>
+                )}
+              </div>
+              <div
+                className="min-h-0 w-full flex-1 overflow-hidden"
+                style={LYRIC_MASK_STYLE}
+              >
+                <LyricDisplay />
+              </div>
+            </>
+          )}
 
-          {/* Right / Below: AMLL lyrics full height with fade edges */}
-          {!showLyricsAboveControls && lyricsSection}
         </div>
       </div>
     </div>

@@ -35,8 +35,8 @@ export interface RoomRepository {
   setSocketRTT(socketId: string, rttMs: number): void
   /** Retrieve the current smoothed RTT for a socket (default 0) */
   getSocketRTT(socketId: string): number
-  /** Get the maximum RTT among all sockets in a room */
-  getMaxRTT(roomId: string): number
+  /** Get the P90 RTT among all sockets in a room (falls back to max for ≤3 sockets) */
+  getP90RTT(roomId: string): number
 }
 
 export interface ChatRepository {

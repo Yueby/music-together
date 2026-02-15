@@ -61,8 +61,8 @@ function safeEnum<T extends string>(key: string, allowed: readonly T[], fallback
 }
 
 const LYRIC_ANCHORS = ['top', 'center', 'bottom'] as const
-const MOBILE_LYRIC_POSITIONS = ['below', 'above'] as const
 const LYRIC_FONT_SIZES = [75, 90, 100, 110, 125, 150] as const
+const LYRIC_TRANS_FONT_SIZES = [50, 65, 75, 90, 100] as const
 
 export const storage = {
   /** Persistent user identity — generated once and stored in localStorage */
@@ -85,9 +85,6 @@ export const storage = {
   setVolume: (v: number) => safeSet('volume', String(v)),
 
   // Lyric settings
-  getMobileLyricPosition: () => safeEnum('mobileLyricPosition', MOBILE_LYRIC_POSITIONS, 'below'),
-  setMobileLyricPosition: (v: string) => safeSet('mobileLyricPosition', v),
-
   getLyricAlignAnchor: () => safeEnum('lyricAlignAnchor', LYRIC_ANCHORS, 'center'),
   setLyricAlignAnchor: (v: string) => safeSet('lyricAlignAnchor', v),
 
@@ -100,7 +97,7 @@ export const storage = {
   getLyricEnableSpring: () => safeGet('lyricEnableSpring') !== 'false',
   setLyricEnableSpring: (v: boolean) => safeSet('lyricEnableSpring', String(v)),
 
-  getLyricEnableBlur: () => safeGet('lyricEnableBlur') !== 'false',
+  getLyricEnableBlur: () => safeGet('lyricEnableBlur') === 'true',
   setLyricEnableBlur: (v: boolean) => safeSet('lyricEnableBlur', String(v)),
 
   getLyricEnableScale: () => safeGet('lyricEnableScale') !== 'false',
@@ -117,6 +114,12 @@ export const storage = {
     return (LYRIC_FONT_SIZES as readonly number[]).includes(size) ? size : 100
   },
   setLyricFontSize: (v: number) => safeSet('lyricFontSize', String(v)),
+
+  getLyricTranslationFontSize: () => {
+    const size = safeInt('lyricTranslationFontSize', 65)
+    return (LYRIC_TRANS_FONT_SIZES as readonly number[]).includes(size) ? size : 65
+  },
+  setLyricTranslationFontSize: (v: number) => safeSet('lyricTranslationFontSize', String(v)),
 
   // Background settings
   getBgFps: () => {

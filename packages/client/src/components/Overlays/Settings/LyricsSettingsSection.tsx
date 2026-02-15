@@ -12,7 +12,6 @@ import { useSettingsStore } from '@/stores/settingsStore'
 import { SettingRow } from './SettingRow'
 
 export function LyricsSettingsSection() {
-  const mobileLyricPosition = useSettingsStore((s) => s.mobileLyricPosition)
   const lyricAlignAnchor = useSettingsStore((s) => s.lyricAlignAnchor)
   const lyricAlignPosition = useSettingsStore((s) => s.lyricAlignPosition)
   const lyricEnableSpring = useSettingsStore((s) => s.lyricEnableSpring)
@@ -20,7 +19,6 @@ export function LyricsSettingsSection() {
   const lyricEnableScale = useSettingsStore((s) => s.lyricEnableScale)
   const lyricFontWeight = useSettingsStore((s) => s.lyricFontWeight)
   const lyricFontSize = useSettingsStore((s) => s.lyricFontSize)
-  const setMobileLyricPosition = useSettingsStore((s) => s.setMobileLyricPosition)
   const setLyricAlignAnchor = useSettingsStore((s) => s.setLyricAlignAnchor)
   const setLyricAlignPosition = useSettingsStore((s) => s.setLyricAlignPosition)
   const setLyricEnableSpring = useSettingsStore((s) => s.setLyricEnableSpring)
@@ -31,28 +29,6 @@ export function LyricsSettingsSection() {
 
   return (
     <div className="space-y-6">
-      <div>
-        <h3 className="text-base font-semibold">移动端布局</h3>
-        <Separator className="mt-2 mb-4" />
-
-        <SettingRow label="歌词位置" description="仅影响移动端，桌面端始终在右侧显示">
-          <Select
-            value={mobileLyricPosition}
-            onValueChange={(v) =>
-              setMobileLyricPosition(v as 'below' | 'above')
-            }
-          >
-            <SelectTrigger className="w-32">
-              <SelectValue />
-            </SelectTrigger>
-            <SelectContent>
-              <SelectItem value="below">控制器下方</SelectItem>
-              <SelectItem value="above">控制器上方</SelectItem>
-            </SelectContent>
-          </Select>
-        </SettingRow>
-      </div>
-
       <div>
         <h3 className="text-base font-semibold">歌词对齐</h3>
         <Separator className="mt-2 mb-4" />

@@ -6,7 +6,7 @@ export class InMemoryRoomRepository implements RoomRepository {
   private socketToRoom = new Map<string, SocketMapping>()
   /** Smoothed RTT per socket (ms).  Cleaned up together with socket mapping. */
   private socketRTT = new Map<string, number>()
-  /** Reverse index: roomId → Set of socketIds.  Keeps getMaxRTT O(room sockets) instead of O(all sockets). */
+  /** Reverse index: roomId → Set of socketIds.  Keeps getP90RTT O(room sockets) instead of O(all sockets). */
   private roomToSockets = new Map<string, Set<string>>()
 
   get(roomId: string): RoomData | undefined {
@@ -108,15 +108,25 @@ export class InMemoryRoomRepository implements RoomRepository {
     return this.socketRTT.get(socketId) ?? 0
   }
 
-  getMaxRTT(roomId: string): number {
+  getP90RTT(roomId: string): number {
     const sockets = this.roomToSockets.get(roomId)
-    if (!sockets) return 0
-    let max = 0
+    if (!sockets || sockets.size === 0) return 0
+
+    const rtts: number[] = []
     for (const socketId of sockets) {
       const rtt = this.socketRTT.get(socketId) ?? 0
-      if (rtt > max) max = rtt
+      if (rtt > 0) rtts.push(rtt)
     }
-    return max
+    if (rtts.length === 0) return 0
+
+    // For very small rooms (≤3 sockets), P90 is meaningless — use max
+    if (rtts.length <= 3) {
+      return Math.max(...rtts)
+    }
+
+    rtts.sort((a, b) => a - b)
+    const idx = Math.min(Math.floor(rtts.length * 0.9), rtts.length - 1)
+    return rtts[idx]
   }
 }
 

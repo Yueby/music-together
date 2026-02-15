@@ -13,7 +13,6 @@ import { SettingRow } from './SettingRow'
 
 export function AppearanceSection() {
   // Lyrics settings
-  const mobileLyricPosition = useSettingsStore((s) => s.mobileLyricPosition)
   const lyricAlignAnchor = useSettingsStore((s) => s.lyricAlignAnchor)
   const lyricAlignPosition = useSettingsStore((s) => s.lyricAlignPosition)
   const lyricEnableSpring = useSettingsStore((s) => s.lyricEnableSpring)
@@ -21,7 +20,7 @@ export function AppearanceSection() {
   const lyricEnableScale = useSettingsStore((s) => s.lyricEnableScale)
   const lyricFontWeight = useSettingsStore((s) => s.lyricFontWeight)
   const lyricFontSize = useSettingsStore((s) => s.lyricFontSize)
-  const setMobileLyricPosition = useSettingsStore((s) => s.setMobileLyricPosition)
+  const lyricTranslationFontSize = useSettingsStore((s) => s.lyricTranslationFontSize)
   const setLyricAlignAnchor = useSettingsStore((s) => s.setLyricAlignAnchor)
   const setLyricAlignPosition = useSettingsStore((s) => s.setLyricAlignPosition)
   const setLyricEnableSpring = useSettingsStore((s) => s.setLyricEnableSpring)
@@ -29,6 +28,7 @@ export function AppearanceSection() {
   const setLyricEnableScale = useSettingsStore((s) => s.setLyricEnableScale)
   const setLyricFontWeight = useSettingsStore((s) => s.setLyricFontWeight)
   const setLyricFontSize = useSettingsStore((s) => s.setLyricFontSize)
+  const setLyricTranslationFontSize = useSettingsStore((s) => s.setLyricTranslationFontSize)
 
   // Background settings
   const bgFps = useSettingsStore((s) => s.bgFps)
@@ -93,27 +93,10 @@ export function AppearanceSection() {
         </SettingRow>
       </div>
 
-      {/* ---- Lyrics: Mobile Layout ---- */}
+      {/* ---- Lyrics: Layout ---- */}
       <div>
         <h3 className="text-base font-semibold">歌词布局</h3>
         <Separator className="mt-2 mb-4" />
-
-        <SettingRow label="移动端歌词位置" description="仅影响移动端，桌面端始终在右侧显示">
-          <Select
-            value={mobileLyricPosition}
-            onValueChange={(v) =>
-              setMobileLyricPosition(v as 'below' | 'above')
-            }
-          >
-            <SelectTrigger className="w-32">
-              <SelectValue />
-            </SelectTrigger>
-            <SelectContent>
-              <SelectItem value="below">控制器下方</SelectItem>
-              <SelectItem value="above">控制器上方</SelectItem>
-            </SelectContent>
-          </Select>
-        </SettingRow>
 
         <SettingRow label="对齐锚点" description="当前歌词行在视口中的锚定方式">
           <Select
@@ -212,6 +195,24 @@ export function AppearanceSection() {
               <SelectItem value="110">偏大</SelectItem>
               <SelectItem value="125">较大</SelectItem>
               <SelectItem value="150">最大</SelectItem>
+            </SelectContent>
+          </Select>
+        </SettingRow>
+
+        <SettingRow label="翻译字体大小" description="翻译歌词相对主歌词的字号比例">
+          <Select
+            value={String(lyricTranslationFontSize)}
+            onValueChange={(v) => setLyricTranslationFontSize(parseInt(v, 10))}
+          >
+            <SelectTrigger className="w-28">
+              <SelectValue />
+            </SelectTrigger>
+            <SelectContent>
+              <SelectItem value="50">较小</SelectItem>
+              <SelectItem value="65">默认</SelectItem>
+              <SelectItem value="75">偏大</SelectItem>
+              <SelectItem value="90">较大</SelectItem>
+              <SelectItem value="100">最大</SelectItem>
             </SelectContent>
           </Select>
         </SettingRow>

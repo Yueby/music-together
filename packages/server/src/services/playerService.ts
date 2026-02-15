@@ -18,10 +18,10 @@ import type { TypedServer, TypedSocket } from '../middleware/types.js'
 
 /**
  * Compute the future server-time at which all clients should execute an
- * action, based on the maximum RTT in the room.
+ * action, based on the P90 RTT in the room.
  */
 function getScheduleTime(roomId: string): number {
-  const maxRTT = roomRepo.getMaxRTT(roomId)
+  const maxRTT = roomRepo.getP90RTT(roomId)
   const delay = Math.min(
     Math.max(maxRTT * 1.5 + 100, NTP.MIN_SCHEDULE_DELAY_MS),
     NTP.MAX_SCHEDULE_DELAY_MS,
@@ -264,15 +264,41 @@ export async function syncPlaybackToSocket(
 }
 
 // ---------------------------------------------------------------------------
-// Room cleanup & debounce (moved from playerController to fix circular dep)
+// Room cleanup, debounce & host report validation
 // ---------------------------------------------------------------------------
 
 /** Debounce tracking for PLAYER_NEXT per room */
 const lastNextTimestamp = new Map<string, number>()
 
-/** Remove debounce entry for a deleted room */
+/** Track consecutive rejected host reports per room to break deadlocks */
+const hostRejectCount = new Map<string, number>()
+const HOST_REJECT_FORCE_ACCEPT = 3
+
+/** Remove per-room entries for a deleted room */
 export function cleanupRoom(roomId: string): void {
   lastNextTimestamp.delete(roomId)
+  hostRejectCount.delete(roomId)
+}
+
+/**
+ * Validate a host sync report against the server estimate.
+ * Returns true if the report should be ACCEPTED, false if rejected (stale).
+ * Automatically force-accepts after HOST_REJECT_FORCE_ACCEPT consecutive
+ * rejections to break deadlocks when the server estimate has diverged.
+ */
+export function validateHostReport(roomId: string, reportedTime: number, estimatedTime: number): boolean {
+  if (estimatedTime - reportedTime > 1) {
+    const count = (hostRejectCount.get(roomId) ?? 0) + 1
+    hostRejectCount.set(roomId, count)
+    if (count < HOST_REJECT_FORCE_ACCEPT) {
+      return false // reject
+    }
+    // Too many consecutive rejections — force accept to break deadlock
+    logger.warn(`Force-accepting host report after ${count} consecutive rejections`, { roomId })
+  }
+  // Accepted — reset counter
+  hostRejectCount.delete(roomId)
+  return true
 }
 
 /**
