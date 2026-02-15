@@ -20,6 +20,7 @@ import { logger } from '../utils/logger.js'
 import { toPublicRoomState } from '../utils/roomUtils.js'
 import { cleanupRoom as cleanupAuthRoom } from './authService.js'
 import { cleanupRoom as cleanupPlayerRoom } from './playerService.js'
+import { estimateCurrentTime } from './syncService.js'
 import { cleanupRoom as cleanupVoteRoom } from './voteService.js'
 
 // ---------------------------------------------------------------------------
@@ -106,10 +107,11 @@ export function startRoleGrace(
   // Cancel any existing grace for this user (e.g. rapid disconnect/reconnect)
   cancelRoleGrace(roomId, userId)
 
-  if (!roleGraceMap.has(roomId)) {
-    roleGraceMap.set(roomId, new Map())
+  let roomGrace = roleGraceMap.get(roomId)
+  if (!roomGrace) {
+    roomGrace = new Map()
+    roleGraceMap.set(roomId, roomGrace)
   }
-  const roomGrace = roleGraceMap.get(roomId)!
 
   logger.info(
     `${role} (${userId}) left room ${roomId}, grace period ${TIMING.ROLE_GRACE_PERIOD_MS / 1000}s started`,
@@ -135,6 +137,17 @@ export function startRoleGrace(
       const previousRole = candidate.role
       room.hostId = candidate.id
       candidate.role = 'host'
+
+      // Refresh playState timestamp so the new Host's first report isn't
+      // rejected by the stale-report guard (estimated - reported > 1s).
+      if (room.playState.isPlaying) {
+        room.playState = {
+          ...room.playState,
+          currentTime: estimateCurrentTime(roomId),
+          serverTimestamp: Date.now(),
+        }
+      }
+
       logger.info(
         `Host grace expired: transferred from ${oldHostId} to ${candidate.nickname} (was ${previousRole}) in room ${roomId}`,
         { roomId },

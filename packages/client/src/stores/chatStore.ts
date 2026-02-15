@@ -31,7 +31,7 @@ export const useChatStore = create<ChatStore>((set) => ({
           : state.unreadCount + 1,
       }
     }),
-  setMessages: (messages) => set({ messages }),
+  setMessages: (messages) => set({ messages, unreadCount: 0 }),
   setIsChatOpen: (open) =>
     set((state) => ({
       isChatOpen: open,

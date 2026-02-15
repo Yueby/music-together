@@ -1,5 +1,5 @@
 import { timingSafeEqual } from 'node:crypto'
-import type { RoomListItem, User } from '@music-together/shared'
+import type { AudioQuality, RoomListItem, User } from '@music-together/shared'
 import { nanoid } from 'nanoid'
 import type { RoomData } from '../repositories/types.js'
 import { roomRepo } from '../repositories/roomRepository.js'
@@ -41,6 +41,7 @@ export function createRoom(
     name: roomName?.trim() || `${nickname}的房间`,
     password: password || null,
     hostId: userId,
+    audioQuality: 320,
     users: [user],
     queue: [],
     currentTrack: null,
@@ -196,7 +197,7 @@ export function listRooms(): RoomListItem[] {
 
 export function updateSettings(
   roomId: string,
-  settings: { name?: string; password?: string | null },
+  settings: { name?: string; password?: string | null; audioQuality?: AudioQuality },
 ): void {
   const room = roomRepo.get(roomId)
   if (!room) return
@@ -208,6 +209,10 @@ export function updateSettings(
   // password: string -> set password; null -> remove password; undefined -> no change
   if (settings.password !== undefined) {
     room.password = settings.password
+  }
+
+  if (settings.audioQuality !== undefined) {
+    room.audioQuality = settings.audioQuality
   }
 }
 

@@ -20,14 +20,16 @@ export function useSocketEvent<E extends keyof ServerToClientEvents>(
   handlerRef.current = handler
 
   useEffect(() => {
-    // Wrapper delegates to the latest handler via ref
-    const wrapper = ((...args: unknown[]) => {
+    // Wrapper delegates to the latest handler via ref.
+    // Socket.IO's overloaded .on/.off signatures can't infer the handler type
+    // from a generic event name, so we cast through `unknown` to satisfy the compiler.
+    const wrapper: ServerToClientEvents[E] = ((...args: unknown[]) => {
       ;(handlerRef.current as (...a: unknown[]) => void)(...args)
-    }) as ServerToClientEvents[E]
+    }) as unknown as ServerToClientEvents[E]
 
-    socket.on(event, wrapper as any)
+    socket.on(event as keyof ServerToClientEvents & string, wrapper as never)
     return () => {
-      socket.off(event, wrapper as any)
+      socket.off(event as keyof ServerToClientEvents & string, wrapper as never)
     }
   }, [socket, event])
 }

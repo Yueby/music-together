@@ -160,7 +160,9 @@ export function usePlayer() {
     // Subscribe for future changes (covers reconnect where ROOM_STATE arrives later)
     const unsubscribe = useRoomStore.subscribe(recover)
     return unsubscribe
-  }, [loadTrack, fetchLyric, socket])
+    // `socket` intentionally excluded — effect subscribes to roomStore, not socket directly.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [loadTrack, fetchLyric])
 
   // -----------------------------------------------------------------------
   // Controls — emit to server only.  Server broadcasts ScheduledPlayState

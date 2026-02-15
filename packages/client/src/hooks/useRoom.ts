@@ -30,7 +30,7 @@ export function useRoom() {
   }, [socket])
 
   const updateSettings = useCallback(
-    (settings: { name?: string; password?: string | null }) => {
+    (settings: { name?: string; password?: string | null; audioQuality?: import('@music-together/shared').AudioQuality }) => {
       socket.emit(EVENTS.ROOM_SETTINGS, settings)
     },
     [socket],

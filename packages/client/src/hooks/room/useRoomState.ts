@@ -2,7 +2,7 @@ import { useSocketContext } from '@/providers/SocketProvider'
 import { useRoomStore } from '@/stores/roomStore'
 import { storage } from '@/lib/storage'
 import { ERROR_CODE, EVENTS } from '@music-together/shared'
-import type { RoomState, User, UserRole } from '@music-together/shared'
+import type { AudioQuality, RoomState, User, UserRole } from '@music-together/shared'
 import { useEffect, useRef } from 'react'
 import { useNavigate } from 'react-router-dom'
 import { toast } from 'sonner'
@@ -13,9 +13,8 @@ import { toast } from 'sonner'
  *
  * Also auto-resends persisted auth cookies on ROOM_STATE (join/reconnect).
  *
- * NOTE: `currentUser` is now auto-derived inside `roomStore` whenever `room`
- * changes (setRoom / addUser / removeUser / updateRoom).  No manual
- * `setCurrentUser` calls are needed here.
+ * NOTE: `currentUser` is auto-derived inside `roomStore` whenever `room`
+ * changes (setRoom / addUser / removeUser / updateRoom).
  */
 export function useRoomState() {
   const navigate = useNavigate()
@@ -43,7 +42,7 @@ export function useRoomState() {
       useRoomStore.getState().removeUser(user.id)
     }
 
-    const onSettings = (settings: { name: string; hasPassword: boolean }) => {
+    const onSettings = (settings: { name: string; hasPassword: boolean; audioQuality: AudioQuality }) => {
       useRoomStore.getState().updateRoom(settings)
     }
 

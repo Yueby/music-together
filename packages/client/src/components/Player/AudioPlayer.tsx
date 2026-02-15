@@ -31,6 +31,12 @@ export function AudioPlayer({ onPlay, onPause, onSeek, onNext, onPrev, onOpenCha
   const mobileLyricPosition = useSettingsStore((s) => s.mobileLyricPosition)
   const isMobile = useIsMobile()
 
+  const playerControlsProps = {
+    onPlay, onPause, onSeek, onNext, onPrev,
+    onOpenChat, onOpenQueue, chatUnreadCount,
+    onStartVote: startVote,
+  } as const
+
   const showLyricsAboveControls = isMobile && mobileLyricPosition === 'above'
 
   const lyricsSection = (
@@ -79,33 +85,13 @@ export function AudioPlayer({ onPlay, onPause, onSeek, onNext, onPrev, onOpenCha
                   {lyricsSection}
                 </div>
                 <div className="relative z-10 mt-auto w-full max-w-[min(90%,38vh)]">
-                  <PlayerControls
-                    onPlay={onPlay}
-                    onPause={onPause}
-                    onSeek={onSeek}
-                    onNext={onNext}
-                    onPrev={onPrev}
-                    onOpenChat={onOpenChat}
-                    onOpenQueue={onOpenQueue}
-                    chatUnreadCount={chatUnreadCount}
-                    onStartVote={startVote}
-                  />
+                  <PlayerControls {...playerControlsProps} />
                 </div>
               </>
             ) : (
               <div className={cn('flex w-full max-w-[min(90%,38vh)] flex-col', isMobile ? 'gap-4' : 'gap-8')}>
                 <NowPlaying />
-                <PlayerControls
-                  onPlay={onPlay}
-                  onPause={onPause}
-                  onSeek={onSeek}
-                  onNext={onNext}
-                  onPrev={onPrev}
-                  onOpenChat={onOpenChat}
-                  onOpenQueue={onOpenQueue}
-                  chatUnreadCount={chatUnreadCount}
-                  onStartVote={startVote}
-                />
+                <PlayerControls {...playerControlsProps} />
               </div>
             )}
 

@@ -1,6 +1,6 @@
 import type { EVENTS } from './events.js'
 import type {
-  ChatMessage, MusicSource, MyPlatformAuth, PlayMode, PlatformAuthStatus,
+  AudioQuality, ChatMessage, MusicSource, MyPlatformAuth, PlayMode, PlatformAuthStatus,
   RoomListItem, RoomState, ScheduledPlayState, Track, User, UserRole, VoteAction, VoteState,
 } from './types.js'
 
@@ -11,7 +11,7 @@ export interface ServerToClientEvents {
   [EVENTS.ROOM_ERROR]: (error: { code: string; message: string }) => void
   [EVENTS.ROOM_USER_JOINED]: (user: User) => void
   [EVENTS.ROOM_USER_LEFT]: (user: User) => void
-  [EVENTS.ROOM_SETTINGS]: (settings: { name: string; hasPassword: boolean }) => void
+  [EVENTS.ROOM_SETTINGS]: (settings: { name: string; hasPassword: boolean; audioQuality: AudioQuality }) => void
   [EVENTS.ROOM_LIST_UPDATE]: (rooms: RoomListItem[]) => void
   [EVENTS.ROOM_ROLE_CHANGED]: (data: { userId: string; role: UserRole }) => void
 
@@ -63,6 +63,7 @@ export interface ClientToServerEvents {
   [EVENTS.ROOM_SETTINGS]: (data: {
     name?: string
     password?: string | null
+    audioQuality?: AudioQuality
   }) => void
   [EVENTS.ROOM_SET_ROLE]: (data: { userId: string; role: 'admin' | 'member' }) => void
 

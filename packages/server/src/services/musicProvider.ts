@@ -5,19 +5,27 @@ import { nanoid } from 'nanoid'
 import pLimit from 'p-limit'
 import { logger } from '../utils/logger.js'
 
+// ---------------------------------------------------------------------------
+// Meting instance type (library has no TS declarations)
+// ---------------------------------------------------------------------------
+type MetingInstance = InstanceType<typeof Meting>
+
+/** Parsed JSON from Meting API responses */
+type MetingJson = Record<string, unknown>
+
 /** External API timeout (ms) */
 const API_TIMEOUT_MS = 15_000
 
 /** Race a promise against a timeout. Returns null on timeout. */
 async function withTimeout<T>(promise: Promise<T>, ms = API_TIMEOUT_MS): Promise<T | null> {
-  let timer: ReturnType<typeof setTimeout>
+  let timer: ReturnType<typeof setTimeout> | undefined
   const timeout = new Promise<null>((resolve) => {
     timer = setTimeout(() => resolve(null), ms)
   })
   try {
     return await Promise.race([promise, timeout])
   } finally {
-    clearTimeout(timer!)
+    if (timer !== undefined) clearTimeout(timer)
   }
 }
 
@@ -36,7 +44,7 @@ const MINUTE = 60 * 1000
 
 class MusicProvider {
   // Shared instances with format(true) — used for url/lyric/cover operations (no cookie)
-  private instances = new Map<MusicSource, any>()
+  private instances = new Map<MusicSource, MetingInstance>()
 
   // ---------------------------------------------------------------------------
   // LRU caches — bounded by max entries + TTL; auto-evicts stale/overflow entries
@@ -46,13 +54,14 @@ class MusicProvider {
   private coverCache = new LRUCache<string, string>({ max: 1000, ttl: 24 * HOUR })
   private lyricCache = new LRUCache<string, { lyric: string; tlyric: string }>({ max: 500, ttl: 24 * HOUR })
 
-  private getInstance(source: MusicSource) {
-    if (!this.instances.has(source)) {
-      const m = new Meting(source)
+  private getInstance(source: MusicSource): MetingInstance {
+    let m = this.instances.get(source)
+    if (!m) {
+      m = new Meting(source)
       m.format(true)
       this.instances.set(source, m)
     }
-    return this.instances.get(source)!
+    return m
   }
 
   /**
@@ -76,9 +85,9 @@ class MusicProvider {
         return []
       }
 
-      let rawData: any
+      let rawData: MetingJson
       try {
-        rawData = JSON.parse(raw)
+        rawData = JSON.parse(raw) as MetingJson
       } catch {
         logger.error(`Search JSON parse failed for ${source}`, raw?.substring?.(0, 200))
         return []
@@ -87,7 +96,7 @@ class MusicProvider {
       const songs = this.navigatePath(rawData, SEARCH_PATHS[source])
       if (!Array.isArray(songs) || songs.length === 0) return []
 
-      const tracks = songs.map((song: any) => this.rawToTrack(song, source))
+      const tracks = songs.map((song: MetingJson) => this.rawToTrack(song, source))
 
       // Batch resolve cover URLs for tracks that don't already have one
       await this.batchResolveCover(tracks, source)
@@ -119,7 +128,7 @@ class MusicProvider {
     }
 
     try {
-      let meting: any
+      let meting: MetingInstance
       if (cookie) {
         // Fresh instance with cookie — don't pollute the shared one
         meting = new Meting(source)
@@ -133,9 +142,9 @@ class MusicProvider {
         logger.warn(`URL fetch timeout for ${source}: ${urlId}`)
         return null
       }
-      let data: any
-      try { data = JSON.parse(raw as string) } catch { return null }
-      const url = data.url || null
+      let data: MetingJson
+      try { data = JSON.parse(raw as string) as MetingJson } catch { return null }
+      const url = (data.url as string) || null
 
       // Only cache non-cookie & successful results (null = transient failure, retry next time)
       if (!cookie && url) {
@@ -164,11 +173,11 @@ class MusicProvider {
         logger.warn(`Lyric fetch timeout for ${source}: ${lyricId}`)
         return { lyric: '', tlyric: '' }
       }
-      let data: any
-      try { data = JSON.parse(raw as string) } catch { return { lyric: '', tlyric: '' } }
+      let data: MetingJson
+      try { data = JSON.parse(raw as string) as MetingJson } catch { return { lyric: '', tlyric: '' } }
       const result = {
-        lyric: data.lyric || '',
-        tlyric: data.tlyric || '',
+        lyric: (data.lyric as string) || '',
+        tlyric: (data.tlyric as string) || '',
       }
 
       this.lyricCache.set(cacheKey, result)
@@ -193,9 +202,9 @@ class MusicProvider {
         logger.warn(`Cover fetch timeout for ${source}: ${picId}`)
         return ''
       }
-      let data: any
-      try { data = JSON.parse(raw as string) } catch { return '' }
-      const url = data.url || ''
+      let data: MetingJson
+      try { data = JSON.parse(raw as string) as MetingJson } catch { return '' }
+      const url = (data.url as string) || ''
 
       this.coverCache.set(cacheKey, url)
       return url
@@ -210,10 +219,10 @@ class MusicProvider {
   // ---------------------------------------------------------------------------
 
   /** Navigate a dot-separated path in an object */
-  private navigatePath(data: any, path: string): any {
-    let result = data
+  private navigatePath(data: MetingJson, path: string): unknown {
+    let result: unknown = data
     for (const key of path.split('.')) {
-      result = result?.[key]
+      result = (result as Record<string, unknown>)?.[key]
     }
     return result
   }
@@ -222,10 +231,11 @@ class MusicProvider {
    * Convert raw platform-specific song data to our Track format.
    * Each platform returns different field names, so we need per-platform parsing.
    */
-  private rawToTrack(song: any, source: MusicSource): Track {
+  // eslint-disable-next-line @typescript-eslint/no-explicit-any -- platform API shapes are too dynamic for strict typing
+  private rawToTrack(song: Record<string, any>, source: MusicSource): Track {
     switch (source) {
       case 'netease': {
-        const neteaseArtists = song.ar?.map((a: any) => a.name).filter(Boolean)
+        const neteaseArtists = song.ar?.map((a: Record<string, unknown>) => a.name).filter(Boolean)
         return {
           id: nanoid(),
           title: song.name || 'Unknown',
@@ -249,7 +259,7 @@ class MusicProvider {
         return {
           id: nanoid(),
           title: s.name || 'Unknown',
-          artist: (s.singer || []).map((a: any) => a.name),
+          artist: (s.singer || []).map((a: Record<string, unknown>) => a.name),
           album: (s.album?.title || '').trim(),
           duration: s.interval || 0, // already in seconds
           cover: '', // resolved via pic()

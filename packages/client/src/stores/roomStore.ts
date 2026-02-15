@@ -21,7 +21,6 @@ interface RoomStore {
   currentUser: User | null
 
   setRoom: (room: RoomState | null) => void
-  setCurrentUser: (user: User | null) => void
   updateRoom: (partial: Partial<RoomState>) => void
   addUser: (user: User) => void
   removeUser: (userId: string) => void
@@ -33,8 +32,6 @@ export const useRoomStore = create<RoomStore>((set) => ({
   currentUser: null,
 
   setRoom: (room) => set({ room, currentUser: deriveCurrentUser(room) }),
-
-  setCurrentUser: (user) => set({ currentUser: user }),
 
   updateRoom: (partial) =>
     set((state) => {
