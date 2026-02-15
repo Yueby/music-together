@@ -24,18 +24,22 @@ const roomCookiePool = new Map<string, Map<MusicSource, CookieEntry[]>>()
 // ---------------------------------------------------------------------------
 
 function getRoomPool(roomId: string): Map<MusicSource, CookieEntry[]> {
-  if (!roomCookiePool.has(roomId)) {
-    roomCookiePool.set(roomId, new Map())
+  let pool = roomCookiePool.get(roomId)
+  if (!pool) {
+    pool = new Map()
+    roomCookiePool.set(roomId, pool)
   }
-  return roomCookiePool.get(roomId)!
+  return pool
 }
 
 function getPlatformEntries(roomId: string, platform: MusicSource): CookieEntry[] {
   const pool = getRoomPool(roomId)
-  if (!pool.has(platform)) {
-    pool.set(platform, [])
+  let entries = pool.get(platform)
+  if (!entries) {
+    entries = []
+    pool.set(platform, entries)
   }
-  return pool.get(platform)!
+  return entries
 }
 
 // ---------------------------------------------------------------------------

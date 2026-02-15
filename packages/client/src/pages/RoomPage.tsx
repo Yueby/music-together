@@ -131,6 +131,8 @@ export default function RoomPage() {
       cancelled = true
       controller.abort()
     }
+    // `room` is excluded intentionally — this effect only runs on mount / roomId change.
+    // `navigate` is stable (React Router guarantee) and would cause unnecessary re-runs if included.
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [roomId])
 

@@ -6,6 +6,7 @@ import {
   CURRENT_TIME_THROTTLE_MS,
   HOWL_UNMUTE_DELAY_SEEK_MS,
   HOWL_UNMUTE_DELAY_DEFAULT_MS,
+  LOAD_COMPENSATION_THRESHOLD_S,
 } from '@/lib/constants'
 import { toast } from 'sonner'
 
@@ -83,16 +84,18 @@ export function useHowl(onTrackEnd: () => void) {
             if (seekTo && seekTo > 0) {
               // Update store immediately so AMLL lyrics jump to correct position
               usePlayerStore.getState().setCurrentTime(seekTo)
-              // Play first (still muted at volume 0), then seek once audio is ready.
-              soundIdRef.current = howl.play()
-              howl.once('play', () => {
-                if (howlRef.current !== howl) return
-                const elapsed = (Date.now() - loadStartTime) / 1000
-                howl.seek(seekTo + elapsed)
-              })
-            } else {
-              soundIdRef.current = howl.play()
             }
+            soundIdRef.current = howl.play()
+            howl.once('play', () => {
+              if (howlRef.current !== howl) return
+              const elapsed = (Date.now() - loadStartTime) / 1000
+              const seekTarget = (seekTo ?? 0) + elapsed
+              // seekTo > 0: must seek to correct position (+ loading compensation)
+              // seekTo === 0: only compensate if loading took significant time
+              if ((seekTo && seekTo > 0) || elapsed > LOAD_COMPENSATION_THRESHOLD_S) {
+                howl.seek(seekTarget)
+              }
+            })
             unmuteTimerRef.current = setTimeout(() => {
               if (howlRef.current === howl) {
                 const latestVolume = usePlayerStore.getState().volume

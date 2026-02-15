@@ -139,12 +139,15 @@ export function registerRoomController(io: TypedServer, socket: TypedSocket) {
       roomService.updateSettings(ctx.roomId, {
         name: parsed.data.name,
         password: parsed.data.password,
+        audioQuality: parsed.data.audioQuality,
       })
 
-      const updatedRoom = roomRepo.get(ctx.roomId)!
+      const updatedRoom = roomRepo.get(ctx.roomId)
+      if (!updatedRoom) return
       io.to(ctx.roomId).emit(EVENTS.ROOM_SETTINGS, {
         name: updatedRoom.name,
         hasPassword: updatedRoom.password !== null,
+        audioQuality: updatedRoom.audioQuality,
       })
 
       logger.info(`Room ${ctx.roomId} settings updated`, { roomId: ctx.roomId })

@@ -1,4 +1,4 @@
-import type { ChatMessage, PlayMode, PlayState, RoomListItem, Track, User } from '@music-together/shared'
+import type { AudioQuality, ChatMessage, PlayMode, PlayState, RoomListItem, Track, User } from '@music-together/shared'
 
 /** 服务端内部房间数据模型 -- 含密码（永远不发送给客户端） */
 export interface RoomData {
@@ -6,6 +6,7 @@ export interface RoomData {
   name: string
   password: string | null
   hostId: string
+  audioQuality: AudioQuality
   users: User[]
   queue: Track[]
   currentTrack: Track | null

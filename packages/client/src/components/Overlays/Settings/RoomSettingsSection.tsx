@@ -1,27 +1,50 @@
 import { Badge } from '@/components/ui/badge'
 import { Button } from '@/components/ui/button'
 import { Input } from '@/components/ui/input'
+import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@/components/ui/select'
 import { Tooltip, TooltipContent, TooltipTrigger } from '@/components/ui/tooltip'
 import { Separator } from '@/components/ui/separator'
 import { Switch } from '@/components/ui/switch'
+import { usePlayerStore } from '@/stores/playerStore'
 import { useRoomStore } from '@/stores/roomStore'
+import type { AudioQuality } from '@music-together/shared'
 import { LIMITS } from '@music-together/shared'
 import { Check, Copy, Lock, LockOpen, Pencil, X } from 'lucide-react'
-import { useEffect, useState } from 'react'
+import { useEffect, useMemo, useState } from 'react'
 import { toast } from 'sonner'
 import { SettingRow } from './SettingRow'
+
+const QUALITY_OPTIONS: { value: AudioQuality; label: string; description?: string }[] = [
+  { value: 128, label: '标准 128kbps' },
+  { value: 192, label: '较高 192kbps' },
+  { value: 320, label: 'HQ 320kbps' },
+  { value: 999, label: '无损 SQ', description: '需要 VIP 账号' },
+]
+
+function getQualityLabel(quality: AudioQuality): string {
+  return QUALITY_OPTIONS.find((o) => o.value === quality)?.label ?? `${quality}kbps`
+}
 
 interface RoomSettingsSectionProps {
   onUpdateSettings: (settings: {
     name?: string
     password?: string | null
+    audioQuality?: AudioQuality
   }) => void
 }
 
 export function RoomSettingsSection({ onUpdateSettings }: RoomSettingsSectionProps) {
   const room = useRoomStore((s) => s.room)
   const currentUser = useRoomStore((s) => s.currentUser)
+  const syncDrift = usePlayerStore((s) => s.syncDrift)
   const isHost = currentUser?.role === 'host'
+
+  const driftDisplay = useMemo(() => {
+    const ms = Math.round(syncDrift * 1000)
+    const label = ms > 0 ? `+${ms}ms` : `${ms}ms`
+    const isHigh = Math.abs(ms) > 500
+    return { label, isHigh }
+  }, [syncDrift])
   const [passwordInput, setPasswordInput] = useState('')
   const [passwordEnabled, setPasswordEnabled] = useState(
     room?.hasPassword ?? false,
@@ -146,6 +169,45 @@ export function RoomSettingsSection({ onUpdateSettings }: RoomSettingsSectionPro
               <TooltipContent>复制房间链接</TooltipContent>
             </Tooltip>
           </div>
+        </SettingRow>
+
+        <SettingRow label="同步偏移">
+          <span className={`text-sm font-mono ${driftDisplay.isHigh ? 'text-yellow-500' : 'text-muted-foreground'}`}>
+            {driftDisplay.label}
+          </span>
+        </SettingRow>
+
+        <SettingRow label="音质" description={isHost ? '切换后对下一首歌生效' : undefined}>
+          {isHost ? (
+            <Select
+              value={String(room?.audioQuality ?? 320)}
+              onValueChange={(v) => {
+                const quality = Number(v) as AudioQuality
+                onUpdateSettings({ audioQuality: quality })
+                toast.success(`音质已切换为 ${getQualityLabel(quality)}`)
+              }}
+            >
+              <SelectTrigger className="h-8 w-[145px] text-sm">
+                <SelectValue />
+              </SelectTrigger>
+              <SelectContent>
+                {QUALITY_OPTIONS.map((opt) => (
+                  <SelectItem key={opt.value} value={String(opt.value)}>
+                    <div className="flex items-center gap-2">
+                      <span>{opt.label}</span>
+                      {opt.description && (
+                        <span className="text-[10px] text-muted-foreground">({opt.description})</span>
+                      )}
+                    </div>
+                  </SelectItem>
+                ))}
+              </SelectContent>
+            </Select>
+          ) : (
+            <span className="text-sm text-muted-foreground">
+              {getQualityLabel(room?.audioQuality ?? 320)}
+            </span>
+          )}
         </SettingRow>
 
         <SettingRow label="密码保护">

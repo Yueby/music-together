@@ -56,7 +56,7 @@ music-together/
 src/
 ├── main.tsx                    # 入口：ReactDOM.createRoot
 ├── App.tsx                     # 根组件：Router + Provider + ErrorBoundary + Suspense 懒加载
-├── index.css                   # 全局样式：Tailwind + 主题变量 + 自定义动画
+├── index.css                   # 全局样式：Tailwind + 配色变量 + 自定义动画
 │
 ├── pages/                      # 页面级组件
 │   ├── HomePage.tsx            #   大厅：创建/加入房间、房间列表
@@ -129,7 +129,7 @@ src/
 │   ├── usePlayer.ts            #   播放器主 hook（组合 useHowl + useLyric + usePlayerSync）
 │   ├── useHowl.ts              #   Howler.js 音频实例管理
 │   ├── useLyric.ts             #   歌词加载与解析
-│   ├── usePlayerSync.ts        #   播放同步（Scheduled Execution + Host 上报，零连续校正）
+│   ├── usePlayerSync.ts        #   播放同步（Scheduled Execution + Host 上报 + 周期性漂移校正）
 │   ├── useClockSync.ts         #   NTP 时钟同步 hook（校准客户端时钟与服务器对齐）
 │   ├── useRoom.ts              #   房间组合 hook（编排 5 个子 hook，对外 API 不变）
 │   ├── room/                   #   useRoom 子 hook（按职责拆分）
@@ -223,7 +223,7 @@ src/
 ```
 src/
 ├── index.ts           # 统一导出（re-export 所有模块）
-├── types.ts           # 核心类型：ERROR_CODE, Track, RoomState, PlayState, ScheduledPlayState, PlayMode, User, ChatMessage, VoteAction, VoteState, RoomListItem
+├── types.ts           # 核心类型：ERROR_CODE, Track, RoomState, PlayState, ScheduledPlayState, PlayMode, AudioQuality, User, ChatMessage, VoteAction, VoteState, RoomListItem
 ├── events.ts          # 事件常量：EVENTS 对象（room:*, player:*, queue:*, chat:*, auth:*, ntp:*）
 ├── socket-types.ts    # Socket.IO 类型：ServerToClientEvents, ClientToServerEvents
 ├── constants.ts       # 业务常量：LIMITS（长度/数量限制）, TIMING（同步间隔/宽限期）, NTP（时钟同步参数）
@@ -301,10 +301,14 @@ interface Track {
 // 播放模式
 type PlayMode = 'sequential' | 'loop-all' | 'loop-one' | 'shuffle'
 
+// 音频质量档位 (kbps)
+type AudioQuality = 128 | 192 | 320 | 999
+
 // 客户端可见的房间状态
 interface RoomState {
   id: string; name: string; hostId: string
-  hasPassword: boolean; users: User[]; queue: Track[]
+  hasPassword: boolean; audioQuality: AudioQuality
+  users: User[]; queue: Track[]
   currentTrack: Track | null; playState: PlayState
   playMode: PlayMode
 }
@@ -332,16 +336,19 @@ interface ChatMessage {
 
 ### 播放同步机制
 
-采用**事件驱动同步 + 零连续校正**架构：NTP 时钟同步 + Scheduled Execution，**音频永远不被修改**（不调 `rate()`、不做周期性 `seek()`）。
+采用**事件驱动同步 + 周期性三级漂移校正**架构：NTP 时钟同步 + Scheduled Execution + 三级漂移校正（rate 微调 + hard seek）。
 
-**设计依据**：现代硬件时钟漂移约 10-100 ppm，一首 4 分钟歌最大累计漂移 ~24ms，远低于人耳感知阈值 30ms。因此只要初始同步精确，无需在播放过程中持续校正。
+**三层防护**：
+1. **NTP 时钟同步**：保证各客户端时钟与服务器对齐
+2. **Scheduled Execution**：离散事件（play/pause/seek/resume）通过预定执行消除网络延迟差异
+3. **周期性三级漂移校正**：客户端每 2 秒发起 `PLAYER_SYNC_REQUEST`，服务端返回当前预期位置；漂移 15~500ms 用 rate 微调（2%，人耳不可感知）渐进追赶，漂移 >500ms 用 hard seek 跳转（覆盖手机息屏、后台标签页等场景）
 
 #### Layer 1：NTP 时钟同步 + RTT 回报
 
 客户端与服务器通过 `ntp:ping` / `ntp:pong` 事件交换时间戳，计算 `clockOffset`（客户端与服务端时钟差值），使 `getServerTime()` 返回与服务端对齐的时间。
 
 - 初始阶段：快速采样（每 50ms）收集 20 个样本，使用 `switchedRef` 保证仅在首次校准完成时切换到稳定阶段
-- 稳定阶段：每 5 秒一次心跳
+- 稳定阶段：每 5 秒一次 NTP 心跳
 - NTP 仅在用户进入房间后启动（`ClockSyncRunner` 渲染在 `RoomPage` 中），大厅用户不运行时钟同步
 - 取中位数作为 offset（对 GC 暂停/网络抖动鲁棒）
 - **RTT 回报**：每次 `ntp:ping` 附带 `lastRttMs`（客户端中位 RTT），服务端在 `NTP_PING` handler 中调用 `roomRepo.setSocketRTT()` 存储，用于自适应调度延迟计算
@@ -355,15 +362,28 @@ interface ChatMessage {
 - RTT 由客户端 NTP 测量后通过 `ntp:ping` 事件回报，服务端以指数移动平均（alpha=0.2）平滑存储在 `roomRepository` 的 per-socket RTT map
 - 全部客户端（含操作发起者）统一收到广播并在预定时刻执行
 - **serverTimestamp 对齐**：播放中的动作（play/resume/seek）将 `room.playState.serverTimestamp` 设为 `serverTimeToExecute` 而非 `Date.now()`，确保 `estimateCurrentTime()` 在下一次 Host 上报前也能准确估算位置
-- **音频始终以 rate=1.0 播放**，不进行任何速率/音高修改，保持原始音质
+- Scheduled action（seek/pause/resume）执行时自动重置 `rate(1)`，避免残留非正常速率
+
+#### Layer 3：周期性三级漂移校正（Rate + Hard Seek）
+
+客户端每 `SYNC_REQUEST_INTERVAL_MS`（2s）向服务端发送 `PLAYER_SYNC_REQUEST`，服务端通过 `estimateCurrentTime()` 计算当前预期位置后回复 `PLAYER_SYNC_RESPONSE`。客户端利用 NTP 校准时钟补偿网络延迟，计算实际漂移量，三级处理：
+
+- 漂移 > `DRIFT_THRESHOLD_MS`（500ms）→ hard seek 到预期位置 + rate(1)
+- 漂移 15~500ms（`DRIFT_RATE_THRESHOLD_MS` ~ `DRIFT_THRESHOLD_MS`）→ `rate(1.02)` 或 `rate(0.98)` 渐进追赶（2% 偏移量人耳不可感知，约 5 秒消除 100ms 偏差）
+- 漂移 < 15ms → 恢复正常速率 rate(1)
+- 每次漂移计算结果写入 `playerStore.syncDrift`，供房间设置 UI 实时展示偏移量
+- **插件干扰自动降级**：设置 rate 后通过 `setTimeout(50ms)` 验证是否生效（避免 rAF 后台标签页节流导致误判），若连续 3 次检测到被浏览器倍速插件覆盖才标记 `rateDisabled`；禁用后自动将 hard seek 阈值降至 15ms（`DRIFT_RATE_THRESHOLD_MS`），消除 15–500ms 的校正死区；新曲加载时重置标记和计数器，给予重试机会
+
+典型场景：手机息屏暂停后解锁、浏览器后台标签页节流、网络波动导致的累积偏移。
 
 #### Host 上报与服务端状态维护
 
-Host（房主）每 5 秒上报当前播放位置到服务端，仅用于维护 `room.playState` 的准确性（供 mid-song join 和 reconnect recovery 使用），**不会转发给其他客户端**。
+Host（房主）每 2 秒上报当前播放位置到服务端，仅用于维护 `room.playState` 的准确性（供 mid-song join、reconnect recovery 和漂移校正使用），**不会转发给其他客户端**。服务端会校验 Host 上报位置与 `estimateCurrentTime()` 预估值的偏差，超过 1 秒的报告视为过时数据（如手机息屏后恢复）被拒绝；但连续拒绝 3 次后强制接受以打破僵局（防止服务端估算与实际 Host 位置长期分歧）。Host 切换时自动刷新 `playState.serverTimestamp` 和 `currentTime`，确保新 Host 的首个报告不会被误拒。
 
-- `syncService.estimateCurrentTime()` 基于 Host 上报的位置 + 经过时间估算当前位置
+- `syncService.estimateCurrentTime()` 基于 Host 上报的位置 + 经过时间估算当前位置，对 `elapsed` 做 `Math.max(0, ...)` 防护（`serverTimestamp` 可能是未来的 `scheduleTime`）
 - 新用户加入时，通过 `ROOM_STATE` 获取 `playState` 并计算应跳转到的位置
 - 断线重连时，`usePlayer` 的 recovery 机制自动检测 desync 并重新加载音轨
+- 漂移校正时，`PLAYER_SYNC_RESPONSE` 基于此数据返回准确位置
 
 #### 播放模式
 
@@ -381,6 +401,24 @@ Host（房主）每 5 秒上报当前播放位置到服务端，仅用于维护 
 - 服务端 `queueService.getNextTrack(roomId, playMode)` 根据模式返回下一首；`getPreviousTrack` 在 `loop-all` 模式下支持尾→首回绕
 - 客户端 `PlayerControls` 提供循环切换按钮，带 `AnimatePresence` 图标过渡动画
 
+#### 音频质量
+
+房间支持 4 档音质（`AudioQuality`），由 `room.audioQuality` 字段控制，默认 `320`（HQ）：
+
+| 档位 | bitrate | 说明 |
+|------|---------|------|
+| 标准 | 128 kbps | 流量节省 |
+| 较高 | 192 kbps | 平衡音质与流量 |
+| HQ | 320 kbps | 高品质（默认） |
+| 无损 SQ | 999 kbps | 无损音质，通常需要 VIP 账号 |
+
+- **仅房主**可在房间设置中切换音质
+- 音质切换仅对**下一首歌**生效，当前播放不中断
+- 服务端 `playerService.playTrackInRoom()` 从 `room.audioQuality` 读取 bitrate，通过 `resolveStreamUrl()` 请求流 URL
+- **降级策略**：如果请求的 bitrate 获取不到（VIP 限制或平台不支持），自动逐级降低 bitrate 重试（999 → 320 → 192 → 128）
+- 三个平台（netease / tencent / kugou）统一使用同一 bitrate 参数，Meting 内部处理各平台差异
+- `musicProvider.streamUrlCache` 的 key 包含 bitrate，不同音质自动隔离缓存
+
 #### 队列清空
 
 - Host/Admin 可通过播放列表抽屉的「清空」按钮（`ListX` 图标）一次性清空队列
@@ -396,13 +434,14 @@ Host（房主）每 5 秒上报当前播放位置到服务端，仅用于维护 
 5. **房间宽限期**：房间空置 60 秒 (`ROOM_GRACE_PERIOD_MS`) 后自动清理（重复调用 `scheduleDeletion` 不会创建重复 timer）
 6. **角色宽限期**：特权用户（host 或 admin）断线后不立即丢失角色，而是启动 30 秒宽限期 (`ROLE_GRACE_PERIOD_MS`)。数据结构 `roleGraceMap: Map<roomId, Map<userId, { role, timer }>>` 支持同时跟踪多个断线的特权用户（1 个 host + N 个 admin）。宽限期内原用户重连可自动恢复角色（host 恢复 hostId + host role；admin 恢复 admin role）；返回的特权用户免密码验证。Host 宽限期过期后，房主转移优先选在线的 admin，其次按加入顺序选 member；admin 宽限期过期后仅清理条目。宽限期即使房间因此变空也保持（与 `scheduleDeletion` 并行），其他用户在宽限期内加入空房间时以 `member` 身份进入（不夺取 host）
 7. **持久化用户身份**：客户端通过 `storage.getUserId()` 生成并持久化 `nanoid`，每次 `ROOM_CREATE` / `ROOM_JOIN` 携带 `userId`，使服务端可跨 socket 重连识别同一用户。服务端通过 `roomRepo.getSocketMapping(socket.id)` 获取 `{ roomId, userId }` 映射——`socket.id` 仅用于 Socket 映射查找，所有涉及用户身份的操作（host 判断、auth cookie 归属、权限检查等）统一使用 `mapping.userId`
-8. **`currentUser` 自动推导**：`roomStore` 中 `currentUser` 始终从 `room.users` 自动推导（`deriveCurrentUser`），`setRoom` / `addUser` / `removeUser` / `updateRoom` 等 action 内部自动同步，消除手动 `setCurrentUser` 带来的脱节风险
-9. **Socket 断开竞态防护**：页面刷新时新旧 socket 的 join/disconnect 到达顺序不确定，`leaveRoom` 通过 `roomRepo.hasOtherSocketForUser()` 检测同一用户是否有更新的 socket 连接，避免旧 socket disconnect 误删活跃用户
-10. **投票安全网**：`voteController` 接收 `VOTE_START` 时，若检测到用户已有直接操作权限（host/admin），不再返回错误，而是直接执行该操作（`executeAction`），防止客户端-服务端角色不同步时操作失效
-11. **切歌防抖**：500ms (`PLAYER_NEXT_DEBOUNCE_MS`) 内不重复触发下一首
-12. **队列曲目移除**：移除当前播放曲目且无下一首时，额外广播 `ROOM_STATE` 使客户端清除 `currentTrack`
-13. **大厅重连刷新**：`useLobby` 监听 socket `connect` 事件，断线重连后自动重新拉取房间列表
-14. **投票执行**：`VOTE_CAST` / `VOTE_START` 中 `executeAction` 使用 `await` 确保动作完成后才广播 `VOTE_RESULT`
+8. **`currentUser` 自动推导**：`roomStore` 中 `currentUser` 始终从 `room.users` 自动推导（`deriveCurrentUser`），`setRoom` / `addUser` / `removeUser` / `updateRoom` 等 action 内部自动同步，不暴露 `setCurrentUser` 以避免脱节风险
+9. **断线时钟重置**：`resetAllRoomState()` 除重置 Zustand stores 外，还调用 `resetClockSync()` 清空 NTP 采样，确保重连后使用全新的时钟校准数据
+10. **Socket 断开竞态防护**：页面刷新时新旧 socket 的 join/disconnect 到达顺序不确定，`leaveRoom` 通过 `roomRepo.hasOtherSocketForUser()` 检测同一用户是否有更新的 socket 连接，避免旧 socket disconnect 误删活跃用户
+11. **投票安全网**：`voteController` 接收 `VOTE_START` 时，若检测到用户已有直接操作权限（host/admin），不再返回错误，而是直接执行该操作（`executeAction`），防止客户端-服务端角色不同步时操作失效
+12. **切歌防抖**：500ms (`PLAYER_NEXT_DEBOUNCE_MS`) 内不重复触发下一首
+13. **停止播放统一处理**：`playerService.stopPlayback()` 统一处理"队列为空/清空"场景——清除 currentTrack、emit PLAYER_PAUSE、广播 ROOM_STATE、刷新大厅列表，避免 controller 中重复逻辑
+14. **大厅重连刷新**：`useLobby` 监听 socket `connect` 事件，断线重连后自动重新拉取房间列表
+15. **投票执行**：`VOTE_CAST` / `VOTE_START` 中 `executeAction` 使用 `await` 确保动作完成后才广播 `VOTE_RESULT`
 
 ### REST API
 
@@ -755,17 +794,10 @@ import { usePlayerStore } from '@/stores/playerStore'
 
 ### 颜色系统
 
-使用 **oklch 色彩空间**，通过 CSS 变量定义亮/暗两套主题：
+使用 **oklch 色彩空间**，单一深色主题，CSS 变量直接定义在 `:root`（无亮/暗切换）：
 
 ```css
 :root {
-  --background: oklch(1 0 0);          /* 纯白 */
-  --foreground: oklch(0.145 0 0);      /* 近黑 */
-  --primary: oklch(0.205 0 0);         /* 深色主色 */
-  /* ... */
-}
-
-.dark {
   --background: oklch(0.178 0.005 265); /* 深蓝灰 */
   --foreground: oklch(0.985 0 0);       /* 近白 */
   --primary: oklch(0.922 0 0);          /* 亮色主色 */
@@ -774,8 +806,6 @@ import { usePlayerStore } from '@/stores/playerStore'
   /* ... */
 }
 ```
-
-暗色模式使用 `.dark` CSS 类切换，Tailwind v4 通过 `@custom-variant dark (&:is(.dark *))` 支持。
 
 ### 字体
 

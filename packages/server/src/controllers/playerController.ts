@@ -1,12 +1,16 @@
 import { EVENTS, playerSeekSchema, playerSetModeSchema, playerSyncSchema } from '@music-together/shared'
+import type { TypedServer, TypedSocket } from '../middleware/types.js'
+import { createWithPermission } from '../middleware/withControl.js'
 import { roomRepo } from '../repositories/roomRepository.js'
 import * as playerService from '../services/playerService.js'
 import * as queueService from '../services/queueService.js'
 import * as roomService from '../services/roomService.js'
 import { estimateCurrentTime } from '../services/syncService.js'
-import { createWithPermission } from '../middleware/withControl.js'
 import { logger } from '../utils/logger.js'
-import type { TypedServer, TypedSocket } from '../middleware/types.js'
+
+/** Track consecutive rejected host reports per room to break deadlocks */
+const hostRejectCount = new Map<string, number>()
+const HOST_REJECT_FORCE_ACCEPT = 3
 
 export function registerPlayerController(io: TypedServer, socket: TypedSocket) {
   const withPermission = createWithPermission(io)
@@ -51,12 +55,7 @@ export function registerPlayerController(io: TypedServer, socket: TypedSocket) {
 
       const nextTrack = queueService.getNextTrack(ctx.roomId, ctx.room.playMode)
       if (!nextTrack) {
-        playerService.setCurrentTrack(ctx.roomId, null)
-        ctx.io.to(ctx.roomId).emit(EVENTS.PLAYER_PAUSE, {
-          playState: { isPlaying: false, currentTime: 0, serverTimestamp: Date.now(), serverTimeToExecute: Date.now() },
-        })
-        // 曲目清空，通知大厅刷新
-        roomService.broadcastRoomList(ctx.io)
+        playerService.stopPlayback(ctx.io, ctx.roomId)
         return
       }
 
@@ -107,15 +106,19 @@ export function registerPlayerController(io: TypedServer, socket: TypedSocket) {
   // NTP clock synchronisation – reply instantly with server time
   // ---------------------------------------------------------------------------
   socket.on(EVENTS.NTP_PING, (data) => {
-    // Store client-reported RTT for adaptive scheduling delay
-    if (data?.lastRttMs != null && data.lastRttMs > 0 && data.lastRttMs <= 10_000) {
-      roomRepo.setSocketRTT(socket.id, data.lastRttMs)
-    }
+    try {
+      // Store client-reported RTT for adaptive scheduling delay
+      if (data?.lastRttMs != null && data.lastRttMs > 0 && data.lastRttMs <= 10_000) {
+        roomRepo.setSocketRTT(socket.id, data.lastRttMs)
+      }
 
-    socket.emit(EVENTS.NTP_PONG, {
-      clientPingId: data?.clientPingId ?? 0,
-      serverTime: Date.now(),
-    })
+      socket.emit(EVENTS.NTP_PONG, {
+        clientPingId: data?.clientPingId ?? 0,
+        serverTime: Date.now(),
+      })
+    } catch (err) {
+      logger.error('NTP_PING handler error', err, { socketId: socket.id })
+    }
   })
 
   // Host reports real playback position (keeps server-side playState accurate
@@ -133,6 +136,27 @@ export function registerPlayerController(io: TypedServer, socket: TypedSocket) {
       // Only accept reports from the host
       if (room.hostId !== mapping.userId) return
 
+      // Reject stale reports from a sleeping host: if the reported position is
+      // far behind the server's estimate, the host likely just woke from sleep
+      // and hasn't drift-corrected yet.  Accepting this would poison the server
+      // state and cause all other clients to seek backwards.
+      if (room.playState.isPlaying) {
+        const estimated = estimateCurrentTime(mapping.roomId)
+        if (estimated - currentTime > 1) {
+          const count = (hostRejectCount.get(mapping.roomId) ?? 0) + 1
+          hostRejectCount.set(mapping.roomId, count)
+          if (count < HOST_REJECT_FORCE_ACCEPT) {
+            // Still within tolerance — reject this report
+            return
+          }
+          // Too many consecutive rejections — force accept to break deadlock.
+          // The server estimate has likely diverged from reality.
+          logger.warn(`Force-accepting host report after ${count} consecutive rejections`, { roomId: mapping.roomId })
+        }
+      }
+
+      // Report accepted — reset rejection counter
+      hostRejectCount.delete(mapping.roomId)
       room.playState = { ...room.playState, currentTime, serverTimestamp: Date.now() }
     } catch (err) {
       // Sync is best-effort; log but don't emit error to avoid noise

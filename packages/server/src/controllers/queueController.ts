@@ -5,7 +5,6 @@ import { createWithPermission } from '../middleware/withControl.js'
 import * as chatService from '../services/chatService.js'
 import * as playerService from '../services/playerService.js'
 import * as queueService from '../services/queueService.js'
-import * as roomService from '../services/roomService.js'
 import { logger } from '../utils/logger.js'
 
 export function registerQueueController(io: TypedServer, socket: TypedSocket) {
@@ -63,17 +62,7 @@ export function registerQueueController(io: TypedServer, socket: TypedSocket) {
         if (nextTrack) {
           await playerService.playTrackInRoom(io, ctx.roomId, nextTrack)
         } else {
-          playerService.setCurrentTrack(ctx.roomId, null)
-          io.to(ctx.roomId).emit(EVENTS.PLAYER_PAUSE, {
-            playState: { isPlaying: false, currentTime: 0, serverTimestamp: Date.now(), serverTimeToExecute: Date.now() },
-          })
-          // Broadcast full ROOM_STATE so clients clear the stale currentTrack
-          const updatedRoom = roomService.getRoom(ctx.roomId)
-          if (updatedRoom) {
-            io.to(ctx.roomId).emit(EVENTS.ROOM_STATE, roomService.toPublicRoomState(updatedRoom))
-          }
-          // 曲目清空，通知大厅刷新
-          roomService.broadcastRoomList(io)
+          playerService.stopPlayback(io, ctx.roomId)
         }
       }
 
@@ -99,18 +88,8 @@ export function registerQueueController(io: TypedServer, socket: TypedSocket) {
       queueService.clearQueue(ctx.roomId)
       io.to(ctx.roomId).emit(EVENTS.QUEUE_UPDATED, { queue: [] })
 
-      // Stop playback
-      playerService.setCurrentTrack(ctx.roomId, null)
-      io.to(ctx.roomId).emit(EVENTS.PLAYER_PAUSE, {
-        playState: { isPlaying: false, currentTime: 0, serverTimestamp: Date.now(), serverTimeToExecute: Date.now() },
-      })
-
-      // Broadcast full ROOM_STATE so clients clear the stale currentTrack
-      const updatedRoom = roomService.getRoom(ctx.roomId)
-      if (updatedRoom) {
-        io.to(ctx.roomId).emit(EVENTS.ROOM_STATE, roomService.toPublicRoomState(updatedRoom))
-      }
-      roomService.broadcastRoomList(io)
+      // Stop playback and notify clients
+      playerService.stopPlayback(io, ctx.roomId)
 
       logger.info(`Queue cleared`, { roomId: ctx.roomId })
     }),

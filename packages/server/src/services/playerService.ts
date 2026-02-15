@@ -1,4 +1,4 @@
-import type { PlayState, ScheduledPlayState, Track } from '@music-together/shared'
+import type { AudioQuality, MusicSource, PlayState, ScheduledPlayState, Track } from '@music-together/shared'
 import { EVENTS, ERROR_CODE, NTP } from '@music-together/shared'
 import { roomRepo } from '../repositories/roomRepository.js'
 import { musicProvider } from './musicProvider.js'
@@ -6,6 +6,7 @@ import * as queueService from './queueService.js'
 import * as authService from './authService.js'
 import { estimateCurrentTime } from './syncService.js'
 import { broadcastRoomList } from './roomLifecycleService.js'
+import { toPublicRoomState } from '../utils/roomUtils.js'
 import { config } from '../config.js'
 import { logger } from '../utils/logger.js'
 import type { RoomData } from '../repositories/types.js'
@@ -35,6 +36,43 @@ function scheduled(ps: PlayState, roomId: string, scheduleTime?: number): Schedu
   return { ...ps, serverTimeToExecute: scheduleTime ?? getScheduleTime(roomId) }
 }
 
+// ---------------------------------------------------------------------------
+// Audio quality fallback
+// ---------------------------------------------------------------------------
+
+/** Ordered fallback bitrates for each quality tier */
+const BITRATE_FALLBACKS: Record<AudioQuality, AudioQuality[]> = {
+  999: [320, 192, 128],
+  320: [192, 128],
+  192: [128],
+  128: [],
+}
+
+/**
+ * Try to get a stream URL at the requested bitrate. If it fails, try each
+ * lower tier in order until one succeeds or all options are exhausted.
+ */
+async function resolveStreamUrl(
+  source: MusicSource,
+  urlId: string,
+  bitrate: AudioQuality,
+  cookie?: string,
+): Promise<string | null> {
+  const url = await musicProvider.getStreamUrl(source, urlId, bitrate, cookie)
+  if (url) return url
+
+  // Fallback to lower bitrates
+  for (const fallback of BITRATE_FALLBACKS[bitrate]) {
+    const fallbackUrl = await musicProvider.getStreamUrl(source, urlId, fallback, cookie)
+    if (fallbackUrl) {
+      logger.info(`Bitrate fallback: ${bitrate} -> ${fallback} for ${source}/${urlId}`)
+      return fallbackUrl
+    }
+  }
+
+  return null
+}
+
 /**
  * Resolve stream URL / cover, set current track, and broadcast PLAYER_PLAY.
  * Returns true on success, false on failure.
@@ -54,7 +92,7 @@ export async function playTrackInRoom(
     try {
       // Get cookie from the room's pool for this platform (enables VIP access)
       const cookie = authService.getAnyCookie(resolved.source, roomId)
-      const url = await musicProvider.getStreamUrl(resolved.source, resolved.urlId, 320, cookie ?? undefined)
+      const url = await resolveStreamUrl(resolved.source, resolved.urlId, room.audioQuality, cookie ?? undefined)
 
       if (!url) {
         const isVip = resolved.vip
@@ -168,6 +206,23 @@ export function setCurrentTrack(roomId: string, track: Track | null): void {
       serverTimestamp: Date.now(),
     }
   }
+}
+
+/**
+ * Stop playback: clear current track, emit PLAYER_PAUSE with a stopped state,
+ * broadcast full ROOM_STATE so clients clear stale track, and notify lobby.
+ * Used when no next track is available (queue empty, track removed, queue cleared).
+ */
+export function stopPlayback(io: TypedServer, roomId: string): void {
+  setCurrentTrack(roomId, null)
+  io.to(roomId).emit(EVENTS.PLAYER_PAUSE, {
+    playState: { isPlaying: false, currentTime: 0, serverTimestamp: Date.now(), serverTimeToExecute: Date.now() },
+  })
+  const room = roomRepo.get(roomId)
+  if (room) {
+    io.to(roomId).emit(EVENTS.ROOM_STATE, toPublicRoomState(room))
+  }
+  broadcastRoomList(io)
 }
 
 // ---------------------------------------------------------------------------

@@ -79,7 +79,7 @@ export function ManualCookieDialog({
                 在左侧找到 <kbd className="bg-muted rounded px-1 py-0.5 text-xs">Cookies</kbd>，复制所有 Cookie
               </li>
             </ol>
-            <p className="mt-2 text-yellow-600 dark:text-yellow-500">
+            <p className="mt-2 text-yellow-500">
               Cookie 仅存储在服务端内存，不会持久化保存。服务端重启后需重新登录。
             </p>
           </div>

@@ -9,7 +9,7 @@ import { usePlayerStore } from '@/stores/playerStore'
 import { useRoomStore } from '@/stores/roomStore'
 import type { PlayMode, VoteAction } from '@music-together/shared'
 import { EVENTS, TIMING } from '@music-together/shared'
-import { ArrowRight, ListMusic, MessageSquare, Pause, Play, Repeat, Repeat1, Shuffle, SkipBack, SkipForward, Volume2, VolumeX } from 'lucide-react'
+import { ArrowRightToLine, ListMusic, MessageSquare, Pause, Play, Repeat, Repeat1, Shuffle, SkipBack, SkipForward, Volume2, VolumeX } from 'lucide-react'
 import { AnimatePresence, motion } from 'motion/react'
 import { memo, useContext, useEffect, useLayoutEffect, useRef, useState } from 'react'
 
@@ -19,7 +19,7 @@ const DESIGN_WIDTH = 300
 const PLAY_MODE_CYCLE: PlayMode[] = ['sequential', 'loop-all', 'loop-one', 'shuffle']
 
 const PLAY_MODE_CONFIG: Record<PlayMode, { icon: typeof Repeat; label: string }> = {
-  sequential: { icon: ArrowRight, label: '顺序播放' },
+  sequential: { icon: ArrowRightToLine, label: '顺序播放' },
   'loop-all': { icon: Repeat, label: '列表循环' },
   'loop-one': { icon: Repeat1, label: '单曲循环' },
   shuffle: { icon: Shuffle, label: '随机播放' },
@@ -200,37 +200,8 @@ export const PlayerControls = memo(function PlayerControls({ onPlay, onPause, on
 
         {/* 2. Controls row — left/right flex-1 keeps center truly centered */}
         <div className="flex w-full items-center">
-          {/* Left: play mode + volume */}
+          {/* Left: volume + play mode */}
           <div className="flex flex-1 items-center justify-start">
-            {/* Play mode toggle */}
-            <Tooltip delayDuration={300}>
-              <TooltipTrigger asChild>
-                <motion.div whileTap={{ scale: 0.9 }}>
-                  <Button
-                    variant="ghost"
-                    size="icon"
-                    className="h-8 w-8 text-white/70 hover:bg-white/10 dark:hover:bg-white/10"
-                    onClick={handlePlayModeToggle}
-                    disabled={!canSetMode && !canVote}
-                    aria-label={modeConfig.label}
-                  >
-                    <AnimatePresence mode="wait" initial={false}>
-                      <motion.div
-                        key={playMode}
-                        initial={{ scale: 0.6, opacity: 0 }}
-                        animate={{ scale: 1, opacity: 1 }}
-                        exit={{ scale: 0.6, opacity: 0 }}
-                        transition={{ duration: 0.15 }}
-                      >
-                        <ModeIcon className="h-4 w-4" />
-                      </motion.div>
-                    </AnimatePresence>
-                  </Button>
-                </motion.div>
-              </TooltipTrigger>
-              <TooltipContent>{modeConfig.label}</TooltipContent>
-            </Tooltip>
-
             <Tooltip delayDuration={300}>
               <TooltipTrigger asChild>
                 <div ref={volumeRef} className="group/volume relative" onPointerEnter={() => { isHoveringRef.current = true }} onPointerLeave={() => { isHoveringRef.current = false }}>
@@ -238,7 +209,7 @@ export const PlayerControls = memo(function PlayerControls({ onPlay, onPause, on
                     <Button
                       variant="ghost"
                       size="icon"
-                      className="h-8 w-8 text-white/70 hover:bg-white/10 dark:hover:bg-white/10"
+                      className="h-8 w-8 text-white/70 hover:bg-white/10"
                       onClick={handleVolumeClick}
                       aria-label={volume === 0 ? '取消静音' : '静音'}
                     >
@@ -274,6 +245,35 @@ export const PlayerControls = memo(function PlayerControls({ onPlay, onPause, on
               </TooltipTrigger>
               <TooltipContent side="bottom">{volumeOpen ? (volume === 0 ? '取消静音' : '静音') : '音量'}</TooltipContent>
             </Tooltip>
+
+            {/* Play mode toggle */}
+            <Tooltip delayDuration={300}>
+              <TooltipTrigger asChild>
+                <motion.div whileTap={{ scale: 0.9 }}>
+                  <Button
+                    variant="ghost"
+                    size="icon"
+                    className="h-8 w-8 text-white/70 hover:bg-white/10"
+                    onClick={handlePlayModeToggle}
+                    disabled={!canSetMode && !canVote}
+                    aria-label={modeConfig.label}
+                  >
+                    <AnimatePresence mode="wait" initial={false}>
+                      <motion.div
+                        key={playMode}
+                        initial={{ scale: 0.6, opacity: 0 }}
+                        animate={{ scale: 1, opacity: 1 }}
+                        exit={{ scale: 0.6, opacity: 0 }}
+                        transition={{ duration: 0.15 }}
+                      >
+                        <ModeIcon className="h-4 w-4" />
+                      </motion.div>
+                    </AnimatePresence>
+                  </Button>
+                </motion.div>
+              </TooltipTrigger>
+              <TooltipContent>{modeConfig.label}</TooltipContent>
+            </Tooltip>
           </div>
 
           {/* Center: prev + play/pause + next */}
@@ -284,7 +284,7 @@ export const PlayerControls = memo(function PlayerControls({ onPlay, onPause, on
                   <Button
                     variant="ghost"
                     size="icon"
-                    className="h-8 w-8 text-white/70 hover:bg-white/10 dark:hover:bg-white/10"
+                    className="h-8 w-8 text-white/70 hover:bg-white/10"
                     disabled={disabled || skipCooldown}
                     onClick={() => handleSkip(onPrev, 'prev')}
                     aria-label="上一首"
@@ -302,7 +302,7 @@ export const PlayerControls = memo(function PlayerControls({ onPlay, onPause, on
                   <Button
                     variant="ghost"
                     size="icon"
-                    className="h-12 w-12 rounded-full bg-white/20 text-white/90 hover:bg-white/30 hover:text-white dark:hover:bg-white/30 dark:hover:text-white"
+                    className="h-12 w-12 rounded-full bg-white/20 text-white/90 hover:bg-white/30 hover:text-white"
                     disabled={disabled || playCooldown}
                     onClick={handlePlayPause}
                     aria-label={isPlaying ? '暂停' : '播放'}
@@ -324,7 +324,7 @@ export const PlayerControls = memo(function PlayerControls({ onPlay, onPause, on
                   <Button
                     variant="ghost"
                     size="icon"
-                    className="h-8 w-8 text-white/70 hover:bg-white/10 dark:hover:bg-white/10"
+                    className="h-8 w-8 text-white/70 hover:bg-white/10"
                     disabled={disabled || skipCooldown}
                     onClick={() => handleSkip(onNext, 'next')}
                     aria-label="下一首"
@@ -345,7 +345,7 @@ export const PlayerControls = memo(function PlayerControls({ onPlay, onPause, on
                   <Button
                     variant="ghost"
                     size="icon"
-                    className="relative h-8 w-8 text-white/70 hover:bg-white/10 dark:hover:bg-white/10"
+                    className="relative h-8 w-8 text-white/70 hover:bg-white/10"
                     onClick={onOpenChat}
                     aria-label="聊天"
                   >
@@ -367,7 +367,7 @@ export const PlayerControls = memo(function PlayerControls({ onPlay, onPause, on
                   <Button
                     variant="ghost"
                     size="icon"
-                    className="relative h-8 w-8 text-white/70 hover:bg-white/10 dark:hover:bg-white/10"
+                    className="relative h-8 w-8 text-white/70 hover:bg-white/10"
                     onClick={onOpenQueue}
                     aria-label="播放列表"
                   >

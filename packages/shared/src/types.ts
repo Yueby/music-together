@@ -26,6 +26,9 @@ export type UserRole = 'host' | 'admin' | 'member'
 
 export type PlayMode = 'sequential' | 'loop-all' | 'loop-one' | 'shuffle'
 
+/** 音频质量档位 (kbps)：标准 / 较高 / HQ / 无损 */
+export type AudioQuality = 128 | 192 | 320 | 999
+
 export interface Track {
   id: string
   title: string
@@ -51,6 +54,7 @@ export interface RoomState {
   name: string
   hostId: string
   hasPassword: boolean
+  audioQuality: AudioQuality
   users: User[]
   queue: Track[]
   currentTrack: Track | null

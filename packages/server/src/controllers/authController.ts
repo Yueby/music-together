@@ -95,14 +95,14 @@ export function registerAuthController(io: TypedServer, socket: TypedSocket) {
 
       // Fast path: if this exact cookie is already in the room's pool, skip validation.
       // This avoids redundant Netease API calls on every auto-resend / room rejoin.
-      if (roomId && authService.hasCookie(roomId, platform, cookie)) {
+      if (mapping && roomId && authService.hasCookie(roomId, platform, cookie)) {
         socket.emit(EVENTS.AUTH_SET_COOKIE_RESULT, {
           success: true,
           message: 'Cookie 已生效',
           platform,
           cookie,
         })
-        broadcastAuthStatus(io, socket, mapping!)
+        broadcastAuthStatus(io, socket, mapping)
         return
       }
 
@@ -117,8 +117,8 @@ export function registerAuthController(io: TypedServer, socket: TypedSocket) {
           })
           return
         }
-        if (mapping) {
-          authService.addCookie(roomId!, platform, mapping.userId, cookie, userInfo.nickname, userInfo.vipType)
+        if (mapping && mapping.roomId) {
+          authService.addCookie(mapping.roomId, platform, mapping.userId, cookie, userInfo.nickname, userInfo.vipType)
         }
         socket.emit(EVENTS.AUTH_SET_COOKIE_RESULT, {
           success: true,
@@ -128,8 +128,8 @@ export function registerAuthController(io: TypedServer, socket: TypedSocket) {
         })
       } else {
         // For QQ/Kugou we can't easily validate — just store it
-        if (mapping) {
-          authService.addCookie(roomId!, platform, mapping.userId, cookie, '手动登录', 0)
+        if (mapping && mapping.roomId) {
+          authService.addCookie(mapping.roomId, platform, mapping.userId, cookie, '手动登录', 0)
         }
         socket.emit(EVENTS.AUTH_SET_COOKIE_RESULT, {
           success: true,
@@ -156,11 +156,15 @@ export function registerAuthController(io: TypedServer, socket: TypedSocket) {
   // -------------------------------------------------------------------------
 
   socket.on(EVENTS.AUTH_LOGOUT, (data) => {
-    if (!data?.platform) return
-    const mapping = getSocketMapping(socket.id)
-    if (mapping) {
-      authService.removeCookie(mapping.roomId, data.platform, mapping.userId)
-      broadcastAuthStatus(io, socket, mapping)
+    try {
+      if (!data?.platform) return
+      const mapping = getSocketMapping(socket.id)
+      if (mapping) {
+        authService.removeCookie(mapping.roomId, data.platform, mapping.userId)
+        broadcastAuthStatus(io, socket, mapping)
+      }
+    } catch (err) {
+      logger.error('AUTH_LOGOUT handler error', err, { socketId: socket.id })
     }
   })
 
@@ -169,9 +173,13 @@ export function registerAuthController(io: TypedServer, socket: TypedSocket) {
   // -------------------------------------------------------------------------
 
   socket.on(EVENTS.AUTH_GET_STATUS, () => {
-    const mapping = getSocketMapping(socket.id)
-    if (mapping) {
-      broadcastAuthStatus(io, socket, mapping)
+    try {
+      const mapping = getSocketMapping(socket.id)
+      if (mapping) {
+        broadcastAuthStatus(io, socket, mapping)
+      }
+    } catch (err) {
+      logger.error('AUTH_GET_STATUS handler error', err, { socketId: socket.id })
     }
   })
 
