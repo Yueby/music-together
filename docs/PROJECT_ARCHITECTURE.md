@@ -95,9 +95,10 @@ src/
 │   │   ├── AudioPlayer.tsx     #     主播放器布局（桌面：左右分栏；移动：双模式封面/歌词切换）
 │   │   ├── LyricDisplay.tsx    #     AMLL 歌词渲染（LRC 正则支持 [mm:ss] / [mm:ss.x] / [mm:ss.xx] / [mm:ss.xxx]）
 │   │   ├── NowPlaying.tsx      #     当前曲目展示（支持 compact 小封面横排模式 + layoutId 共享动画）
-│   │   └── PlayerControls.tsx  #     进度条+播放控制+音量+播放模式切换
+│   │   ├── SongInfoBar.tsx     #     歌曲信息栏（标题/艺术家 + 音量/聊天按钮，竖屏模式自适应缩放）
+│   │   └── PlayerControls.tsx  #     进度条+播放控制+播放模式切换
 │   ├── Room/
-│   │   └── RoomHeader.tsx      #     房间头部（房间名/人数/连接状态/操作按钮）
+│   │   └── RoomHeader.tsx      #     房间头部（房间名/人数/连接状态；移动端 DropdownMenu 收纳设置/离开等操作）
 │   ├── Vote/
 │   │   └── VoteBanner.tsx      #     投票横幅（进行中的投票显示 + 投票按钮）
 │   ├── InteractionGate.tsx     #   浏览器交互解锁（点击后才能播放音频）
@@ -388,7 +389,7 @@ Host（房主）**自适应频率**上报当前播放位置到服务端：新曲
 
 #### 播放模式
 
-房间支持 4 种播放模式（`PlayMode`），由 `room.playMode` 字段控制，默认 `sequential`：
+房间支持 4 种播放模式（`PlayMode`），由 `room.playMode` 字段控制，默认 `loop-all`：
 
 | 模式 | 说明 |
 |------|------|
@@ -546,7 +547,7 @@ Host（房主）**自适应频率**上报当前播放位置到服务端：新曲
 | `roomStore` | 房间状态（room、currentUser 自动推导自 room.users） | 无 |
 | `chatStore` | 聊天（消息列表、未读数、开关状态） | 无 |
 | `lobbyStore` | 大厅（房间列表、加载状态） | 无 |
-| `settingsStore` | 设置（歌词对齐/动画、背景参数） | 全部持久化到 localStorage |
+| `settingsStore` | 设置（歌词对齐/动画/字体/翻译字体大小、背景参数） | 全部持久化到 localStorage |
 
 使用方式：通过选择器订阅特定字段，避免不必要的渲染：
 
@@ -617,7 +618,7 @@ const { socket, isConnected } = useSocketContext()
 
 #### 组件组合模式
 
-`AudioPlayer` 组合 `NowPlaying` + `PlayerControls` + `LyricDisplay`，各组件独立负责自己的渲染逻辑。`RoomPage` 组合所有功能区域和覆盖层弹窗。
+`AudioPlayer` 组合 `NowPlaying` + `SongInfoBar` + `PlayerControls` + `LyricDisplay`，各组件独立负责自己的渲染逻辑。`RoomPage` 组合所有功能区域和覆盖层弹窗。
 
 #### 移动端双模式播放页面
 
@@ -635,7 +636,7 @@ const { socket, isConnected } = useSocketContext()
 - `framer-motion` 的 `layoutId`（"cover-art" / "song-info"）实现封面和文字在两种布局间的共享布局动画（0.45s Apple 风格贝塞尔缓动）
 - `LayoutGroup` 包裹移动端内容区，确保跨组件 `layoutId` 动画生效
 - `AnimatePresence` + `motion.div` 实现歌词区域的 fade+slide-up 入场/退场
-- 新曲播放时自动折叠回默认模式（`useEffect` 监听 `currentTrack.id`）
+- 歌词模式状态在切歌时保持不变，用户手动点击封面切换
 - 桌面端保持左右分栏布局不受影响
 
 ### 后端模式
