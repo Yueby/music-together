@@ -151,7 +151,12 @@ export default function RoomPage() {
     if (isLeavingRef.current) return
     if (!room && isConnected && !joiningRef.current && roomId) {
       joiningRef.current = true
-      const nickname = storage.getNickname() || 'Guest'
+      const nickname = storage.getNickname()
+      if (!nickname) {
+        joiningRef.current = false
+        setGateOpen(false) // Re-show InteractionGate so user can set nickname
+        return
+      }
       socket.emit(EVENTS.ROOM_JOIN, {
         roomId,
         nickname,
@@ -222,7 +227,8 @@ export default function RoomPage() {
 
   const handlePasswordSubmit = useCallback((password: string) => {
     if (!roomId) return
-    const nickname = storage.getNickname() || 'Guest'
+    const nickname = storage.getNickname()
+    if (!nickname) return
     setPasswordLoading(true)
     setPasswordError(null)
     socket.emit(EVENTS.ROOM_JOIN, { roomId, nickname, password, userId: storage.getUserId() })
