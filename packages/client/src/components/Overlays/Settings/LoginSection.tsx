@@ -40,27 +40,27 @@ export function LoginSection({
   const isMyLoggedIn = myStatus?.loggedIn ?? false
 
   return (
-    <div className="flex items-center justify-between gap-3 rounded-lg border p-3">
+    <div className="flex items-center justify-between gap-2 overflow-hidden rounded-lg border p-3">
       <div className="min-w-0 flex-1 space-y-0.5">
-        <div className="flex items-center gap-2">
+        <div className="flex min-w-0 items-center gap-2">
           {isMyLoggedIn && myStatus?.nickname ? (
-            <span className="text-sm font-medium">{myStatus.nickname}</span>
+            <span className="truncate text-sm font-medium">{myStatus.nickname}</span>
           ) : isVerifying ? (
-            <span className="text-muted-foreground flex items-center gap-1.5 text-sm">
+            <span className="text-muted-foreground flex shrink-0 items-center gap-1.5 text-sm">
               <Loader2 className="h-3 w-3 animate-spin" />
               验证登录中…
             </span>
           ) : (
-            <span className="text-muted-foreground text-sm">未登录</span>
+            <span className="text-muted-foreground shrink-0 text-sm">未登录</span>
           )}
           {hasVip && (
-            <Badge variant="secondary" className="gap-1 text-xs">
+            <Badge variant="secondary" className="shrink-0 gap-1 text-xs">
               <Crown className="h-3 w-3" />
               {VIP_LABELS[maxVipType] || 'VIP'}
             </Badge>
           )}
         </div>
-        <p className="text-muted-foreground text-xs">
+        <p className="text-muted-foreground truncate text-xs">
           {loggedInCount > 0
             ? `房间内 ${loggedInCount} 人已登录${hasVip ? '，VIP 可用' : ''}`
             : '房间暂无人登录此平台'}
@@ -71,20 +71,17 @@ export function LoginSection({
         {!isMyLoggedIn && !isVerifying ? (
           <>
             {(platform === 'netease' || platform === 'kugou') && (
-              <Button variant="outline" size="sm" onClick={onQrLogin} className="gap-1">
+              <Button variant="outline" size="icon" className="h-8 w-8" onClick={onQrLogin} title="扫码登录">
                 <ScanLine className="h-3.5 w-3.5" />
-                扫码
               </Button>
             )}
-            <Button variant="outline" size="sm" onClick={onCookieLogin} className="gap-1">
+            <Button variant="outline" size="icon" className="h-8 w-8" onClick={onCookieLogin} title="Cookie 登录">
               <KeyRound className="h-3.5 w-3.5" />
-              Cookie
             </Button>
           </>
         ) : isMyLoggedIn ? (
-          <Button variant="ghost" size="sm" onClick={onLogout} className="text-destructive gap-1">
+          <Button variant="ghost" size="icon" className="text-destructive h-8 w-8" onClick={onLogout} title="登出">
             <LogOut className="h-3.5 w-3.5" />
-            登出
           </Button>
         ) : null}
       </div>

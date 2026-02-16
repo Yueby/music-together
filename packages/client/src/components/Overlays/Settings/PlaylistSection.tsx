@@ -66,7 +66,7 @@ export function PlaylistSection({
   )
 
   return (
-    <div className="space-y-4">
+    <div className="min-w-0 space-y-4 overflow-hidden">
       {/* Manual input */}
       <div className="space-y-2">
         <p className="text-muted-foreground text-xs">输入歌单链接或 ID 来加载歌单</p>
@@ -117,7 +117,7 @@ export function PlaylistSection({
               {playlists.map((pl) => (
                 <button
                   key={pl.id}
-                  className="hover:bg-accent flex w-full items-center gap-3 rounded-lg p-2 text-left transition-colors"
+                  className="hover:bg-accent flex w-full min-w-0 items-center gap-3 overflow-hidden rounded-lg p-2 text-left transition-colors"
                   onClick={() => onSelectPlaylist(pl)}
                 >
                   {pl.cover ? (
@@ -134,7 +134,7 @@ export function PlaylistSection({
                   )}
                   <div className="min-w-0 flex-1">
                     <p className="truncate text-sm font-medium">{pl.name}</p>
-                    <p className="text-muted-foreground text-xs">
+                    <p className="text-muted-foreground truncate text-xs">
                       {pl.trackCount} 首{pl.creator ? ` · ${pl.creator}` : ''}
                     </p>
                   </div>

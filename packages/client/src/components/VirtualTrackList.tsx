@@ -113,7 +113,7 @@ export const VirtualTrackList = forwardRef<VirtualTrackListRef, VirtualTrackList
     return (
       <div
         ref={scrollRef}
-        className={cn('min-h-0 flex-1 overflow-y-auto rounded-md border', className)}
+        className={cn('min-h-0 min-w-0 flex-1 overflow-x-hidden overflow-y-auto rounded-md border', className)}
       >
         <div
           style={{

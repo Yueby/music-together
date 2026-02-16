@@ -101,7 +101,7 @@ export function PlaylistDetail({
   }
 
   return (
-    <div className="flex h-full min-h-0 flex-col">
+    <div className="flex h-full min-h-0 min-w-0 flex-col overflow-hidden">
       {/* Row 1: Back + Title — pr-8 reserves space for dialog close button */}
       <div className="flex shrink-0 items-center gap-2 pr-8">
         <Button variant="ghost" size="icon" onClick={onBack} className="h-8 w-8 shrink-0">

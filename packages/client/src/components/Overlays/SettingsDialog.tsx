@@ -157,7 +157,7 @@ export function SettingsDialog({
 
           {/* Content area — accounts tab uses its own scroll management for virtual list */}
           {tab === 'accounts' ? (
-            <div className="flex min-h-0 flex-1 flex-col p-4 sm:p-6">
+            <div className="flex min-h-0 min-w-0 flex-1 flex-col overflow-hidden p-4 sm:p-6">
               <PlatformHub />
             </div>
           ) : (

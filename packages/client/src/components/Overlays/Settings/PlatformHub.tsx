@@ -1,4 +1,3 @@
-import { ScrollArea } from '@/components/ui/scroll-area'
 import { Separator } from '@/components/ui/separator'
 import { Tabs, TabsContent, TabsList, TabsTrigger } from '@/components/ui/tabs'
 import { useAuth } from '@/hooks/useAuth'
@@ -111,8 +110,8 @@ export function PlatformHub() {
   // Detail view — flex-1 min-h-0 so PlaylistDetail gets proper height for virtual scroll
   if (viewState.type === 'detail') {
     return (
-      <div className="flex h-full min-h-0 flex-col">
-        <div className="flex min-h-0 flex-1 flex-col">
+      <div className="flex h-full min-h-0 min-w-0 flex-col overflow-hidden">
+        <div className="flex min-h-0 min-w-0 flex-1 flex-col overflow-hidden">
           <PlaylistDetail
             playlist={viewState.playlist}
             tracks={playlist.playlistTracks}
@@ -132,7 +131,7 @@ export function PlatformHub() {
 
   // List view — wrapped in ScrollArea since login + playlists may overflow
   return (
-    <div className="flex h-full min-h-0 flex-col">
+    <div className="flex h-full min-h-0 min-w-0 flex-col overflow-hidden">
       <div className="shrink-0">
         <h3 className="pr-8 text-base font-semibold">平台账号 & 歌单</h3>
         <p className="text-muted-foreground mb-3 text-xs">
@@ -140,10 +139,11 @@ export function PlatformHub() {
         </p>
       </div>
 
-      <ScrollArea className="min-h-0 flex-1">
+      <div className="min-h-0 min-w-0 flex-1 overflow-y-auto overflow-x-hidden">
         <Tabs
           value={activePlatform}
           onValueChange={(v) => setActivePlatform(v as MusicSource)}
+          className="overflow-hidden"
         >
           <TabsList className="grid w-full grid-cols-3">
             {platforms.map((p) => (
@@ -181,7 +181,7 @@ export function PlatformHub() {
             </TabsContent>
           ))}
         </Tabs>
-      </ScrollArea>
+      </div>
 
       {/* QR Dialog */}
       <QrLoginDialog
