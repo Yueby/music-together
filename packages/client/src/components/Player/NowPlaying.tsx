@@ -1,3 +1,4 @@
+import { MarqueeText } from '@/components/ui/marquee-text'
 import { cn } from '@/lib/utils'
 import { usePlayerStore } from '@/stores/playerStore'
 import { Disc3 } from 'lucide-react'
@@ -46,22 +47,26 @@ export function NowPlaying({ compact = false, onCoverClick }: NowPlayingProps) {
           {coverContent}
         </motion.div>
         <motion.div layoutId="song-info" transition={LAYOUT_TRANSITION} className="min-w-0 flex-1">
-          <motion.p
+          <motion.div
             initial={{ fontSize: 20 }}
             animate={{ fontSize: 18 }}
             transition={SPRING}
-            className="truncate font-semibold leading-tight text-white/90"
+            className="font-semibold leading-tight text-white/90"
           >
-            {currentTrack?.title ?? '暂无歌曲'}
-          </motion.p>
-          <motion.p
+            <MarqueeText>
+              {currentTrack?.title ?? '暂无歌曲'}
+            </MarqueeText>
+          </motion.div>
+          <motion.div
             initial={{ fontSize: 14 }}
             animate={{ fontSize: 16 }}
             transition={SPRING}
-            className="truncate text-white/50"
+            className="text-white/50"
           >
-            {currentTrack ? currentTrack.artist.join(' / ') : '...'}
-          </motion.p>
+            <MarqueeText>
+              {currentTrack ? currentTrack.artist.join(' / ') : '...'}
+            </MarqueeText>
+          </motion.div>
         </motion.div>
       </div>
     )

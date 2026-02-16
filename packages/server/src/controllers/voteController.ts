@@ -1,5 +1,5 @@
 import { EVENTS, ERROR_CODE, TIMING, defineAbilityFor, voteStartSchema, voteCastSchema, playerSetModeSchema } from '@music-together/shared'
-import type { Actions, PlayMode, VoteAction } from '@music-together/shared'
+import type { Actions, Subjects, PlayMode, VoteAction } from '@music-together/shared'
 import { createWithRoom } from '../middleware/withRoom.js'
 import { roomRepo } from '../repositories/roomRepository.js'
 import * as voteService from '../services/voteService.js'
@@ -45,6 +45,37 @@ async function executeAction(io: TypedServer, roomId: string, action: VoteAction
       logger.info(`Play mode set to ${parsed.data.mode} via vote`, { roomId })
       break
     }
+    case 'play-track': {
+      const trackId = payload?.trackId
+      if (typeof trackId !== 'string') break
+      const room = roomRepo.get(roomId)
+      if (!room) break
+      const track = room.queue.find(t => t.id === trackId)
+      if (track) {
+        await playerService.playTrackInRoom(io, roomId, track)
+        logger.info(`Play-track executed for track ${trackId}`, { roomId })
+      }
+      break
+    }
+    case 'remove-track': {
+      const trackId = payload?.trackId
+      if (typeof trackId !== 'string') break
+      const room = roomRepo.get(roomId)
+      if (!room) break
+      const isCurrentTrack = room.currentTrack?.id === trackId
+      queueService.removeTrack(roomId, trackId)
+      io.to(roomId).emit(EVENTS.QUEUE_UPDATED, { queue: room.queue })
+      if (isCurrentTrack) {
+        const nextTrack = queueService.getNextTrack(roomId)
+        if (nextTrack) {
+          await playerService.playTrackInRoom(io, roomId, nextTrack)
+        } else {
+          playerService.stopPlayback(io, roomId)
+        }
+      }
+      logger.info(`Remove-track executed for track ${trackId}`, { roomId })
+      break
+    }
   }
 }
 
@@ -64,10 +95,19 @@ export function registerVoteController(io: TypedServer, socket: TypedSocket) {
 
       // Check if user has direct permission (host/admin don't need to vote).
       // VoteAction includes 'resume' which is not in CASL Actions — cast is intentional.
+      // Some vote actions map to a different CASL action for permission checks
+      // (e.g. 'play-track' requires the same 'play' permission as normal playback).
       // Safety net: if the client mistakenly routes through VOTE_START (e.g. due to
       // client-server role desync), execute the action directly instead of returning an error.
+      const PERM_MAP: Partial<Record<VoteAction, { action: string; subject: string }>> = {
+        'play-track': { action: 'play', subject: 'Player' },
+        'remove-track': { action: 'remove', subject: 'Queue' },
+      }
       const ability = defineAbilityFor(ctx.user.role)
-      if (ability.can(action as Actions, 'Player')) {
+      const perm = PERM_MAP[action]
+      const permAction = perm?.action ?? action
+      const permSubject = perm?.subject ?? 'Player'
+      if (ability.can(permAction as Actions, permSubject as Subjects)) {
         await executeAction(io, ctx.roomId, action, payload)
         logger.info(`Direct-executed ${action} for privileged user ${ctx.user.nickname} (role: ${ctx.user.role})`, { roomId: ctx.roomId })
         return

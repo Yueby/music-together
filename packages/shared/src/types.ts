@@ -92,7 +92,7 @@ export interface ChatMessage {
   type: 'user' | 'system'
 }
 
-export type VoteAction = 'pause' | 'resume' | 'next' | 'prev' | 'set-mode'
+export type VoteAction = 'pause' | 'resume' | 'next' | 'prev' | 'set-mode' | 'play-track' | 'remove-track'
 
 export interface VoteState {
   id: string

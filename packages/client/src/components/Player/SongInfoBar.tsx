@@ -2,6 +2,7 @@ import { Button } from '@/components/ui/button'
 import { Popover, PopoverContent, PopoverTrigger } from '@/components/ui/popover'
 import { Slider } from '@/components/ui/slider'
 import { Tooltip, TooltipContent, TooltipTrigger } from '@/components/ui/tooltip'
+import { MarqueeText } from '@/components/ui/marquee-text'
 import { usePlayerStore } from '@/stores/playerStore'
 import { MessageSquare, Volume2, VolumeX } from 'lucide-react'
 import { motion } from 'motion/react'
@@ -55,22 +56,26 @@ export const SongInfoBar = memo(function SongInfoBar({ onOpenChat, chatUnreadCou
       <div ref={innerRef} className="flex w-full items-end gap-2" style={{ width: DESIGN_WIDTH }}>
         {/* Left: song title + artist — layoutId pairs with NowPlaying compact for shared animation */}
         <motion.div layoutId="song-info" transition={LAYOUT_TRANSITION} className="min-w-0 flex-1">
-          <motion.p
+          <motion.div
             initial={{ fontSize: 18 }}
             animate={{ fontSize: 20 }}
             transition={SPRING}
-            className="truncate font-bold leading-tight text-white/90"
+            className="font-bold leading-tight text-white/90"
           >
-            {currentTrack?.title ?? '暂无歌曲'}
-          </motion.p>
-          <motion.p
+            <MarqueeText>
+              {currentTrack?.title ?? '暂无歌曲'}
+            </MarqueeText>
+          </motion.div>
+          <motion.div
             initial={{ fontSize: 16 }}
             animate={{ fontSize: 14 }}
             transition={SPRING}
-            className="truncate text-white/50"
+            className="text-white/50"
           >
-            {currentTrack ? currentTrack.artist.join(' / ') : '点击搜索添加歌曲到队列'}
-          </motion.p>
+            <MarqueeText>
+              {currentTrack ? currentTrack.artist.join(' / ') : '点击搜索添加歌曲到队列'}
+            </MarqueeText>
+          </motion.div>
         </motion.div>
 
         {/* Right-bottom: volume + chat buttons (always visible, aligned to bottom) */}

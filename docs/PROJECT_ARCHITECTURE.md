@@ -16,7 +16,7 @@
 | 实时聊天 | 房间内文字聊天 |
 | 权限控制 | RBAC 三级权限（host > admin > member）基于 @casl/ability |
 | 播放模式 | 顺序播放、列表循环、单曲循环、随机播放（Host/Admin 直接切换，Member 投票切换） |
-| 投票系统 | 普通成员通过投票控制播放（暂停/恢复/切歌/切换播放模式） |
+| 投票系统 | 普通成员通过投票控制播放（暂停/恢复/切歌/切换播放模式/指定播放/移除歌曲） |
 | VIP 认证 | 平台账号登录（网易云/QQ/酷狗），房间级 Cookie 池 |
 | 歌词展示 | Apple Music 风格歌词动画 (AMLL) |
 
@@ -117,6 +117,7 @@ src/
 │       ├── scroll-area.tsx
 │       ├── select.tsx
 │       ├── separator.tsx
+│       ├── marquee-text.tsx
 │       ├── responsive-dialog.tsx
 │       ├── sheet.tsx
 │       ├── skeleton.tsx
@@ -182,7 +183,7 @@ src/
 │   ├── playerController.ts     #   播放控制（play/pause/seek/next/prev/sync/set_mode）+ NTP ping/pong
 │   ├── queueController.ts      #   队列管理（add/remove/reorder/clear）
 │   ├── chatController.ts       #   聊天消息（含限流反馈）
-│   ├── voteController.ts       #   投票系统（发起/投票/超时/执行，支持 set-mode 投票）
+│   ├── voteController.ts       #   投票系统（发起/投票/超时/执行，支持 set-mode / play-track / remove-track 投票）
 │   └── authController.ts       #   平台认证（QR 登录/Cookie 管理/状态查询）
 │
 ├── services/                   # 服务层：业务逻辑
@@ -224,7 +225,7 @@ src/
 ```
 src/
 ├── index.ts           # 统一导出（re-export 所有模块）
-├── types.ts           # 核心类型：ERROR_CODE, Track, RoomState, PlayState, ScheduledPlayState, PlayMode, AudioQuality, User, ChatMessage, VoteAction, VoteState, RoomListItem
+├── types.ts           # 核心类型：ERROR_CODE, Track, RoomState, PlayState, ScheduledPlayState, PlayMode, AudioQuality, User, ChatMessage, VoteAction (incl. play-track, remove-track), VoteState, RoomListItem
 ├── events.ts          # 事件常量：EVENTS 对象（room:*, player:*, queue:*, chat:*, auth:*, ntp:*）
 ├── socket-types.ts    # Socket.IO 类型：ServerToClientEvents, ClientToServerEvents
 ├── constants.ts       # 业务常量：LIMITS（长度/数量限制）, TIMING（同步间隔/宽限期）, NTP（时钟同步参数）
@@ -400,6 +401,8 @@ Host（房主）**自适应频率**上报当前播放位置到服务端：新曲
 
 - **Host/Admin** 直接 emit `player:set_mode`，服务端更新 `room.playMode` 并广播 `ROOM_STATE`
 - **Member** 通过 `vote:start { action: 'set-mode', payload: { mode } }` 投票切换
+- **指定播放**：播放列表工具栏提供 Play 按钮，Host/Admin 直接 emit `player:play`；Member 通过 `vote:start { action: 'play-track', payload: { trackId, trackTitle } }` 投票播放
+- **投票移除**：播放列表工具栏的删除按钮对所有用户可见，Host/Admin 直接 emit `queue:remove`；Member 通过 `vote:start { action: 'remove-track', payload: { trackId, trackTitle } }` 投票移除
 - 服务端 `queueService.getNextTrack(roomId, playMode)` 根据模式返回下一首；`getPreviousTrack` 在 `loop-all` 模式下支持尾→首回绕
 - 客户端 `PlayerControls` 提供循环切换按钮，带 `AnimatePresence` 图标过渡动画
 
@@ -439,7 +442,7 @@ Host（房主）**自适应频率**上报当前播放位置到服务端：新曲
 8. **`currentUser` 自动推导**：`roomStore` 中 `currentUser` 始终从 `room.users` 自动推导（`deriveCurrentUser`），`setRoom` / `addUser` / `removeUser` / `updateRoom` 等 action 内部自动同步，不暴露 `setCurrentUser` 以避免脱节风险
 9. **断线时钟重置**：`resetAllRoomState()` 除重置 Zustand stores 外，还调用 `resetClockSync()` 清空 NTP 采样，确保重连后使用全新的时钟校准数据
 10. **Socket 断开竞态防护**：页面刷新时新旧 socket 的 join/disconnect 到达顺序不确定，`leaveRoom` 通过 `roomRepo.hasOtherSocketForUser()` 检测同一用户是否有更新的 socket 连接，避免旧 socket disconnect 误删活跃用户
-11. **投票安全网**：`voteController` 接收 `VOTE_START` 时，若检测到用户已有直接操作权限（host/admin），不再返回错误，而是直接执行该操作（`executeAction`），防止客户端-服务端角色不同步时操作失效
+11. **投票安全网**：`voteController` 接收 `VOTE_START` 时，若检测到用户已有直接操作权限（host/admin），不再返回错误，而是直接执行该操作（`executeAction`），防止客户端-服务端角色不同步时操作失效。部分 VoteAction 通过 `PERM_MAP` 映射到不同的 CASL action+subject（如 `'play-track'` → `('play', 'Player')`，`'remove-track'` → `('remove', 'Queue')`）
 12. **切歌防抖**：500ms (`PLAYER_NEXT_DEBOUNCE_MS`) 内不重复触发下一首
 13. **停止播放统一处理**：`playerService.stopPlayback()` 统一处理"队列为空/清空"场景——清除 currentTrack、emit PLAYER_PAUSE、广播 ROOM_STATE、刷新大厅列表，避免 controller 中重复逻辑
 14. **大厅重连刷新**：`useLobby` 监听 socket `connect` 事件，断线重连后自动重新拉取房间列表
@@ -856,14 +859,30 @@ import { Play, Pause, SkipForward, Volume2 } from 'lucide-react'
 
 - **motion (Framer Motion)**：组件进入/退出动画、列表动画
 - **tw-animate-css**：Tailwind 动画预设类
-- **自定义动画**：`float` 关键帧（6s 缓动上下浮动）
+- **自定义动画**：`float` 关键帧（6s 缓动上下浮动）、`marquee` 关键帧（文本溢出自动滚动）
 
 ```css
 @keyframes float {
   0%, 100% { transform: translateY(0); }
   50% { transform: translateY(-6px); }
 }
+
+@keyframes marquee {
+  0%, 15%   { transform: translateX(0); }
+  45%, 55%  { transform: translateX(var(--marquee-distance)); }
+  85%, 100% { transform: translateX(0); }
+}
 ```
+
+#### MarqueeText 组件
+
+`marquee-text.tsx` 通用文本溢出自动滚动组件，用于播放列表项、SongInfoBar、NowPlaying compact 模式等场景：
+
+- 使用 `ResizeObserver` 检测文本是否溢出容器（`scrollWidth > clientWidth`）
+- 溢出时通过 CSS `translateX` 动画实现 pause-scroll-pause 循环（GPU 加速）
+- 动画时长根据溢出距离动态计算（`Math.max(5, 4 + overflow / 30)`），长文本滚动更慢
+- 未溢出时无动画，等同普通文本
+- 遵循 `prefers-reduced-motion` 系统偏好（已有全局 `animation-duration: 0.01ms` 降级）
 
 ### 滚动条
 
