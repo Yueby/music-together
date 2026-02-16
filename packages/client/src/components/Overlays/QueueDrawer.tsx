@@ -11,12 +11,16 @@ import { Tooltip, TooltipContent, TooltipTrigger } from '@/components/ui/tooltip
 import { cn } from '@/lib/utils'
 import { usePlayerStore } from '@/stores/playerStore'
 import { useRoomStore } from '@/stores/roomStore'
+import { useSocketContext } from '@/providers/SocketProvider'
 import type { Track } from '@music-together/shared'
+import { EVENTS } from '@music-together/shared'
 import { useIsMobile } from '@/hooks/useIsMobile'
 import { useCallback, useContext, useEffect, useRef, useState } from 'react'
 import { AbilityContext } from '@/providers/AbilityProvider'
-import { ChevronDown, ChevronUp, ListX, Music, Trash2, User, X } from 'lucide-react'
+import { ChevronDown, ChevronUp, ListX, Music, Play, Trash2, User, X } from 'lucide-react'
 import { AnimatePresence, motion } from 'motion/react'
+import { toast } from 'sonner'
+import { MarqueeText } from '@/components/ui/marquee-text'
 import type { MusicSource } from '@music-together/shared'
 
 const EMPTY_QUEUE: Track[] = []
@@ -38,10 +42,13 @@ interface QueueDrawerProps {
 export function QueueDrawer({ open, onOpenChange, onRemoveFromQueue, onReorderQueue, onClearQueue }: QueueDrawerProps) {
   const queue = useRoomStore((s) => s.room?.queue ?? EMPTY_QUEUE)
   const currentTrack = usePlayerStore((s) => s.currentTrack)
+  const { socket } = useSocketContext()
   const isMobile = useIsMobile()
   const ability = useContext(AbilityContext)
   const canRemove = ability.can('remove', 'Queue')
   const canReorder = ability.can('reorder', 'Queue')
+  const canPlay = ability.can('play', 'Player')
+  const canVote = ability.can('vote', 'Player')
   const [confirmClear, setConfirmClear] = useState(false)
   const confirmTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null)
   // Mobile: track which item has its action toolbar visible
@@ -69,6 +76,7 @@ export function QueueDrawer({ open, onOpenChange, onRemoveFromQueue, onReorderQu
     }
     onClearQueue()
     setConfirmClear(false)
+    toast.success('播放列表已清空')
   }, [confirmClear, onClearQueue])
 
   const handleMoveUp = (index: number) => {
@@ -83,6 +91,31 @@ export function QueueDrawer({ open, onOpenChange, onRemoveFromQueue, onReorderQu
     const ids = queue.map((t) => t.id)
     ;[ids[index], ids[index + 1]] = [ids[index + 1], ids[index]]
     onReorderQueue(ids)
+  }
+
+  const handlePlayTrack = (track: Track) => {
+    if (canPlay) {
+      socket.emit(EVENTS.PLAYER_PLAY, { track })
+    } else if (canVote) {
+      socket.emit(EVENTS.VOTE_START, {
+        action: 'play-track' as const,
+        payload: { trackId: track.id, trackTitle: track.title },
+      })
+      toast.info(`已发起投票：播放「${track.title}」`)
+    }
+  }
+
+  const handleRemoveTrack = (track: Track) => {
+    if (canRemove) {
+      onRemoveFromQueue(track.id)
+      toast.success(`已移除「${track.title}」`)
+    } else if (canVote) {
+      socket.emit(EVENTS.VOTE_START, {
+        action: 'remove-track' as const,
+        payload: { trackId: track.id, trackTitle: track.title },
+      })
+      toast.info(`已发起投票：移除「${track.title}」`)
+    }
   }
 
   return (
@@ -156,7 +189,7 @@ export function QueueDrawer({ open, onOpenChange, onRemoveFromQueue, onReorderQu
                     currentTrack?.id === track.id && 'bg-primary/10',
                   )}
                   onClick={() => {
-                    if (isMobile && (canReorder || canRemove)) {
+                    if (isMobile) {
                       setActiveTrackId((prev) => prev === track.id ? null : track.id)
                     }
                   }}
@@ -173,12 +206,15 @@ export function QueueDrawer({ open, onOpenChange, onRemoveFromQueue, onReorderQu
                         src={track.cover}
                         alt={track.title}
                         className="h-9 w-9 rounded object-cover"
+                        onError={(e) => { e.currentTarget.style.display = 'none'; e.currentTarget.nextElementSibling?.classList.remove('hidden') }}
                       />
-                    ) : (
-                      <div className="flex h-9 w-9 items-center justify-center rounded bg-muted">
-                        <Music className="h-4 w-4 text-muted-foreground" />
-                      </div>
-                    )}
+                    ) : null}
+                    <div className={cn(
+                      'flex h-9 w-9 items-center justify-center rounded bg-muted',
+                      track.cover && 'hidden',
+                    )}>
+                      <Music className="h-4 w-4 text-muted-foreground" />
+                    </div>
                     {track.source && SOURCE_STYLE[track.source] && (
                       <span className={cn(
                         'absolute -bottom-1 -right-1 rounded px-0.5 text-[8px] font-bold leading-tight ring-1',
@@ -191,17 +227,17 @@ export function QueueDrawer({ open, onOpenChange, onRemoveFromQueue, onReorderQu
 
                   {/* Track info */}
                   <div className="min-w-0 flex-1">
-                    <p
+                    <MarqueeText
                       className={cn(
-                        'truncate text-sm',
+                        'text-sm',
                         currentTrack?.id === track.id && 'font-medium text-primary',
                       )}
                     >
                       {track.title}
-                    </p>
-                    <p className="truncate text-xs text-muted-foreground">
+                    </MarqueeText>
+                    <MarqueeText className="text-xs text-muted-foreground">
                       {track.artist.join(' / ')}
-                    </p>
+                    </MarqueeText>
                   </div>
 
                   {/* Requester badge — absolute top-right inside item */}
@@ -212,8 +248,7 @@ export function QueueDrawer({ open, onOpenChange, onRemoveFromQueue, onReorderQu
                     </Badge>
                   )}
 
-                  {/* Actions — visible on hover (desktop) or tap (mobile), permission-gated */}
-                  {(canReorder || canRemove) && (
+                  {/* Actions — visible on hover (desktop) or tap (mobile) */}
                   <div
                     className={cn(
                       'absolute right-1 top-1/2 z-20 flex -translate-y-1/2 items-center gap-0.5',
@@ -225,6 +260,26 @@ export function QueueDrawer({ open, onOpenChange, onRemoveFromQueue, onReorderQu
                     )}
                     onClick={(e) => e.stopPropagation()}
                   >
+                    {/* Play button — hidden for currently playing track */}
+                    {currentTrack?.id !== track.id && (canPlay || canVote) && (
+                    <Tooltip delayDuration={400}>
+                      <TooltipTrigger asChild>
+                        <Button
+                          variant="ghost"
+                          size="icon"
+                          className="h-6 w-6 min-h-9 min-w-9 sm:min-h-0 sm:min-w-0"
+                          onClick={() => handlePlayTrack(track)}
+                          aria-label={canPlay ? `播放 ${track.title}` : `投票播放 ${track.title}`}
+                        >
+                          <Play className="h-3 w-3" />
+                        </Button>
+                      </TooltipTrigger>
+                      <TooltipContent side="bottom">
+                        {canPlay ? '播放' : '投票播放'}
+                      </TooltipContent>
+                    </Tooltip>
+                    )}
+
                     {canReorder && (
                     <>
                     <Tooltip delayDuration={400}>
@@ -232,7 +287,7 @@ export function QueueDrawer({ open, onOpenChange, onRemoveFromQueue, onReorderQu
                         <Button
                           variant="ghost"
                           size="icon"
-                          className="h-6 w-6"
+                          className="h-6 w-6 min-h-9 min-w-9 sm:min-h-0 sm:min-w-0"
                           disabled={i === 0}
                           onClick={() => handleMoveUp(i)}
                           aria-label={`上移 ${track.title}`}
@@ -248,7 +303,7 @@ export function QueueDrawer({ open, onOpenChange, onRemoveFromQueue, onReorderQu
                         <Button
                           variant="ghost"
                           size="icon"
-                          className="h-6 w-6"
+                          className="h-6 w-6 min-h-9 min-w-9 sm:min-h-0 sm:min-w-0"
                           disabled={i === queue.length - 1}
                           onClick={() => handleMoveDown(i)}
                           aria-label={`下移 ${track.title}`}
@@ -261,24 +316,25 @@ export function QueueDrawer({ open, onOpenChange, onRemoveFromQueue, onReorderQu
                     </>
                     )}
 
-                    {canRemove && (
+                    {(canRemove || canVote) && (
                     <Tooltip delayDuration={400}>
                       <TooltipTrigger asChild>
                         <Button
                           variant="ghost"
                           size="icon"
-                          className="h-6 w-6 text-destructive hover:text-destructive"
-                          onClick={() => onRemoveFromQueue(track.id)}
-                          aria-label={`移除 ${track.title}`}
+                          className="h-6 w-6 min-h-9 min-w-9 sm:min-h-0 sm:min-w-0 text-destructive hover:text-destructive"
+                          onClick={() => handleRemoveTrack(track)}
+                          aria-label={canRemove ? `移除 ${track.title}` : `投票移除 ${track.title}`}
                         >
                           <Trash2 className="h-3 w-3" />
                         </Button>
                       </TooltipTrigger>
-                      <TooltipContent side="bottom">移除</TooltipContent>
+                      <TooltipContent side="bottom">
+                        {canRemove ? '移除' : '投票移除'}
+                      </TooltipContent>
                     </Tooltip>
                     )}
                   </div>
-                  )}
                 </motion.div>
               ))}
               </AnimatePresence>

@@ -120,7 +120,7 @@ export function RoomHeader({ onOpenSearch, onOpenSettings, onOpenMembers, onLeav
       <div className="flex items-center gap-0.5 sm:gap-1">
         <Tooltip>
           <TooltipTrigger asChild>
-            <Button variant="ghost" size="icon" className="h-8 w-8" onClick={onOpenSearch} aria-label="搜索点歌">
+            <Button variant="ghost" size="icon" className="h-8 w-8 min-h-11 min-w-11 sm:min-h-0 sm:min-w-0" onClick={onOpenSearch} aria-label="搜索点歌">
               <Search className="h-4 w-4" />
             </Button>
           </TooltipTrigger>
@@ -130,7 +130,7 @@ export function RoomHeader({ onOpenSearch, onOpenSettings, onOpenMembers, onLeav
         {/* Desktop: inline settings & leave buttons */}
         <Tooltip>
           <TooltipTrigger asChild>
-            <Button variant="ghost" size="icon" className="hidden h-8 w-8 sm:flex" onClick={onOpenSettings} aria-label="设置">
+            <Button variant="ghost" size="icon" className="hidden h-8 w-8 min-h-11 min-w-11 sm:flex sm:min-h-0 sm:min-w-0" onClick={onOpenSettings} aria-label="设置">
               <Settings className="h-4 w-4" />
             </Button>
           </TooltipTrigger>
@@ -139,7 +139,7 @@ export function RoomHeader({ onOpenSearch, onOpenSettings, onOpenMembers, onLeav
 
         <Tooltip>
           <TooltipTrigger asChild>
-            <Button variant="ghost" size="icon" className="hidden h-8 w-8 sm:flex" onClick={onLeaveRoom} aria-label="离开房间">
+            <Button variant="ghost" size="icon" className="hidden h-8 w-8 min-h-11 min-w-11 sm:flex sm:min-h-0 sm:min-w-0" onClick={onLeaveRoom} aria-label="离开房间">
               <LogOut className="h-4 w-4" />
             </Button>
           </TooltipTrigger>
@@ -149,7 +149,7 @@ export function RoomHeader({ onOpenSearch, onOpenSettings, onOpenMembers, onLeav
         {/* Mobile: dropdown menu */}
         <DropdownMenu>
           <DropdownMenuTrigger asChild>
-            <Button variant="ghost" size="icon" className="h-8 w-8 sm:hidden" aria-label="更多操作">
+            <Button variant="ghost" size="icon" className="h-8 w-8 min-h-11 min-w-11 sm:hidden sm:min-h-0 sm:min-w-0" aria-label="更多操作">
               <Ellipsis className="h-4 w-4" />
             </Button>
           </DropdownMenuTrigger>

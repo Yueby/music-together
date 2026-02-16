@@ -11,6 +11,8 @@ const ACTION_LABELS: Record<VoteAction, string> = {
   next: '下一首',
   prev: '上一首',
   'set-mode': '切换播放模式',
+  'play-track': '指定播放',
+  'remove-track': '投票移除',
 }
 
 const PLAY_MODE_LABELS: Record<PlayMode, string> = {
@@ -25,6 +27,12 @@ export function getVoteActionLabel(action: VoteAction, payload?: Record<string, 
   if (action === 'set-mode' && payload?.mode) {
     const modeLabel = PLAY_MODE_LABELS[payload.mode as PlayMode] ?? payload.mode
     return `切换为${modeLabel}`
+  }
+  if (action === 'play-track' && payload?.trackTitle) {
+    return `播放「${payload.trackTitle}」`
+  }
+  if (action === 'remove-track' && payload?.trackTitle) {
+    return `移除「${payload.trackTitle}」`
   }
   return ACTION_LABELS[action]
 }
@@ -60,6 +68,7 @@ export function useVote() {
   const startVote = useCallback(
     (action: VoteAction, payload?: Record<string, unknown>) => {
       socket.emit(EVENTS.VOTE_START, { action, payload })
+      toast.info(`已发起投票：${getVoteActionLabel(action, payload)}`)
     },
     [socket],
   )

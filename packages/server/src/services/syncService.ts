@@ -12,5 +12,13 @@ export function estimateCurrentTime(roomId: string): number {
   // (set in playTrackInRoom/seekTrack), so Date.now() - serverTimestamp
   // may be negative before the scheduled execution moment.
   const elapsed = Math.max(0, (Date.now() - playState.serverTimestamp) / 1000)
-  return playState.currentTime + elapsed
+  const estimated = playState.currentTime + elapsed
+
+  // Clamp to track duration so mid-song joiners don't receive a position
+  // beyond the song length when the host hasn't reported end-of-track.
+  const duration = room.currentTrack?.duration
+  if (duration && duration > 0) {
+    return Math.min(estimated, duration)
+  }
+  return estimated
 }

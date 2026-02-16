@@ -1,4 +1,4 @@
-import { getServerTime } from '@/lib/clockSync'
+import { getServerTime, isCalibrated } from '@/lib/clockSync'
 import {
   DRIFT_SEEK_THRESHOLD_MS,
   DRIFT_DEAD_ZONE_MS,
@@ -27,8 +27,11 @@ import { useEffect, useRef, type RefObject } from 'react'
 /**
  * Compute the delay (ms) until `serverTimeToExecute`, using our
  * NTP-calibrated clock.  Returns 0 if the time has already passed.
+ * Falls back to 0 (immediate execution) when NTP is not yet calibrated
+ * to avoid wildly inaccurate scheduling from uncorrected local clocks.
  */
 function scheduleDelay(serverTimeToExecute: number): number {
+  if (!isCalibrated()) return 0
   return Math.max(0, serverTimeToExecute - getServerTime())
 }
 
@@ -46,9 +49,9 @@ function clamp(value: number, limit: number): number {
  * with periodic **proportional drift correction + EMA smoothing**:
  *
  *   |smoothedDrift| > 200ms → hard seek (audible jump, rare)
- *   |smoothedDrift| 5~200ms → proportional rate adjustment
+ *   |smoothedDrift| 30~200ms → proportional rate adjustment
  *                              rate = 1 - clamp(drift * Kp, ±0.02)
- *   |smoothedDrift| < 5ms   → reset to normal rate 1.0x (dead zone)
+ *   |smoothedDrift| < 30ms  → reset to normal rate 1.0x (dead zone)
  *
  * The EMA low-pass filter smooths noisy drift measurements to prevent
  * the control loop from oscillating between speed-up and slow-down.
@@ -65,14 +68,22 @@ export function usePlayerSync(
 
   // Pending scheduled action timers (so we can cancel on unmount / new action)
   const scheduledTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null)
+  // Monotonic action ID — guards against stale setTimeout(fn, 0) callbacks
+  // when rapid events arrive in the same event loop tick.
+  const actionIdRef = useRef(0)
   // When true, rate() micro-adjustment is disabled (browser plugin detected)
   const rateDisabledRef = useRef(false)
   // Consecutive count of rate override detections (require 3 to confirm plugin)
   const rateOverrideCountRef = useRef(0)
+  // Timer for the 50ms rate-override detection check (stored so we can clear it)
+  const rateCheckTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null)
   // EMA-smoothed drift value (seconds) — persists across sync responses
   const smoothedDriftRef = useRef(0)
+  // When true, next sync response seeds EMA directly instead of blending,
+  // avoiding the cold-start lag after pause/resume/new-track.
+  const emaColdStartRef = useRef(true)
   // Timestamp when the current track started playing (for adaptive host reporting)
-  const trackStartTimeRef = useRef(0)
+  const trackStartTimeRef = useRef(Date.now())
 
   const clearScheduled = () => {
     if (scheduledTimerRef.current) {
@@ -88,24 +99,37 @@ export function usePlayerSync(
     // -- SEEK ---------------------------------------------------------------
     const onSeek = (data: { playState: ScheduledPlayState }) => {
       clearScheduled()
+      const id = ++actionIdRef.current
       const delay = scheduleDelay(data.playState.serverTimeToExecute)
 
       scheduledTimerRef.current = setTimeout(() => {
+        if (actionIdRef.current !== id) return // stale callback
         if (howlRef.current) {
           howlRef.current.seek(data.playState.currentTime)
           if (howlRef.current.rate() !== 1) howlRef.current.rate(1)
         }
         setCurrentTime(data.playState.currentTime)
         smoothedDriftRef.current = 0
+        emaColdStartRef.current = true
+        // Keep roomStore.playState in sync for recovery effect
+        useRoomStore.getState().updateRoom({
+          playState: {
+            isPlaying: data.playState.isPlaying,
+            currentTime: data.playState.currentTime,
+            serverTimestamp: data.playState.serverTimestamp,
+          },
+        })
       }, delay)
     }
 
     // -- PAUSE --------------------------------------------------------------
     const onPause = (data: { playState: ScheduledPlayState }) => {
       clearScheduled()
+      const id = ++actionIdRef.current
       const delay = scheduleDelay(data.playState.serverTimeToExecute)
 
       scheduledTimerRef.current = setTimeout(() => {
+        if (actionIdRef.current !== id) return // stale callback
         if (howlRef.current && soundIdRef.current !== undefined) {
           howlRef.current.pause(soundIdRef.current)
           // Sync to the server's authoritative time snapshot
@@ -115,16 +139,27 @@ export function usePlayerSync(
         }
         // Reset drift state — paused means no drift
         smoothedDriftRef.current = 0
+        emaColdStartRef.current = true
         usePlayerStore.getState().setSyncDrift(0)
+        // Keep roomStore.playState in sync for recovery effect
+        useRoomStore.getState().updateRoom({
+          playState: {
+            isPlaying: data.playState.isPlaying,
+            currentTime: data.playState.currentTime,
+            serverTimestamp: data.playState.serverTimestamp,
+          },
+        })
       }, delay)
     }
 
     // -- RESUME -------------------------------------------------------------
     const onResume = (data: { playState: ScheduledPlayState }) => {
       clearScheduled()
+      const id = ++actionIdRef.current
       const delay = scheduleDelay(data.playState.serverTimeToExecute)
 
       scheduledTimerRef.current = setTimeout(() => {
+        if (actionIdRef.current !== id) return // stale callback
         if (!howlRef.current) return
         // Seek to the expected position at this moment
         if (data.playState.currentTime > 0) {
@@ -133,11 +168,20 @@ export function usePlayerSync(
         }
         if (howlRef.current.rate() !== 1) howlRef.current.rate(1)
         smoothedDriftRef.current = 0
+        emaColdStartRef.current = true
         if (soundIdRef.current !== undefined) {
           howlRef.current.play(soundIdRef.current)
         } else {
           soundIdRef.current = howlRef.current.play()
         }
+        // Keep roomStore.playState in sync for recovery effect
+        useRoomStore.getState().updateRoom({
+          playState: {
+            isPlaying: data.playState.isPlaying,
+            currentTime: data.playState.currentTime,
+            serverTimestamp: data.playState.serverTimestamp,
+          },
+        })
       }, delay)
     }
 
@@ -147,9 +191,11 @@ export function usePlayerSync(
     // Also reset rate-disabled flag to give the new track a fresh chance.
     const onPlay = () => {
       clearScheduled()
+      ++actionIdRef.current // invalidate any pending stale callbacks
       rateDisabledRef.current = false
       rateOverrideCountRef.current = 0
       smoothedDriftRef.current = 0
+      emaColdStartRef.current = true
       trackStartTimeRef.current = Date.now()
     }
 
@@ -158,6 +204,12 @@ export function usePlayerSync(
       if (!howlRef.current) return
       if (!howlRef.current.playing()) return
 
+      // Host is the authoritative playback source — skip drift correction
+      // to avoid a feedback loop where server estimate (based on host reports)
+      // pulls the host forward/backward.
+      const currentRole = useRoomStore.getState().currentUser?.role
+      if (currentRole === 'host') return
+
       // Use NTP-calibrated server time for accurate delay estimation
       const networkDelaySec = Math.max(0, Math.min(MAX_NETWORK_DELAY_S, (getServerTime() - data.serverTimestamp) / 1000))
       const expectedTime = data.currentTime + (data.isPlaying ? networkDelaySec : 0)
@@ -165,9 +217,16 @@ export function usePlayerSync(
       const currentSeek = howlRef.current.seek() as number
       const rawDrift = currentSeek - expectedTime
 
-      // EMA low-pass filter: smooths noisy measurements to prevent oscillation
-      smoothedDriftRef.current =
-        DRIFT_SMOOTH_ALPHA * rawDrift + (1 - DRIFT_SMOOTH_ALPHA) * smoothedDriftRef.current
+      // EMA low-pass filter: smooths noisy measurements to prevent oscillation.
+      // On cold start (after pause/resume/new-track), seed with raw value
+      // directly so the first correction is immediate, not dampened by stale 0.
+      if (emaColdStartRef.current) {
+        smoothedDriftRef.current = rawDrift
+        emaColdStartRef.current = false
+      } else {
+        smoothedDriftRef.current =
+          DRIFT_SMOOTH_ALPHA * rawDrift + (1 - DRIFT_SMOOTH_ALPHA) * smoothedDriftRef.current
+      }
       const sd = smoothedDriftRef.current
       const absDrift = Math.abs(sd)
 
@@ -185,6 +244,7 @@ export function usePlayerSync(
         howlRef.current.seek(expectedTime)
         if (howlRef.current.rate() !== 1) howlRef.current.rate(1)
         smoothedDriftRef.current = 0
+        emaColdStartRef.current = true
       } else if (absDrift > DRIFT_DEAD_ZONE_MS / 1000 && !rateDisabledRef.current) {
         // Proportional rate correction: larger drift → stronger correction,
         // naturally decelerating as we approach the target — no oscillation.
@@ -195,7 +255,10 @@ export function usePlayerSync(
         // Use setTimeout instead of rAF to avoid false positives when the tab
         // is in background (rAF is throttled/paused by browsers).
         // Require 3 consecutive detections to confirm a plugin, not just one.
-        setTimeout(() => {
+        // Clear previous check timer to avoid stacking on rapid sync responses.
+        if (rateCheckTimerRef.current) clearTimeout(rateCheckTimerRef.current)
+        rateCheckTimerRef.current = setTimeout(() => {
+          rateCheckTimerRef.current = null
           if (!howlRef.current) return
           if (Math.abs(howlRef.current.rate() - targetRate) > 0.005) {
             rateOverrideCountRef.current++
@@ -222,6 +285,10 @@ export function usePlayerSync(
 
     return () => {
       clearScheduled()
+      if (rateCheckTimerRef.current) {
+        clearTimeout(rateCheckTimerRef.current)
+        rateCheckTimerRef.current = null
+      }
       socket.off(EVENTS.PLAYER_SEEK, onSeek)
       socket.off(EVENTS.PLAYER_PAUSE, onPause)
       socket.off(EVENTS.PLAYER_RESUME, onResume)
@@ -231,11 +298,15 @@ export function usePlayerSync(
   }, [socket, howlRef, soundIdRef, setCurrentTime])
 
   // -----------------------------------------------------------------------
-  // Periodic sync request (client-initiated drift correction)
+  // Periodic sync request (client-initiated drift correction).
+  // Host skips: it is the authoritative source and reports its own position.
   // -----------------------------------------------------------------------
   useEffect(() => {
     const interval = setInterval(() => {
-      socket.emit(EVENTS.PLAYER_SYNC_REQUEST)
+      const currentRole = useRoomStore.getState().currentUser?.role
+      if (currentRole !== 'host') {
+        socket.emit(EVENTS.PLAYER_SYNC_REQUEST)
+      }
     }, SYNC_REQUEST_INTERVAL_MS)
     return () => clearInterval(interval)
   }, [socket])
@@ -264,10 +335,24 @@ export function usePlayerSync(
       timerId = setTimeout(report, interval)
     }
 
+    // When the tab returns from background, immediately send a host report
+    // so the server's playState is refreshed after potential setTimeout throttling.
+    const onVisibilityChange = () => {
+      if (document.visibilityState !== 'visible') return
+      const currentUser = useRoomStore.getState().currentUser
+      if (currentUser?.role === 'host' && howlRef.current?.playing()) {
+        socket.emit(EVENTS.PLAYER_SYNC, {
+          currentTime: howlRef.current.seek() as number,
+        })
+      }
+    }
+    document.addEventListener('visibilitychange', onVisibilityChange)
+
     timerId = setTimeout(report, HOST_REPORT_FAST_INTERVAL_MS)
 
     return () => {
       if (timerId) clearTimeout(timerId)
+      document.removeEventListener('visibilitychange', onVisibilityChange)
     }
   }, [socket, howlRef])
 }

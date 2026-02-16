@@ -306,7 +306,7 @@ export default function RoomPage() {
             onLeaveRoom={handleLeaveRoom}
           />
 
-          <div className="flex min-h-0 flex-1 overflow-hidden p-2 md:p-3">
+          <div className="flex min-h-0 flex-1 overflow-hidden p-2 md:p-3 lg:p-4">
             <div className="min-w-0 flex-1 overflow-hidden rounded-2xl">
               <AudioPlayer
                 onPlay={play}

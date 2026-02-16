@@ -81,7 +81,7 @@ export function registerAuthController(io: TypedServer, socket: TypedSocket) {
 
   socket.on(EVENTS.AUTH_SET_COOKIE, async (data) => {
     try {
-      if (!data?.platform || !VALID_PLATFORMS.has(data.platform) || !data?.cookie) {
+      if (!data?.platform || !VALID_PLATFORMS.has(data.platform) || !data?.cookie || typeof data.cookie !== 'string' || data.cookie.length > 8000) {
         socket.emit(EVENTS.AUTH_SET_COOKIE_RESULT, {
           success: false,
           message: '参数不完整',

@@ -70,7 +70,7 @@ export function AudioPlayer({ onPlay, onPause, onSeek, onNext, onPrev, onOpenCha
       )}
 
       {/* Content with padding */}
-      <div className="relative z-10 h-full px-5 py-7 md:p-[5%]">
+      <div className="relative z-10 h-full px-5 py-7 md:px-[5%] md:py-[4%] lg:px-[6%] lg:py-[5%]">
         <div className={cn('flex h-full', isMobile ? 'flex-col' : 'flex-row')}>
 
           {/* ----------------------------------------------------------------- */}
@@ -126,8 +126,8 @@ export function AudioPlayer({ onPlay, onPause, onSeek, onNext, onPrev, onOpenCha
             // Desktop layout: left panel (cover + info + controls) + right lyrics
             // ---------------------------------------------------------------
             <>
-              <div className="relative flex w-[40%] flex-col items-center justify-center gap-8 lg:w-[38%]">
-                <div className="flex w-full max-w-[min(90%,55vh)] flex-col gap-8">
+              <div className="relative flex w-[36%] flex-col items-center justify-center gap-8 lg:w-[33%]">
+                <div className="flex w-full max-w-[min(90%,48vh)] flex-col gap-8">
                   {/* 1. Cover */}
                   <NowPlaying />
                   {/* 2. Song info + action buttons */}
@@ -136,8 +136,10 @@ export function AudioPlayer({ onPlay, onPause, onSeek, onNext, onPrev, onOpenCha
                   <PlayerControls {...playerControlsProps} />
                 </div>
                 {activeVote && (
-                  <div className="absolute bottom-0 left-1/2 z-20 w-full max-w-[min(90%,55vh)] -translate-x-1/2 px-2 pb-2">
-                    <VoteBanner vote={activeVote} onCastVote={castVote} />
+                  <div className="absolute inset-x-0 bottom-0 z-20 flex justify-center px-2 pb-2">
+                    <div className="w-full max-w-[min(90%,48vh)]">
+                      <VoteBanner vote={activeVote} onCastVote={castVote} />
+                    </div>
                   </div>
                 )}
               </div>

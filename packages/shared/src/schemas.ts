@@ -63,7 +63,7 @@ export const queueAddSchema = z.object({
     title: z.string().max(500),
     artist: z.array(z.string().max(200)).max(20),
     album: z.string().max(500),
-    duration: z.number(),
+    duration: z.number().finite().nonnegative(),
     cover: z.string().max(2000),
     source: z.enum(['netease', 'tencent', 'kugou']),
     sourceId: z.string().max(200),
@@ -123,7 +123,7 @@ export const coverQuerySchema = z.object({
 // ---------------------------------------------------------------------------
 
 export const voteStartSchema = z.object({
-  action: z.enum(['pause', 'resume', 'next', 'prev', 'set-mode']),
+  action: z.enum(['pause', 'resume', 'next', 'prev', 'set-mode', 'play-track', 'remove-track']),
   payload: z.record(z.string(), z.unknown()).optional(),
 })
 

@@ -206,7 +206,7 @@ function handleLeave(io: TypedServer, socket: TypedSocket, reason?: string): voi
   const result = roomService.leaveRoom(socket.id, io)
   if (!result) return
 
-  const { roomId, user, room, hostChanged } = result
+  const { roomId, user, room, hostChanged, voteUpdated } = result
   socket.leave(roomId)
   socket.join('lobby')
   io.to(roomId).emit(EVENTS.ROOM_USER_LEFT, user)
@@ -220,6 +220,14 @@ function handleLeave(io: TypedServer, socket: TypedSocket, reason?: string): voi
   // 房主变更时广播完整状态，确保所有客户端更新 hostId
   if (hostChanged && room && room.users.length > 0) {
     io.to(roomId).emit(EVENTS.ROOM_STATE, roomService.toPublicRoomState(room))
+  }
+
+  // Broadcast updated vote state after threshold recalculation
+  if (voteUpdated) {
+    const activeVote = voteService.getActiveVote(roomId)
+    if (activeVote) {
+      io.to(roomId).emit(EVENTS.VOTE_STARTED, voteService.toVoteState(activeVote))
+    }
   }
 
   // 更新大厅房间列表

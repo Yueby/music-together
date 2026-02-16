@@ -228,3 +228,29 @@ export function broadcastRoomList(io: TypedServer): void {
     }
   }, 100)
 }
+
+// ---------------------------------------------------------------------------
+// Shutdown cleanup — clear all module-level timers
+// ---------------------------------------------------------------------------
+
+/** Clear all timers managed by this module. Call during graceful shutdown. */
+export function clearAllTimers(): void {
+  // Room deletion timers
+  for (const timer of roomDeletionTimers.values()) clearTimeout(timer)
+  roomDeletionTimers.clear()
+
+  // Role grace timers
+  for (const roomGrace of roleGraceMap.values()) {
+    for (const entry of roomGrace.values()) clearTimeout(entry.timer)
+  }
+  roleGraceMap.clear()
+
+  // Broadcast debounce timer
+  if (broadcastTimer) {
+    clearTimeout(broadcastTimer)
+    broadcastTimer = null
+  }
+  pendingIO = null
+
+  logger.info('All roomLifecycleService timers cleared')
+}

@@ -1,7 +1,9 @@
+import { MarqueeText } from '@/components/ui/marquee-text'
 import { cn } from '@/lib/utils'
 import { usePlayerStore } from '@/stores/playerStore'
 import { Disc3 } from 'lucide-react'
 import { motion } from 'motion/react'
+import { useEffect, useState } from 'react'
 
 /** Apple-style easing: fast launch, graceful deceleration */
 const SPRING = { type: 'spring' as const, duration: 0.5, bounce: 0.1 }
@@ -16,12 +18,19 @@ interface NowPlayingProps {
 
 export function NowPlaying({ compact = false, onCoverClick }: NowPlayingProps) {
   const currentTrack = usePlayerStore((s) => s.currentTrack)
+  const [coverError, setCoverError] = useState(false)
 
-  const coverContent = currentTrack?.cover ? (
+  // Reset error state when track changes
+  useEffect(() => { setCoverError(false) }, [currentTrack?.id])
+
+  const showCover = currentTrack?.cover && !coverError
+
+  const coverContent = showCover ? (
     <img
       src={currentTrack.cover}
       alt={currentTrack.title}
       className="h-full w-full object-cover"
+      onError={() => setCoverError(true)}
     />
   ) : (
     <div className="flex h-full w-full items-center justify-center bg-secondary">
@@ -46,22 +55,26 @@ export function NowPlaying({ compact = false, onCoverClick }: NowPlayingProps) {
           {coverContent}
         </motion.div>
         <motion.div layoutId="song-info" transition={LAYOUT_TRANSITION} className="min-w-0 flex-1">
-          <motion.p
+          <motion.div
             initial={{ fontSize: 20 }}
             animate={{ fontSize: 18 }}
             transition={SPRING}
-            className="truncate font-semibold leading-tight text-white/90"
+            className="font-semibold leading-tight text-white/90"
           >
-            {currentTrack?.title ?? '暂无歌曲'}
-          </motion.p>
-          <motion.p
+            <MarqueeText>
+              {currentTrack?.title ?? '暂无歌曲'}
+            </MarqueeText>
+          </motion.div>
+          <motion.div
             initial={{ fontSize: 14 }}
             animate={{ fontSize: 16 }}
             transition={SPRING}
-            className="truncate text-white/50"
+            className="text-white/50"
           >
-            {currentTrack ? currentTrack.artist.join(' / ') : '...'}
-          </motion.p>
+            <MarqueeText>
+              {currentTrack ? currentTrack.artist.join(' / ') : '...'}
+            </MarqueeText>
+          </motion.div>
         </motion.div>
       </div>
     )

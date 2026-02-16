@@ -13,6 +13,10 @@ import { toast } from 'sonner'
 /** Max wait (ms) for Howler `unlock` event before giving up and skipping */
 const PLAY_ERROR_TIMEOUT_MS = 3000
 
+/** If playback reports playing() but currentTime doesn't advance for this
+ *  many milliseconds, treat it as stalled (network drop mid-stream). */
+const STALLED_TIMEOUT_MS = 8000
+
 /**
  * Manages a Howl audio instance with two-phase loading strategy:
  * Phase 1: Create Howl with volume=0 (silent)
@@ -26,25 +30,47 @@ export function useHowl(onTrackEnd: () => void) {
   const unmuteTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null)
   const playErrorTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null)
   const lastTimeUpdateRef = useRef(0)
+  const stalledRef = useRef<{ lastSeek: number; since: number }>({ lastSeek: -1, since: 0 })
+  const trackTitleRef = useRef<string>('')
+  const retryRef = useRef(false)
 
   // Use selectors for the one reactive value we need (volume sync effect)
   const volume = usePlayerStore((s) => s.volume)
 
-  // Throttled time update loop
+  // Throttled time update loop with stalled detection
   const startTimeUpdate = useCallback(() => {
     cancelAnimationFrame(animFrameRef.current)
+    stalledRef.current = { lastSeek: -1, since: 0 }
     const update = () => {
       if (howlRef.current && howlRef.current.playing()) {
         const now = performance.now()
         if (now - lastTimeUpdateRef.current >= CURRENT_TIME_THROTTLE_MS) {
           lastTimeUpdateRef.current = now
-          usePlayerStore.getState().setCurrentTime(howlRef.current.seek() as number)
+          const seekVal = howlRef.current.seek() as number
+          usePlayerStore.getState().setCurrentTime(seekVal)
+
+          // Stalled detection: if currentTime hasn't moved for STALLED_TIMEOUT_MS
+          // while playing() is true, the stream likely broke mid-playback.
+          const st = stalledRef.current
+          if (Math.abs(seekVal - st.lastSeek) < 0.05) {
+            if (st.since > 0 && now - st.since > STALLED_TIMEOUT_MS) {
+              console.warn('Playback stalled, skipping track')
+              toast.error('播放中断，已跳到下一首')
+              stalledRef.current = { lastSeek: -1, since: 0 }
+              onTrackEnd()
+              return
+            }
+            // still stalled but not timed out yet — keep since
+          } else {
+            // time moved — reset stalled tracker
+            stalledRef.current = { lastSeek: seekVal, since: now }
+          }
         }
       }
       animFrameRef.current = requestAnimationFrame(update)
     }
     animFrameRef.current = requestAnimationFrame(update)
-  }, [])
+  }, [onTrackEnd])
 
   const stopTimeUpdate = useCallback(() => {
     cancelAnimationFrame(animFrameRef.current)
@@ -57,6 +83,12 @@ export function useHowl(onTrackEnd: () => void) {
         clearTimeout(unmuteTimerRef.current)
         unmuteTimerRef.current = null
       }
+      // Clear any pending play-error timeout from the previous track so it
+      // doesn't fire onTrackEnd() and skip the new track being loaded.
+      if (playErrorTimerRef.current) {
+        clearTimeout(playErrorTimerRef.current)
+        playErrorTimerRef.current = null
+      }
 
       if (howlRef.current) {
         try { howlRef.current.unload() } catch { /* ignore */ }
@@ -66,6 +98,8 @@ export function useHowl(onTrackEnd: () => void) {
 
       syncReadyRef.current = false
       soundIdRef.current = undefined
+      trackTitleRef.current = track.title
+      retryRef.current = false
 
       if (!track.streamUrl) return
 
@@ -79,7 +113,10 @@ export function useHowl(onTrackEnd: () => void) {
         volume: 0,
         onload: () => {
           if (howlRef.current !== howl) return // Stale instance guard
-          usePlayerStore.getState().setDuration(howl.duration())
+          const d = howl.duration()
+          if (Number.isFinite(d) && d > 0) {
+            usePlayerStore.getState().setDuration(d)
+          }
           if (autoPlay) {
             if (seekTo && seekTo > 0) {
               // Update store immediately so AMLL lyrics jump to correct position
@@ -112,7 +149,10 @@ export function useHowl(onTrackEnd: () => void) {
         },
         onplay: () => {
           usePlayerStore.getState().setIsPlaying(true)
-          usePlayerStore.getState().setDuration(howl.duration())
+          const dur = howl.duration()
+          if (Number.isFinite(dur) && dur > 0) {
+            usePlayerStore.getState().setDuration(dur)
+          }
           startTimeUpdate()
         },
         onpause: () => {
@@ -125,8 +165,17 @@ export function useHowl(onTrackEnd: () => void) {
           onTrackEnd()
         },
         onloaderror: (_id, msg) => {
-          console.error('Howl load error:', msg)
-          toast.error('音频加载失败，已跳到下一首')
+          // If a newer track has been loaded, this Howl is stale — ignore.
+          if (howlRef.current !== howl) return
+          if (!retryRef.current) {
+            retryRef.current = true
+            console.warn('Howl load error, retrying:', msg)
+            howl.load()
+            return
+          }
+          retryRef.current = false
+          console.error('Howl load error (after retry):', msg)
+          toast.error(`「${trackTitleRef.current}」加载失败，已跳到下一首`)
           onTrackEnd()
         },
         onplayerror: function (soundId: number) {

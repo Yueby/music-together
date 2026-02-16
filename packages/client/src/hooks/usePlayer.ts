@@ -1,4 +1,4 @@
-import { getServerTime } from '@/lib/clockSync'
+import { getServerTime, isCalibrated } from '@/lib/clockSync'
 import { PLAYER_PLAY_DEDUP_MS } from '@/lib/constants'
 import { useSocketContext } from '@/providers/SocketProvider'
 import { usePlayerStore } from '@/stores/playerStore'
@@ -22,7 +22,7 @@ import { usePlayerSync } from './usePlayerSync'
  */
 export function usePlayer() {
   const { socket } = useSocketContext()
-  const loadingRef = useRef<{ trackId: string; ts: number } | null>(null)
+  const loadingRef = useRef<{ trackId: string; ts: number; serverTimestamp: number } | null>(null)
 
   const next = useCallback(() => socket.emit(EVENTS.PLAYER_NEXT), [socket])
 
@@ -55,15 +55,19 @@ export function usePlayer() {
 
   useEffect(() => {
     const onPlayerPlay = (data: { track: Track; playState: ScheduledPlayState }) => {
-      // Deduplicate: ignore if the same track was requested within the dedup window
+      // Deduplicate: ignore if the same track with the same serverTimestamp
+      // was requested within the dedup window.  Comparing serverTimestamp
+      // ensures that a legitimate replay of the same track (e.g. loop mode)
+      // with a different serverTimestamp is not discarded.
       const now = Date.now()
       if (
         loadingRef.current?.trackId === data.track.id &&
+        loadingRef.current.serverTimestamp === data.playState.serverTimestamp &&
         now - loadingRef.current.ts < PLAYER_PLAY_DEDUP_MS
       ) {
         return
       }
-      loadingRef.current = { trackId: data.track.id, ts: now }
+      loadingRef.current = { trackId: data.track.id, ts: now, serverTimestamp: data.playState.serverTimestamp }
 
       // Keep roomStore in sync so recovery effect sees the correct currentTrack
       useRoomStore.getState().updateRoom({
@@ -81,7 +85,11 @@ export function usePlayer() {
         // New track from position 0: schedule load so playback begins at
         // the coordinated server-time.  We load with autoPlay=true and let
         // the scheduling delay account for buffering.
-        const delay = Math.max(0, data.playState.serverTimeToExecute - getServerTime())
+        // When NTP is not yet calibrated, execute immediately (delay=0) to
+        // avoid wildly inaccurate scheduling from uncorrected local clocks.
+        const delay = isCalibrated()
+          ? Math.max(0, data.playState.serverTimeToExecute - getServerTime())
+          : 0
         if (playTimerRef.current) clearTimeout(playTimerRef.current)
         playTimerRef.current = setTimeout(() => {
           playTimerRef.current = null
@@ -144,7 +152,21 @@ export function usePlayer() {
 
       // Server has track but client doesn't (HMR reset / missed PLAYER_PLAY)
       if (roomTrack?.streamUrl && (!playerTrack || !howlRef.current)) {
+        // Skip if onPlayerPlay is already handling this track — its updateRoom()
+        // call triggers this subscription synchronously before loadTrack runs,
+        // so playerTrack/howlRef are still stale. Checking loadingRef avoids
+        // a redundant double-load.
+        // However, if howlRef is null despite loadingRef pointing to this track,
+        // the previous loadTrack failed (e.g. !streamUrl) and we should retry.
+        if (loadingRef.current?.trackId === roomTrack.id && howlRef.current) return
+
         hasRecovered = true
+        // Cancel any pending scheduled load from onPlayerPlay to prevent
+        // a second loadTrack call when the timer fires after recovery.
+        if (playTimerRef.current) {
+          clearTimeout(playTimerRef.current)
+          playTimerRef.current = null
+        }
         const ps = room.playState
         const elapsed = ps.isPlaying
           ? (getServerTime() - ps.serverTimestamp) / 1000

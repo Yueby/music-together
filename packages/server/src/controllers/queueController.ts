@@ -2,6 +2,7 @@ import { EVENTS, ERROR_CODE, queueAddSchema, queueRemoveSchema, queueReorderSche
 import type { Track } from '@music-together/shared'
 import type { TypedServer, TypedSocket } from '../middleware/types.js'
 import { createWithPermission } from '../middleware/withControl.js'
+import { checkSocketRateLimit } from '../middleware/socketRateLimiter.js'
 import * as chatService from '../services/chatService.js'
 import * as playerService from '../services/playerService.js'
 import * as queueService from '../services/queueService.js'
@@ -13,14 +14,13 @@ export function registerQueueController(io: TypedServer, socket: TypedSocket) {
   socket.on(
     EVENTS.QUEUE_ADD,
     withPermission('add', 'Queue', async (ctx, raw) => {
+      if (!await checkSocketRateLimit(ctx.socket)) return
       const parsed = queueAddSchema.safeParse(raw)
       if (!parsed.success) {
         socket.emit(EVENTS.ROOM_ERROR, { code: ERROR_CODE.INVALID_DATA, message: '无效的歌曲数据' })
         return
       }
       const track: Track = { ...parsed.data.track, requestedBy: ctx.user.nickname }
-
-      const wasEmpty = !ctx.room.currentTrack
 
       const added = queueService.addTrack(ctx.roomId, track)
       if (!added) {
@@ -36,10 +36,11 @@ export function registerQueueController(io: TypedServer, socket: TypedSocket) {
       )
       io.to(ctx.roomId).emit(EVENTS.CHAT_MESSAGE, msg)
 
-      // If nothing was playing, auto-play this track
-      if (wasEmpty) {
-        await playerService.playTrackInRoom(io, ctx.roomId, track)
-      }
+      // If nothing was playing, auto-play this track.
+      // Uses autoPlayIfEmpty which re-checks room.currentTrack inside the
+      // per-room mutex, preventing concurrent QUEUE_ADD handlers from both
+      // triggering playback.
+      await playerService.autoPlayIfEmpty(io, ctx.roomId, track)
 
       logger.info(`Track added: ${track.title}`, { roomId: ctx.roomId })
     }),
@@ -56,14 +57,11 @@ export function registerQueueController(io: TypedServer, socket: TypedSocket) {
       queueService.removeTrack(ctx.roomId, trackId)
       io.to(ctx.roomId).emit(EVENTS.QUEUE_UPDATED, { queue: ctx.room.queue })
 
-      // If the removed track was currently playing, skip to next or stop
+      // If the removed track was currently playing, skip to next or stop.
+      // skipDebounce: removing current track must always advance, regardless
+      // of how recently the last NEXT was triggered.
       if (isCurrentTrack) {
-        const nextTrack = queueService.getNextTrack(ctx.roomId)
-        if (nextTrack) {
-          await playerService.playTrackInRoom(io, ctx.roomId, nextTrack)
-        } else {
-          playerService.stopPlayback(io, ctx.roomId)
-        }
+        await playerService.playNextTrackInRoom(io, ctx.roomId, ctx.room.playMode, { skipDebounce: true })
       }
 
       logger.info(`Track removed`, { roomId: ctx.roomId })
@@ -84,12 +82,13 @@ export function registerQueueController(io: TypedServer, socket: TypedSocket) {
 
   socket.on(
     EVENTS.QUEUE_CLEAR,
-    withPermission('remove', 'Queue', (ctx) => {
+    withPermission('remove', 'Queue', async (ctx) => {
       queueService.clearQueue(ctx.roomId)
       io.to(ctx.roomId).emit(EVENTS.QUEUE_UPDATED, { queue: [] })
 
-      // Stop playback and notify clients
-      playerService.stopPlayback(io, ctx.roomId)
+      // Stop playback via mutex-protected variant to prevent races with
+      // concurrent autoPlayIfEmpty from a simultaneous QUEUE_ADD.
+      await playerService.stopPlaybackSafe(io, ctx.roomId)
 
       logger.info(`Queue cleared`, { roomId: ctx.roomId })
     }),
