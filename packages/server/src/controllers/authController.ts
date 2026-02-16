@@ -1,6 +1,8 @@
 import { EVENTS } from '@music-together/shared'
+import type { MusicSource } from '@music-together/shared'
 import * as authService from '../services/authService.js'
 import * as neteaseAuth from '../services/neteaseAuthService.js'
+import * as kugouAuth from '../services/kugouAuthService.js'
 import { roomRepo } from '../repositories/roomRepository.js'
 import { logger } from '../utils/logger.js'
 import type { TypedServer, TypedSocket } from '../middleware/types.js'
@@ -11,18 +13,28 @@ function getSocketMapping(socketId: string) {
 }
 
 export function registerAuthController(io: TypedServer, socket: TypedSocket) {
+  // Guard: prevent duplicate 803 processing for the same QR session per socket
+  let qrSuccessHandled = false
+
   // -------------------------------------------------------------------------
-  // Netease QR Code Login
+  // QR Code Login (Netease + Kugou)
   // -------------------------------------------------------------------------
 
+  const QR_PLATFORMS = new Set<MusicSource>(['netease', 'kugou'])
+
   socket.on(EVENTS.AUTH_REQUEST_QR, async (data) => {
+    qrSuccessHandled = false
     try {
-      if (data?.platform !== 'netease') {
+      const platform = data?.platform
+      if (!platform || !QR_PLATFORMS.has(platform)) {
         socket.emit(EVENTS.AUTH_QR_STATUS, { status: 800, message: '暂不支持该平台扫码登录' })
         return
       }
 
-      const result = await neteaseAuth.generateQrCode()
+      const result = platform === 'netease'
+        ? await neteaseAuth.generateQrCode()
+        : await kugouAuth.generateQrCode()
+
       if (!result) {
         socket.emit(EVENTS.AUTH_QR_STATUS, { status: 800, message: '生成二维码失败，请重试' })
         return
@@ -39,31 +51,46 @@ export function registerAuthController(io: TypedServer, socket: TypedSocket) {
     try {
       if (!data?.key) return
 
-      const result = await neteaseAuth.checkQrStatus(data.key)
+      const platform = data.platform
+      if (!platform || !(['netease', 'kugou'] as const).includes(platform as 'netease' | 'kugou')) {
+        logger.warn('AUTH_CHECK_QR: invalid or missing platform', { platform })
+        return
+      }
+
+      const result = platform === 'kugou'
+        ? await kugouAuth.checkQrStatus(data.key)
+        : await neteaseAuth.checkQrStatus(data.key)
+
       socket.emit(EVENTS.AUTH_QR_STATUS, { status: result.status, message: result.message })
 
-      // On successful login, validate cookie and add to pool
-      if (result.status === 803 && result.cookie) {
-        const userInfo = await neteaseAuth.getUserInfo(result.cookie)
-        if (userInfo) {
+      // On successful login, validate cookie and add to pool (guard against duplicate 803)
+      if (result.status === 803 && result.cookie && !qrSuccessHandled) {
+        qrSuccessHandled = true
+
+        const infoResult = platform === 'kugou'
+          ? await kugouAuth.getUserInfo(result.cookie)
+          : await neteaseAuth.getUserInfo(result.cookie)
+
+        if (infoResult.ok) {
+          const userInfo = infoResult.data
           const mapping = getSocketMapping(socket.id)
           if (mapping) {
-            authService.addCookie(mapping.roomId, 'netease', mapping.userId, result.cookie, userInfo.nickname, userInfo.vipType)
+            authService.addCookie(mapping.roomId, platform, mapping.userId, result.cookie, userInfo.nickname, userInfo.vipType)
             broadcastAuthStatus(io, socket, mapping)
           }
-          // Always return success + cookie for client-side persistence
           socket.emit(EVENTS.AUTH_SET_COOKIE_RESULT, {
             success: true,
             message: `已登录为 ${userInfo.nickname}`,
-            platform: 'netease',
+            platform,
             cookie: result.cookie,
           })
-          logger.info(`Netease QR login success: ${userInfo.nickname} (vipType=${userInfo.vipType})`)
+          logger.info(`${platform} QR login success: ${userInfo.nickname} (vipType=${userInfo.vipType})`)
         } else {
           socket.emit(EVENTS.AUTH_SET_COOKIE_RESULT, {
             success: false,
             message: '登录成功但无法获取用户信息',
-            platform: 'netease',
+            platform,
+            reason: infoResult.reason,
           })
         }
       }
@@ -107,16 +134,29 @@ export function registerAuthController(io: TypedServer, socket: TypedSocket) {
       }
 
       if (platform === 'netease') {
-        // Validate via Netease API
-        const userInfo = await neteaseAuth.getUserInfo(cookie)
-        if (!userInfo) {
+        // Validate via Netease API (with 1 retry for ANY failure reason).
+        // "no profile" doesn't always mean expired — login_status can transiently
+        // return empty for valid cookies, especially right after a server restart.
+        let infoResult = await neteaseAuth.getUserInfo(cookie)
+        if (!infoResult.ok) {
+          logger.info(`Netease getUserInfo failed (${infoResult.reason}), retrying once...`)
+          await new Promise((r) => setTimeout(r, 1500))
+          infoResult = await neteaseAuth.getUserInfo(cookie)
+        }
+
+        if (!infoResult.ok) {
           socket.emit(EVENTS.AUTH_SET_COOKIE_RESULT, {
             success: false,
-            message: 'Cookie 无效或已过期',
+            message: infoResult.reason === 'expired'
+              ? 'Cookie 已过期，请重新登录'
+              : '验证登录状态失败，将在下次进入房间时重试',
             platform,
+            reason: infoResult.reason,
           })
           return
         }
+
+        const userInfo = infoResult.data
         if (mapping && mapping.roomId) {
           authService.addCookie(mapping.roomId, platform, mapping.userId, cookie, userInfo.nickname, userInfo.vipType)
         }
@@ -126,8 +166,40 @@ export function registerAuthController(io: TypedServer, socket: TypedSocket) {
           platform,
           cookie,
         })
+      } else if (platform === 'kugou') {
+        // Validate Kugou cookie (token+userid) via VIP endpoint
+        let infoResult = await kugouAuth.getUserInfo(cookie)
+        if (!infoResult.ok) {
+          logger.info(`Kugou getUserInfo failed (${infoResult.reason}), retrying once...`)
+          await new Promise((r) => setTimeout(r, 1500))
+          infoResult = await kugouAuth.getUserInfo(cookie)
+        }
+
+        if (infoResult.ok) {
+          const userInfo = infoResult.data
+          if (mapping && mapping.roomId) {
+            authService.addCookie(mapping.roomId, platform, mapping.userId, cookie, userInfo.nickname, userInfo.vipType)
+          }
+          socket.emit(EVENTS.AUTH_SET_COOKIE_RESULT, {
+            success: true,
+            message: `已登录（VIP: ${userInfo.vipType > 0 ? '是' : '否'}）`,
+            platform,
+            cookie,
+          })
+        } else {
+          // Can't validate — store anyway
+          if (mapping && mapping.roomId) {
+            authService.addCookie(mapping.roomId, platform, mapping.userId, cookie, '手动登录', 0)
+          }
+          socket.emit(EVENTS.AUTH_SET_COOKIE_RESULT, {
+            success: true,
+            message: 'Cookie 已保存（验证失败，播放时生效）',
+            platform,
+            cookie,
+          })
+        }
       } else {
-        // For QQ/Kugou we can't easily validate — just store it
+        // For QQ we can't easily validate — just store it
         if (mapping && mapping.roomId) {
           authService.addCookie(mapping.roomId, platform, mapping.userId, cookie, '手动登录', 0)
         }
@@ -147,6 +219,7 @@ export function registerAuthController(io: TypedServer, socket: TypedSocket) {
       socket.emit(EVENTS.AUTH_SET_COOKIE_RESULT, {
         success: false,
         message: '设置 Cookie 失败，请重试',
+        reason: 'error',
       })
     }
   })

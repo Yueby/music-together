@@ -10,6 +10,21 @@ export function addTrack(roomId: string, track: Track): boolean {
   return true
 }
 
+/**
+ * Add multiple tracks at once (from playlist import).
+ * Respects QUEUE_MAX_SIZE — adds as many as fit.
+ * @returns Number of tracks actually added.
+ */
+export function addBatchTracks(roomId: string, tracks: Track[]): number {
+  const room = roomRepo.get(roomId)
+  if (!room) return 0
+  const available = LIMITS.QUEUE_MAX_SIZE - room.queue.length
+  if (available <= 0) return 0
+  const toAdd = tracks.slice(0, available)
+  room.queue.push(...toAdd)
+  return toAdd.length
+}
+
 export function removeTrack(roomId: string, trackId: string): void {
   const room = roomRepo.get(roomId)
   if (room) {

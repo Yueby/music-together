@@ -135,3 +135,14 @@ export interface MyPlatformAuth {
   nickname?: string
   vipType?: number
 }
+
+/** 歌单元数据（用于歌单列表展示） */
+export interface Playlist {
+  id: string
+  name: string
+  cover: string
+  trackCount: number
+  source: MusicSource
+  creator?: string
+  description?: string
+}

@@ -1,27 +1,37 @@
-import { memo } from 'react'
 import { Button } from '@/components/ui/button'
 import { Tooltip, TooltipContent, TooltipTrigger } from '@/components/ui/tooltip'
 import { formatDuration } from '@/lib/format'
 import { cn } from '@/lib/utils'
 import type { Track } from '@music-together/shared'
 import { Check, Music2, Plus } from 'lucide-react'
-import { motion } from 'motion/react'
+import { memo } from 'react'
 
-interface SearchResultItemProps {
+export interface TrackListItemProps {
   track: Track
   index: number
   isAdded: boolean
   onAdd: (track: Track) => void
-  onSearchArtist: (artist: string) => void
+  onArtistClick?: (artist: string) => void
+  style?: React.CSSProperties
+  className?: string
 }
 
-export const SearchResultItem = memo(function SearchResultItem({ track, index, isAdded, onAdd, onSearchArtist }: SearchResultItemProps) {
+export const TrackListItem = memo(function TrackListItem({
+  track,
+  index,
+  isAdded,
+  onAdd,
+  onArtistClick,
+  style,
+  className,
+}: TrackListItemProps) {
   return (
-    <motion.div
-      initial={{ opacity: 0, y: 8 }}
-      animate={{ opacity: 1, y: 0 }}
-      transition={{ duration: 0.2, delay: Math.min(index * 0.03, 0.3) }}
-      className="group flex items-center gap-3 px-3 py-2.5 transition-colors hover:bg-muted/50"
+    <div
+      style={style}
+      className={cn(
+        'group flex items-center gap-3 px-3 py-2.5 transition-colors hover:bg-muted/50',
+        className,
+      )}
     >
       {/* Index */}
       <span className="w-6 shrink-0 text-center text-xs tabular-nums text-muted-foreground">
@@ -53,21 +63,23 @@ export const SearchResultItem = memo(function SearchResultItem({ track, index, i
           )}
         </p>
         <p className="truncate text-xs text-muted-foreground">
-          {track.artist.map((a, ai) => (
-            <span key={ai}>
-              {ai > 0 && ' / '}
-              <button
-                type="button"
-                className="hover:text-foreground hover:underline"
-                onClick={(e) => {
-                  e.stopPropagation()
-                  onSearchArtist(a)
-                }}
-              >
-                {a}
-              </button>
-            </span>
-          ))}
+          {onArtistClick
+            ? track.artist.map((a, ai) => (
+                <span key={ai}>
+                  {ai > 0 && ' / '}
+                  <button
+                    type="button"
+                    className="hover:text-foreground hover:underline"
+                    onClick={(e) => {
+                      e.stopPropagation()
+                      onArtistClick(a)
+                    }}
+                  >
+                    {a}
+                  </button>
+                </span>
+              ))
+            : track.artist.join(' / ')}
           {track.album ? ` · ${track.album}` : ''}
         </p>
       </div>
@@ -100,6 +112,6 @@ export const SearchResultItem = memo(function SearchResultItem({ track, index, i
         </TooltipTrigger>
         <TooltipContent>{isAdded ? '已添加' : '添加到播放列表'}</TooltipContent>
       </Tooltip>
-    </motion.div>
+    </div>
   )
 })

@@ -1,5 +1,6 @@
 import { storage } from '@/lib/storage'
 import { useSocketContext } from '@/providers/SocketProvider'
+import { useRoomStore } from '@/stores/roomStore'
 import type { MusicSource, MyPlatformAuth, PlatformAuthStatus } from '@music-together/shared'
 import { EVENTS } from '@music-together/shared'
 import { useCallback, useEffect, useRef, useState } from 'react'
@@ -17,9 +18,15 @@ export function useAuth() {
   const { socket } = useSocketContext()
   const [platformStatus, setPlatformStatus] = useState<PlatformAuthStatus[]>([])
   const [myStatus, setMyStatus] = useState<MyPlatformAuth[]>([])
+  const [statusLoaded, setStatusLoaded] = useState(false)
   const [qrData, setQrData] = useState<{ key: string; qrimg: string } | null>(null)
   const [qrStatus, setQrStatus] = useState<{ status: number; message: string } | null>(null)
   const [isQrLoading, setIsQrLoading] = useState(false)
+  const [qrPlatform, setQrPlatform] = useState<MusicSource>('netease')
+
+  // Ref mirrors qrPlatform so checkQrStatus always reads the latest value
+  // without re-creating the callback (which would restart the polling interval).
+  const qrPlatformRef = useRef<MusicSource>(qrPlatform)
 
   // Track how many auto-resend results are still pending so we can suppress their toasts.
   const pendingAutoResendRef = useRef(0)
@@ -31,6 +38,7 @@ export function useAuth() {
 
     const onMyStatus = (data: MyPlatformAuth[]) => {
       setMyStatus(data)
+      setStatusLoaded(true)
     }
 
     const onQrGenerated = (data: { key: string; qrimg: string }) => {
@@ -48,16 +56,23 @@ export function useAuth() {
     }
 
     // localStorage persistence is handled by useRoom.ts (always-mounted).
-    // Here we only handle toast display, suppressing auto-resend toasts.
+    // Here we only handle toast display for user-initiated actions.
+    // For auto-resend: suppress SUCCESS toasts (avoid noisy "已登录为 xxx" on room join),
+    // but let FAILURE toasts through — useAuthSync handles those with proper feedback.
     const onCookieResult = (data: {
       success: boolean
       message: string
       platform?: MusicSource
       cookie?: string
+      reason?: 'expired' | 'error'
     }) => {
       if (pendingAutoResendRef.current > 0) {
         pendingAutoResendRef.current--
-        return // Suppress toast for auto-resend
+        if (data.success) {
+          return // Suppress success toast for auto-resend
+        }
+        // Failure toasts are NOT suppressed — useAuthSync shows them
+        return
       }
       if (data.success) {
         toast.success(data.message)
@@ -83,6 +98,14 @@ export function useAuth() {
     // Fetch current status on mount (covers late-mount scenario)
     socket.emit(EVENTS.AUTH_GET_STATUS)
 
+    // If room was already set before this hook mounted (e.g. HomePage consumed
+    // ROOM_STATE and navigated here), set the pending count now so auto-resend
+    // success toasts from useRoomState's mount-based resend are suppressed.
+    if (useRoomStore.getState().room) {
+      const stored = storage.getAuthCookies()
+      pendingAutoResendRef.current = stored.length
+    }
+
     return () => {
       socket.off(EVENTS.AUTH_STATUS_UPDATE, onStatusUpdate)
       socket.off(EVENTS.AUTH_MY_STATUS, onMyStatus)
@@ -98,6 +121,8 @@ export function useAuth() {
       setQrData(null)
       setQrStatus(null)
       setIsQrLoading(true)
+      setQrPlatform(platform)
+      qrPlatformRef.current = platform
       socket.emit(EVENTS.AUTH_REQUEST_QR, { platform })
     },
     [socket],
@@ -105,7 +130,7 @@ export function useAuth() {
 
   const checkQrStatus = useCallback(
     (key: string) => {
-      socket.emit(EVENTS.AUTH_CHECK_QR, { key })
+      socket.emit(EVENTS.AUTH_CHECK_QR, { key, platform: qrPlatformRef.current })
     },
     [socket],
   )
@@ -135,8 +160,10 @@ export function useAuth() {
   return {
     platformStatus,
     myStatus,
+    statusLoaded,
     qrData,
     qrStatus,
+    qrPlatform,
     isQrLoading,
     requestQrCode,
     checkQrStatus,

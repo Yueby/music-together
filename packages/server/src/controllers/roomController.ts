@@ -1,12 +1,12 @@
-import { EVENTS, ERROR_CODE, roomCreateSchema, roomJoinSchema, roomSettingsSchema, setRoleSchema } from '@music-together/shared'
+import { ERROR_CODE, EVENTS, roomCreateSchema, roomJoinSchema, roomSettingsSchema, setRoleSchema } from '@music-together/shared'
+import type { TypedServer, TypedSocket } from '../middleware/types.js'
+import { createWithHostOnly } from '../middleware/withControl.js'
 import { roomRepo } from '../repositories/roomRepository.js'
-import * as roomService from '../services/roomService.js'
 import * as chatService from '../services/chatService.js'
 import * as playerService from '../services/playerService.js'
+import * as roomService from '../services/roomService.js'
 import * as voteService from '../services/voteService.js'
-import { createWithHostOnly } from '../middleware/withControl.js'
 import { logger } from '../utils/logger.js'
-import type { TypedServer, TypedSocket } from '../middleware/types.js'
 
 export function registerRoomController(io: TypedServer, socket: TypedSocket) {
   const withHostOnly = createWithHostOnly(io)
