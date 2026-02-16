@@ -1,6 +1,6 @@
 import type { EVENTS } from './events.js'
 import type {
-  AudioQuality, ChatMessage, MusicSource, MyPlatformAuth, PlayMode, PlatformAuthStatus,
+  AudioQuality, ChatMessage, MusicSource, MyPlatformAuth, PlayMode, Playlist, PlatformAuthStatus,
   RoomListItem, RoomState, ScheduledPlayState, Track, User, UserRole, VoteAction, VoteState,
 } from './types.js'
 
@@ -39,9 +39,12 @@ export interface ServerToClientEvents {
   // Auth
   [EVENTS.AUTH_QR_GENERATED]: (data: { key: string; qrimg: string }) => void
   [EVENTS.AUTH_QR_STATUS]: (data: { status: number; message: string }) => void
-  [EVENTS.AUTH_SET_COOKIE_RESULT]: (data: { success: boolean; message: string; platform?: MusicSource; cookie?: string }) => void
+  [EVENTS.AUTH_SET_COOKIE_RESULT]: (data: { success: boolean; message: string; platform?: MusicSource; cookie?: string; reason?: 'expired' | 'error' }) => void
   [EVENTS.AUTH_STATUS_UPDATE]: (data: PlatformAuthStatus[]) => void
   [EVENTS.AUTH_MY_STATUS]: (data: MyPlatformAuth[]) => void
+
+  // Playlist
+  [EVENTS.PLAYLIST_MY_LIST]: (data: { platform: MusicSource; playlists: Playlist[] }) => void
 }
 
 /** 客户端 → 服务端 事件接口 */
@@ -88,10 +91,16 @@ export interface ClientToServerEvents {
 
   // Auth
   [EVENTS.AUTH_REQUEST_QR]: (data: { platform: MusicSource }) => void
-  [EVENTS.AUTH_CHECK_QR]: (data: { key: string }) => void
+  [EVENTS.AUTH_CHECK_QR]: (data: { key: string; platform: MusicSource }) => void
   [EVENTS.AUTH_SET_COOKIE]: (data: { platform: MusicSource; cookie: string }) => void
   [EVENTS.AUTH_LOGOUT]: (data: { platform: MusicSource }) => void
   [EVENTS.AUTH_GET_STATUS]: () => void
+
+  // Playlist
+  [EVENTS.PLAYLIST_GET_MY]: (data: { platform: MusicSource }) => void
+
+  // Queue batch
+  [EVENTS.QUEUE_ADD_BATCH]: (data: { tracks: Track[]; playlistName?: string }) => void
 
   // NTP clock sync
   [EVENTS.NTP_PING]: (data: { clientPingId: number; lastRttMs?: number }) => void

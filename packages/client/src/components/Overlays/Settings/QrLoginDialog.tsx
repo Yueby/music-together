@@ -6,13 +6,20 @@ import {
   DialogHeader,
   DialogTitle,
 } from '@/components/ui/dialog'
+import type { MusicSource } from '@music-together/shared'
 import { Loader2, RefreshCw, CheckCircle2, AlertCircle, Smartphone } from 'lucide-react'
 import { useEffect, useRef } from 'react'
-import { toast } from 'sonner'
 
-interface NeteaseQrDialogProps {
+const PLATFORM_LABELS: Record<MusicSource, string> = {
+  netease: '网易云音乐',
+  tencent: 'QQ 音乐',
+  kugou: '酷狗音乐',
+}
+
+interface QrLoginDialogProps {
   open: boolean
   onOpenChange: (open: boolean) => void
+  platform: MusicSource
   qrData: { key: string; qrimg: string } | null
   qrStatus: { status: number; message: string } | null
   isLoading: boolean
@@ -20,16 +27,18 @@ interface NeteaseQrDialogProps {
   onCheckStatus: (key: string) => void
 }
 
-export function NeteaseQrDialog({
+export function QrLoginDialog({
   open,
   onOpenChange,
+  platform,
   qrData,
   qrStatus,
   isLoading,
   onRefresh,
   onCheckStatus,
-}: NeteaseQrDialogProps) {
+}: QrLoginDialogProps) {
   const pollRef = useRef<ReturnType<typeof setInterval> | null>(null)
+  const label = PLATFORM_LABELS[platform] ?? platform
 
   // Auto-poll QR status every 2 seconds when dialog is open and QR is generated
   useEffect(() => {
@@ -54,25 +63,20 @@ export function NeteaseQrDialog({
     }
   }, [open, qrData?.key, onCheckStatus])
 
-  // Auto-close on success
+  // On success (803) or expiry (800): stop polling immediately + auto-close on success
   useEffect(() => {
-    if (qrStatus?.status === 803) {
-      toast.success('网易云音乐登录成功')
-      // Give user a moment to see the success state
-      const t = setTimeout(() => onOpenChange(false), 1000)
-      return () => clearTimeout(t)
-    }
-  }, [qrStatus?.status, onOpenChange])
-
-  // Stop polling on expiry or success
-  useEffect(() => {
-    if (qrStatus?.status === 800 || qrStatus?.status === 803) {
+    const status = qrStatus?.status
+    if (status === 800 || status === 803) {
       if (pollRef.current) {
         clearInterval(pollRef.current)
         pollRef.current = null
       }
     }
-  }, [qrStatus?.status])
+    if (status === 803) {
+      const t = setTimeout(() => onOpenChange(false), 1000)
+      return () => clearTimeout(t)
+    }
+  }, [qrStatus?.status, onOpenChange])
 
   const statusCode = qrStatus?.status ?? 0
 
@@ -80,9 +84,9 @@ export function NeteaseQrDialog({
     <Dialog open={open} onOpenChange={onOpenChange}>
       <DialogContent className="sm:max-w-sm">
         <DialogHeader>
-          <DialogTitle>网易云音乐扫码登录</DialogTitle>
+          <DialogTitle>{label}扫码登录</DialogTitle>
           <DialogDescription>
-            使用网易云音乐 App 扫描二维码登录
+            使用{label} App 扫描二维码登录
           </DialogDescription>
         </DialogHeader>
 
@@ -96,7 +100,7 @@ export function NeteaseQrDialog({
               <>
                 <img
                   src={qrData.qrimg}
-                  alt="网易云音乐登录二维码"
+                  alt={`${label}登录二维码`}
                   className="h-full w-full rounded-lg object-contain p-2"
                 />
                 {/* Overlay for expired/success */}
@@ -124,7 +128,7 @@ export function NeteaseQrDialog({
             {statusCode === 801 && (
               <>
                 <Smartphone className="text-muted-foreground h-4 w-4" />
-                <span className="text-muted-foreground">打开网易云音乐 App 扫码</span>
+                <span className="text-muted-foreground">打开{label} App 扫码</span>
               </>
             )}
             {statusCode === 802 && (

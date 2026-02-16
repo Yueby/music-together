@@ -57,22 +57,29 @@ export const playerSetModeSchema = z.object({
 // Queue
 // ---------------------------------------------------------------------------
 
+const trackSchema = z.object({
+  id: z.string().max(200),
+  title: z.string().max(500),
+  artist: z.array(z.string().max(200)).max(20),
+  album: z.string().max(500),
+  duration: z.number().finite().nonnegative(),
+  cover: z.string().max(2000),
+  source: z.enum(['netease', 'tencent', 'kugou']),
+  sourceId: z.string().max(200),
+  urlId: z.string().max(200),
+  lyricId: z.string().max(200).optional(),
+  picId: z.string().max(200).optional(),
+  streamUrl: z.string().max(2000).optional(),
+  vip: z.boolean().optional(),
+})
+
 export const queueAddSchema = z.object({
-  track: z.object({
-    id: z.string().max(200),
-    title: z.string().max(500),
-    artist: z.array(z.string().max(200)).max(20),
-    album: z.string().max(500),
-    duration: z.number().finite().nonnegative(),
-    cover: z.string().max(2000),
-    source: z.enum(['netease', 'tencent', 'kugou']),
-    sourceId: z.string().max(200),
-    urlId: z.string().max(200),
-    lyricId: z.string().max(200).optional(),
-    picId: z.string().max(200).optional(),
-    streamUrl: z.string().max(2000).optional(),
-    vip: z.boolean().optional(),
-  }),
+  track: trackSchema,
+})
+
+export const queueAddBatchSchema = z.object({
+  tracks: z.array(trackSchema).min(1).max(LIMITS.QUEUE_BATCH_MAX_SIZE),
+  playlistName: z.string().max(200).optional(),
 })
 
 export const queueRemoveSchema = z.object({ trackId: z.string().max(200) })
@@ -116,6 +123,16 @@ export const coverQuerySchema = z.object({
   source: musicSourceSchema,
   picId: z.string().min(1),
   size: z.coerce.number().int().positive().default(300),
+})
+
+export const playlistQuerySchema = z.object({
+  source: musicSourceSchema,
+  id: z.string().min(1).max(LIMITS.PLAYLIST_ID_MAX_LENGTH),
+  limit: z.coerce.number().int().min(1).max(200).default(100),
+  offset: z.coerce.number().int().min(0).default(0),
+  total: z.coerce.number().int().min(0).optional(),
+  roomId: z.string().min(1).max(10).optional(),
+  userId: z.string().min(1).max(30).optional(),
 })
 
 // ---------------------------------------------------------------------------

@@ -1,5 +1,5 @@
-import { createContext, useContext, useEffect, useMemo, useRef, useState, type ReactNode } from 'react'
 import { connectSocket, type TypedSocket } from '@/lib/socket'
+import { createContext, useContext, useEffect, useMemo, useRef, useState, type ReactNode } from 'react'
 import { toast } from 'sonner'
 
 interface SocketContextValue {
@@ -24,7 +24,7 @@ export function SocketProvider({ children }: { children: ReactNode }) {
       toast.dismiss(DISCONNECT_TOAST_ID)
       // Only show reconnect toast if we've been disconnected before
       if (hasDisconnected.current) {
-        toast.success('已重新连接')
+        toast.success('已重新连接', { id: 'socket-reconnect' })
       }
     }
 

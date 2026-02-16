@@ -62,6 +62,13 @@ export const EVENTS = {
   AUTH_STATUS_UPDATE: 'auth:status_update',
   AUTH_MY_STATUS: 'auth:my_status',
   AUTH_GET_STATUS: 'auth:get_status',
+
+  // Playlist
+  PLAYLIST_GET_MY: 'playlist:get_my',
+  PLAYLIST_MY_LIST: 'playlist:my_list',
+
+  // Queue batch
+  QUEUE_ADD_BATCH: 'queue:add_batch',
 } as const
 
 export type EventName = (typeof EVENTS)[keyof typeof EVENTS]

@@ -22,16 +22,24 @@ export function useRoomState() {
   const navigateRef = useRef(navigate)
   navigateRef.current = navigate
 
+  // Guard against React Strict Mode double-mount sending cookies twice.
+  // Persists across cleanup/re-setup so the second mount is a no-op.
+  const mountResendDone = useRef(false)
+
   useEffect(() => {
+    const resendCookies = () => {
+      const storedCookies = storage.getAuthCookies()
+      for (const { platform, cookie } of storedCookies) {
+        socket.emit(EVENTS.AUTH_SET_COOKIE, { platform, cookie })
+      }
+    }
+
     const onRoomState = (roomState: RoomState) => {
       // setRoom automatically derives currentUser from room.users
       useRoomStore.getState().setRoom(roomState)
 
       // Auto-resend persisted auth cookies so the room's cookie pool is populated
-      const storedCookies = storage.getAuthCookies()
-      for (const { platform, cookie } of storedCookies) {
-        socket.emit(EVENTS.AUTH_SET_COOKIE, { platform, cookie })
-      }
+      resendCookies()
     }
 
     const onUserJoined = (user: User) => {
@@ -74,6 +82,14 @@ export function useRoomState() {
     socket.on(EVENTS.ROOM_SETTINGS, onSettings)
     socket.on(EVENTS.ROOM_ROLE_CHANGED, onRoleChanged)
     socket.on(EVENTS.ROOM_ERROR, onError)
+
+    // If room was already set before this hook mounted (e.g. HomePage consumed
+    // ROOM_STATE and navigated here), resend cookies now. The ref guard prevents
+    // React Strict Mode's double-mount from sending twice.
+    if (!mountResendDone.current && useRoomStore.getState().room) {
+      mountResendDone.current = true
+      resendCookies()
+    }
 
     return () => {
       socket.off(EVENTS.ROOM_STATE, onRoomState)

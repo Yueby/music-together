@@ -158,6 +158,11 @@ export const storage = {
     )
     safeSetJSON('auth-cookies', list)
   },
+
+  hasAuthCookie: (platform: MusicSource): boolean => {
+    const list = safeGetJSON<StoredCookie[]>('auth-cookies') ?? []
+    return list.some((c) => c.platform === platform)
+  },
 }
 
 /** Shape stored in localStorage for auth cookies */

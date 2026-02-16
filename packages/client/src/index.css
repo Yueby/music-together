@@ -97,6 +97,7 @@
 /* ===== Scrollbar styling ===== */
 ::-webkit-scrollbar {
   width: 6px;
+  height: 6px;
 }
 ::-webkit-scrollbar-track {
   background: transparent;
@@ -107,6 +108,21 @@
 }
 ::-webkit-scrollbar-thumb:hover {
   background: oklch(0.5 0 0 / 40%);
+}
+
+/* Firefox scrollbar */
+* {
+  scrollbar-width: thin;
+  scrollbar-color: oklch(0.5 0 0 / 20%) transparent;
+}
+
+/* Utility: hide scrollbar while keeping scroll functional */
+.scrollbar-hide::-webkit-scrollbar {
+  display: none;
+}
+.scrollbar-hide {
+  -ms-overflow-style: none;
+  scrollbar-width: none;
 }
 
 /* ===== Marquee text overflow animation ===== */

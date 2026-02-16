@@ -3,6 +3,8 @@ import type { MusicSource, Track } from '@music-together/shared'
 import { LRUCache } from 'lru-cache'
 import { nanoid } from 'nanoid'
 import pLimit from 'p-limit'
+import { ncmApi } from './neteaseAuthService.js'
+import * as kugouAuth from './kugouAuthService.js'
 import { logger } from '../utils/logger.js'
 
 // ---------------------------------------------------------------------------
@@ -12,6 +14,17 @@ type MetingInstance = InstanceType<typeof Meting>
 
 /** Parsed JSON from Meting API responses */
 type MetingJson = Record<string, unknown>
+
+/** Loosely typed ncmApi response (the library has no TS declarations). */
+interface NcmApiResponse {
+  body?: {
+    code?: number
+    songs?: Record<string, unknown>[]
+    playlist?: Record<string, unknown>[]
+    [key: string]: unknown
+  }
+  [key: string]: unknown
+}
 
 /** External API timeout (ms) */
 const API_TIMEOUT_MS = 15_000
@@ -36,20 +49,53 @@ const SEARCH_PATHS: Record<MusicSource, string> = {
   kugou: 'data.info',
 }
 
+// Path to song list in raw playlist API response per platform
+const PLAYLIST_PATHS: Record<MusicSource, string> = {
+  netease: 'playlist.tracks', // Not used (Netease uses ncmApi)
+  tencent: 'data.cdlist.0.songlist', // JS arrays support string numeric index
+  kugou: 'data.info',
+}
+
 // ---------------------------------------------------------------------------
 // Cache TTL constants
 // ---------------------------------------------------------------------------
 const HOUR = 60 * 60 * 1000
 const MINUTE = 60 * 1000
 
+// ---------------------------------------------------------------------------
+// TrackMeta — Track without per-instance fields (id, requestedBy)
+// ---------------------------------------------------------------------------
+type TrackMeta = Omit<Track, 'id' | 'requestedBy'>
+
 class MusicProvider {
   // Shared instances with format(true) — used for url/lyric/cover operations (no cookie)
   private instances = new Map<MusicSource, MetingInstance>()
 
   // ---------------------------------------------------------------------------
-  // LRU caches — bounded by max entries + TTL; auto-evicts stale/overflow entries
+  // 3-Layer Cache Architecture
   // ---------------------------------------------------------------------------
-  private searchCache = new LRUCache<string, Track[]>({ max: 200, ttl: 10 * MINUTE })
+
+  // Layer 1: Track Registry — single source of truth for all track metadata.
+  // Every track that passes through the system (search, playlist) gets registered
+  // here. Cross-context enrichment: search provides duration + cover, playlist
+  // provides additional tracks. Merge strategy keeps the richest data.
+  private trackRegistry = new LRUCache<string, TrackMeta>({
+    max: 10_000,
+    ttl: 2 * HOUR,
+  })
+
+  // Layer 2: Reference Indexes — store only sourceId arrays, NOT full Track objects.
+  // Memory-efficient: a 2000-track playlist costs ~40KB (IDs) instead of ~1MB (Track[]).
+  private searchIndex = new LRUCache<string, { source: MusicSource; ids: string[] }>({
+    max: 200,
+    ttl: 10 * MINUTE,
+  })
+  private playlistIndex = new LRUCache<string, { source: MusicSource; ids: string[] }>({
+    max: 50,
+    ttl: 30 * MINUTE,
+  })
+
+  // Layer 3: Resource Caches — scalar values for stream URLs, covers, lyrics.
   private streamUrlCache = new LRUCache<string, string>({ max: 500, ttl: 1 * HOUR })
   private coverCache = new LRUCache<string, string>({ max: 1000, ttl: 24 * HOUR })
   private lyricCache = new LRUCache<string, { lyric: string; tlyric: string }>({ max: 500, ttl: 24 * HOUR })
@@ -64,16 +110,86 @@ class MusicProvider {
     return m
   }
 
+  // ---------------------------------------------------------------------------
+  // Track Registry helpers
+  // ---------------------------------------------------------------------------
+
+  /**
+   * Register tracks into the registry, merging with existing data.
+   * Merge strategy: keep the richer value for each field (non-empty wins).
+   * This enables cross-context enrichment: search provides duration + cover,
+   * playlist provides additional tracks, and both benefit from each other.
+   */
+  private registerTracks(tracks: Track[]): void {
+    for (const t of tracks) {
+      const key = `${t.source}:${t.sourceId}`
+      const existing = this.trackRegistry.get(key)
+      const { id: _id, requestedBy: _rb, ...meta } = t
+      if (existing) {
+        const merged: TrackMeta = {
+          ...existing,
+          cover: existing.cover || meta.cover,
+          duration: existing.duration || meta.duration,
+          vip: existing.vip || meta.vip,
+        }
+        this.trackRegistry.set(key, merged)
+      } else {
+        this.trackRegistry.set(key, meta)
+      }
+    }
+  }
+
+  /**
+   * Enrich a track in-place from the registry (fill missing cover, duration, vip).
+   * Called before caching playlist tracks so that previously-searched tracks
+   * get their duration and cover carried over.
+   */
+  private enrichFromRegistry(track: Track): void {
+    const cached = this.trackRegistry.get(`${track.source}:${track.sourceId}`)
+    if (!cached) return
+    if (!track.cover && cached.cover) track.cover = cached.cover
+    if (!track.duration && cached.duration) track.duration = cached.duration
+    if (!track.vip && cached.vip) track.vip = cached.vip
+  }
+
+  /**
+   * Hydrate sourceId[] back into Track[] from the registry.
+   * Returns null if ANY id is missing (registry eviction) — caller should
+   * treat this as a cache miss and re-fetch from Meting.
+   * Each hydrated Track gets a fresh nanoid for its `id` field.
+   */
+  private hydrateFromRegistry(source: MusicSource, ids: string[]): Track[] | null {
+    const tracks: Track[] = []
+    for (const sourceId of ids) {
+      const meta = this.trackRegistry.get(`${source}:${sourceId}`)
+      if (!meta) return null
+      tracks.push({ ...meta, id: nanoid() })
+    }
+    return tracks
+  }
+
+  // ---------------------------------------------------------------------------
+  // Public API — Search
+  // ---------------------------------------------------------------------------
+
   /**
    * Search for tracks. Uses format(false) to get raw API data including duration,
    * then batch-resolves cover URLs.
    */
   async search(source: MusicSource, keyword: string, limit = 20, page = 1): Promise<Track[]> {
     const cacheKey = `${source}:${keyword}:${limit}:${page}`
-    const cached = this.searchCache.get(cacheKey)
-    if (cached) {
-      logger.info(`Search cache hit: "${keyword}" on ${source} (page ${page})`)
-      return cached.map(t => ({ ...t, id: nanoid() }))
+
+    // Check reference index
+    const indexed = this.searchIndex.get(cacheKey)
+    if (indexed) {
+      const hydrated = this.hydrateFromRegistry(indexed.source, indexed.ids)
+      if (hydrated) {
+        logger.info(`Search cache hit: "${keyword}" on ${source} (page ${page})`)
+        return hydrated
+      }
+      // Registry eviction — stale index, fall through to re-fetch
+      this.searchIndex.delete(cacheKey)
+      logger.info(`Search index stale (registry eviction): "${keyword}" on ${source}`)
     }
 
     try {
@@ -101,7 +217,13 @@ class MusicProvider {
       // Batch resolve cover URLs for tracks that don't already have one
       await this.batchResolveCover(tracks, source)
 
-      this.searchCache.set(cacheKey, tracks)
+      // Register into Layer 1 and index into Layer 2
+      this.registerTracks(tracks)
+      this.searchIndex.set(cacheKey, {
+        source,
+        ids: tracks.map((t) => t.sourceId),
+      })
+
       logger.info(`Search "${keyword}" on ${source}: ${tracks.length} results`)
       return tracks
     } catch (err) {
@@ -109,6 +231,10 @@ class MusicProvider {
       return []
     }
   }
+
+  // ---------------------------------------------------------------------------
+  // Public API — Stream URL, Lyric, Cover (unchanged from original)
+  // ---------------------------------------------------------------------------
 
   /**
    * Get stream URL for a track. Optionally inject a cookie for VIP access.
@@ -215,6 +341,275 @@ class MusicProvider {
   }
 
   // ---------------------------------------------------------------------------
+  // Public API — Playlist (new: paginated)
+  // ---------------------------------------------------------------------------
+
+  /**
+   * Ensure a playlist's track IDs are in the registry + index.
+   * Does NOT resolve covers (that's deferred to getPlaylistPage).
+   * Returns the full sourceId list and total count.
+   */
+  async fetchFullPlaylist(source: MusicSource, playlistId: string, playlistTotal?: number, cookie?: string | null): Promise<{ ids: string[]; total: number }> {
+    const cacheKey = `${source}:${playlistId}`
+
+    // Check reference index — verify registry still has all tracks
+    const indexed = this.playlistIndex.get(cacheKey)
+    if (indexed) {
+      const allPresent = indexed.ids.every(
+        (id) => this.trackRegistry.get(`${indexed.source}:${id}`) !== undefined,
+      )
+      if (allPresent) {
+        logger.info(`Playlist index hit: ${source}/${playlistId} (${indexed.ids.length} tracks)`)
+        return { ids: indexed.ids, total: indexed.ids.length }
+      }
+      this.playlistIndex.delete(cacheKey)
+      logger.info(`Playlist index stale (registry eviction): ${source}/${playlistId}`)
+    }
+
+    // Netease: use ncmApi.playlist_track_all to bypass Meting's 1000-track limit
+    if (source === 'netease') {
+      return this.fetchNeteasePlaylist(playlistId, cacheKey, playlistTotal, cookie)
+    }
+
+    // Kugou: try native API (works with global_collection_id from user playlists)
+    // Falls back to Meting for public playlists / special IDs
+    if (source === 'kugou') {
+      const result = await this.fetchKugouPlaylist(playlistId, cacheKey, cookie)
+      if (result.total > 0) return result
+      logger.info(`Kugou native API returned empty for ${playlistId}, falling back to Meting`)
+    }
+
+    // Tencent (and Kugou fallback): use Meting raw mode
+    return this.fetchMetingPlaylist(source, playlistId, cacheKey)
+  }
+
+  /**
+   * Fetch full Netease playlist via ncmApi.playlist_track_all.
+   * No 1000-track limit; returns full song data including duration/album/artist.
+   */
+  private async fetchNeteasePlaylist(playlistId: string, cacheKey: string, playlistTotal?: number, cookie?: string | null): Promise<{ ids: string[]; total: number }> {
+    // Netease /api/v3/song/detail can't handle more than ~1000 IDs per request,
+    // so we paginate through playlist_track_all in chunks of 1000.
+    const CHUNK_SIZE = 1000
+    const totalToFetch = playlistTotal || 100000
+    const baseParams = { id: playlistId, timestamp: Date.now(), ...(cookie ? { cookie } : {}) }
+
+    try {
+      const allTracks: Track[] = []
+      let offset = 0
+
+      while (offset < totalToFetch) {
+        const res = await withTimeout(
+          ncmApi.playlist_track_all({ ...baseParams, limit: CHUNK_SIZE, offset } as Record<string, unknown>),
+          60_000,
+        ) as NcmApiResponse | null
+
+        if (res === null) {
+          logger.warn(`Netease playlist_track_all timeout: ${playlistId} (offset=${offset})`)
+          break
+        }
+
+        const songs = res?.body?.songs
+        if (!Array.isArray(songs) || songs.length === 0) {
+          if (offset === 0) {
+            logger.warn(`Netease playlist_track_all empty: ${playlistId}`, { code: res?.body?.code })
+            return { ids: [], total: 0 }
+          }
+          break
+        }
+
+        const chunk = songs.map((song: Record<string, unknown>) => this.rawToTrack(song, 'netease'))
+        allTracks.push(...chunk)
+
+        // If we got fewer than CHUNK_SIZE, we've reached the end
+        if (songs.length < CHUNK_SIZE) break
+        offset += CHUNK_SIZE
+      }
+
+      if (allTracks.length === 0) return { ids: [], total: 0 }
+
+      for (const t of allTracks) this.enrichFromRegistry(t)
+      this.registerTracks(allTracks)
+
+      const ids = allTracks.map((t) => t.sourceId)
+      this.playlistIndex.set(cacheKey, { source: 'netease', ids })
+
+      logger.info(`Netease playlist ${playlistId}: ${ids.length} tracks (via ncmApi, ${Math.ceil(ids.length / CHUNK_SIZE)} chunks)`)
+      return { ids, total: ids.length }
+    } catch (err) {
+      logger.error(`Netease playlist_track_all failed: ${playlistId}`, err)
+      return { ids: [], total: 0 }
+    }
+  }
+
+  /**
+   * Fetch kugou playlist via native kugou API (global_collection_id).
+   * Supports user playlists that Meting cannot access.
+   */
+  private async fetchKugouPlaylist(playlistId: string, cacheKey: string, cookie?: string | null): Promise<{ ids: string[]; total: number }> {
+    try {
+      const PAGE_SIZE = 300
+      const allTracks: Track[] = []
+      let page = 1
+      let totalFromApi = 0
+
+      // Paginate until all tracks are fetched
+      while (true) {
+        const { songs, total } = await kugouAuth.getPlaylistTracks(playlistId, page, PAGE_SIZE, cookie)
+        if (page === 1) totalFromApi = total
+
+        if (songs.length === 0) break
+
+        for (const song of songs) {
+          const track = this.kugouSongToTrack(song)
+          if (track) allTracks.push(track)
+        }
+
+        if (allTracks.length >= totalFromApi || songs.length < PAGE_SIZE) break
+        page++
+      }
+
+      if (allTracks.length === 0) return { ids: [], total: 0 }
+
+      for (const t of allTracks) this.enrichFromRegistry(t)
+      this.registerTracks(allTracks)
+
+      const ids = allTracks.map((t) => t.sourceId)
+      this.playlistIndex.set(cacheKey, { source: 'kugou', ids })
+
+      logger.info(`Kugou playlist ${playlistId}: ${ids.length} tracks (via native API, ${page} pages)`)
+      return { ids, total: ids.length }
+    } catch (err) {
+      logger.error(`Kugou playlist fetch failed: ${playlistId}`, err)
+      return { ids: [], total: 0 }
+    }
+  }
+
+  /** Convert a kugou song object from getPlaylistTracks to a Track. */
+  // eslint-disable-next-line @typescript-eslint/no-explicit-any -- external Kugou API response shape
+  private kugouSongToTrack(song: Record<string, unknown>): Track | null {
+    // Cast for convenient dynamic property access
+    const song_ = song as Record<string, any>
+    const hash = song_.hash || song_.audio_info?.hash || ''
+    if (!hash) return null
+
+    // filename is typically "Artist - Title" or "Artist1、Artist2 - Title"
+    const filename = String(song_.filename || song_.name || '')
+    const parts = filename.split(' - ')
+    const artistStr = parts.length > 1 ? parts[0].trim() : ''
+    const artists = artistStr ? artistStr.split(/[、,，&]/).map((a: string) => a.trim()).filter(Boolean) : []
+    const title = parts.length > 1 ? parts.slice(1).join(' - ').trim() : filename
+
+    // Duration: Kugou's native API returns seconds (e.g. 240), but some endpoints
+    // return milliseconds (e.g. 240000). Threshold 100000 (~27 hours in seconds)
+    // safely distinguishes the two — any value above it is assumed to be milliseconds.
+    let duration = Number(song_.duration ?? song_.timelen ?? 0)
+    if (duration > 100000) duration = Math.floor(duration / 1000)
+
+    // VIP / privilege
+    const privilege = song_.privilege ?? song_.pay_type ?? 0
+    const isVip = privilege > 0
+
+    return {
+      id: nanoid(),
+      source: 'kugou',
+      sourceId: hash,
+      title,
+      artist: artists,
+      album: String(song_.album_name || song_.remark || ''),
+      duration,
+      cover: '',
+      lyricId: hash,
+      urlId: hash,
+      picId: hash,
+      vip: isVip,
+    }
+  }
+
+  /**
+   * Fetch playlist via Meting raw mode — used for Tencent/Kugou.
+   * Raw mode preserves VIP/pay fields and duration (format mode strips them).
+   */
+  private async fetchMetingPlaylist(source: MusicSource, playlistId: string, cacheKey: string): Promise<{ ids: string[]; total: number }> {
+    try {
+      const meting = new Meting(source)
+      const raw = await withTimeout(meting.playlist(playlistId), 30_000)
+      if (raw === null) {
+        logger.warn(`Playlist fetch timeout for ${source}: ${playlistId}`)
+        return { ids: [], total: 0 }
+      }
+
+      let rawData: MetingJson
+      try {
+        rawData = JSON.parse(raw as string) as MetingJson
+      } catch {
+        logger.error(`Playlist JSON parse failed for ${source}`, (raw as string)?.substring?.(0, 200))
+        return { ids: [], total: 0 }
+      }
+
+      const songs = this.navigatePath(rawData, PLAYLIST_PATHS[source])
+      if (!Array.isArray(songs) || songs.length === 0) return { ids: [], total: 0 }
+
+      const tracks = songs.map((song: MetingJson) => this.rawToTrack(song, source))
+      for (const t of tracks) this.enrichFromRegistry(t)
+      this.registerTracks(tracks)
+
+      const ids = tracks.map((t) => t.sourceId)
+      this.playlistIndex.set(cacheKey, { source, ids })
+
+      logger.info(`Playlist ${playlistId} on ${source}: ${tracks.length} tracks (raw mode)`)
+      return { ids, total: ids.length }
+    } catch (err) {
+      logger.error(`Get playlist failed for ${source}:`, err)
+      return { ids: [], total: 0 }
+    }
+  }
+
+  /**
+   * Get a paginated slice of a playlist's tracks.
+   * Covers are resolved only for the requested page, not the entire playlist.
+   * After resolution, covers are written back to the registry for future reuse.
+   */
+  async getPlaylistPage(
+    source: MusicSource,
+    playlistId: string,
+    limit: number,
+    offset: number,
+    playlistTotal?: number,
+    cookie?: string | null,
+  ): Promise<{ tracks: Track[]; total: number; hasMore: boolean }> {
+    const { ids, total } = await this.fetchFullPlaylist(source, playlistId, playlistTotal, cookie)
+    if (total === 0) return { tracks: [], total: 0, hasMore: false }
+
+    const pageIds = ids.slice(offset, offset + limit)
+
+    // Hydrate page from registry
+    let tracks = this.hydrateFromRegistry(source, pageIds)
+    if (!tracks) {
+      // Registry eviction between fetchFullPlaylist and hydrate (very rare).
+      // Clear index and retry once.
+      this.playlistIndex.delete(`${source}:${playlistId}`)
+      logger.warn(`Playlist page hydration failed, retrying: ${source}/${playlistId}`)
+      const retry = await this.fetchFullPlaylist(source, playlistId, playlistTotal, cookie)
+      if (retry.total === 0) return { tracks: [], total: 0, hasMore: false }
+      const retryPageIds = retry.ids.slice(offset, offset + limit)
+      tracks = this.hydrateFromRegistry(source, retryPageIds)
+      if (!tracks) {
+        logger.error(`Playlist page hydration failed after retry: ${source}/${playlistId}`)
+        return { tracks: [], total: retry.total, hasMore: offset + limit < retry.total }
+      }
+    }
+
+    // Resolve covers for this page only (tracks with cover already set are skipped)
+    await this.batchResolveCover(tracks, source)
+
+    // Write newly resolved covers back to registry for cross-page / cross-context reuse
+    this.registerTracks(tracks)
+
+    return { tracks, total, hasMore: offset + limit < total }
+  }
+
+  // ---------------------------------------------------------------------------
   // Internal helpers
   // ---------------------------------------------------------------------------
 
@@ -232,88 +627,85 @@ class MusicProvider {
    * Each platform returns different field names, so we need per-platform parsing.
    */
   // eslint-disable-next-line @typescript-eslint/no-explicit-any -- platform API shapes are too dynamic for strict typing
-  private rawToTrack(song: Record<string, any>, source: MusicSource): Track {
+  private rawToTrack(song: Record<string, unknown>, source: MusicSource): Track {
+    // Cast to any for convenient dynamic property access on external API responses
+    const s = song as Record<string, any>
     switch (source) {
       case 'netease': {
-        const neteaseArtists = song.ar?.map((a: Record<string, unknown>) => a.name).filter(Boolean)
+        const neteaseArtists = s.ar?.map((a: Record<string, unknown>) => a.name).filter(Boolean)
         return {
           id: nanoid(),
-          title: song.name || 'Unknown',
+          title: s.name || 'Unknown',
           artist: neteaseArtists?.length ? neteaseArtists : ['Unknown'],
-          album: song.al?.name || '',
-          duration: Math.round((song.dt || 0) / 1000), // ms -> seconds
+          album: s.al?.name || '',
+          duration: Math.round((s.dt || 0) / 1000), // ms -> seconds
           cover: '', // resolved via pic()
           source,
-          sourceId: String(song.id),
-          urlId: String(song.id),
-          lyricId: String(song.id),
-          picId: String(song.al?.pic_str || song.al?.pic || ''),
+          sourceId: String(s.id),
+          urlId: String(s.id),
+          lyricId: String(s.id),
+          picId: String(s.al?.pic_str || s.al?.pic || ''),
           // fee: 0=免费, 1=VIP, 4=付费专辑, 8=低音质免费
-          vip: song.fee === 1 || song.fee === 4 || song.privilege?.fee === 1 || song.privilege?.fee === 4,
+          vip: s.fee === 1 || s.fee === 4 || s.privilege?.fee === 1 || s.privilege?.fee === 4,
         }
       }
 
       case 'tencent': {
         // Tencent sometimes wraps data in musicData
-        const s = song.musicData || song
+        const t = s.musicData || s
         return {
           id: nanoid(),
-          title: s.name || 'Unknown',
-          artist: (s.singer || []).map((a: Record<string, unknown>) => a.name),
-          album: (s.album?.title || '').trim(),
-          duration: s.interval || 0, // already in seconds
+          title: t.name || 'Unknown',
+          artist: (t.singer || []).map((a: Record<string, unknown>) => a.name),
+          album: (t.album?.title || '').trim(),
+          duration: t.interval || 0, // already in seconds
           cover: '', // resolved via pic()
           source,
-          sourceId: String(s.mid),
-          urlId: String(s.mid),
-          lyricId: String(s.mid),
-          picId: String(s.album?.mid || ''),
+          sourceId: String(t.mid),
+          urlId: String(t.mid),
+          lyricId: String(t.mid),
+          picId: String(t.album?.mid || ''),
           // pay.pay_play=1 表示需要 VIP, pay.pay_month=1 表示月度VIP, pay.price_track>0 表示付费单曲
-          vip: s.pay?.pay_play === 1 || s.pay?.pay_month === 1 || (s.pay?.price_track ?? 0) > 0,
+          vip: t.pay?.pay_play === 1 || t.pay?.pay_month === 1 || (t.pay?.price_track ?? 0) > 0,
         }
       }
 
       case 'kugou': {
         // Kugou encodes artist/title in filename: "Artist - Title"
-        const filename = song.filename || song.fileName || ''
+        const filename = s.filename || s.fileName || ''
         const parts = filename.split(' - ')
         let trackName = filename
         let artists: string[] = []
         if (parts.length >= 2) {
-          artists = parts[0].split('、').map((s: string) => s.trim())
+          artists = parts[0].split(/[、,，&]/).map((a: string) => a.trim()).filter(Boolean)
           trackName = parts.slice(1).join(' - ')
         }
         return {
           id: nanoid(),
           title: trackName || 'Unknown',
           artist: artists.length > 0 ? artists : ['Unknown'],
-          album: song.album_name || '',
-          duration: song.duration || 0, // seconds
+          album: s.album_name || '',
+          duration: s.duration || 0, // seconds
           cover: '', // resolved via pic() (requires API call)
           source,
-          sourceId: String(song.hash),
-          urlId: String(song.hash),
-          lyricId: String(song.hash),
-          picId: String(song.hash),
+          sourceId: String(s.hash),
+          urlId: String(s.hash),
+          lyricId: String(s.hash),
+          picId: String(s.hash),
           // privilege 位掩码: & 8 表示 VIP; pay_type > 0 也表示付费
-          vip: ((song.privilege ?? 0) & 8) !== 0 || (song.pay_type ?? 0) > 0,
+          vip: ((s.privilege ?? 0) & 8) !== 0 || (s.pay_type ?? 0) > 0,
         }
       }
 
-      default:
-        return {
-          id: nanoid(),
-          title: 'Unknown',
-          artist: ['Unknown'],
-          album: '',
-          duration: 0,
-          cover: '',
-          source,
-          sourceId: '',
-          urlId: '',
-        }
+      default: {
+        // Exhaustive check — if a new MusicSource is added, TypeScript will error here
+        const _exhaustive: never = source
+        throw new Error(`Unsupported music source: ${_exhaustive}`)
+      }
     }
   }
+
+
 
   /**
    * Batch-resolve cover URLs for tracks that don't have one.

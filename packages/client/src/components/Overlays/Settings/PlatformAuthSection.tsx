@@ -6,7 +6,7 @@ import type { MusicSource, MyPlatformAuth, PlatformAuthStatus } from '@music-tog
 import { Crown, KeyRound, LogOut, ScanLine } from 'lucide-react'
 import { useState } from 'react'
 import { ManualCookieDialog } from './ManualCookieDialog'
-import { NeteaseQrDialog } from './NeteaseQrDialog'
+import { QrLoginDialog } from './QrLoginDialog'
 
 const PLATFORM_LABELS: Record<MusicSource, string> = {
   netease: '网易云音乐',
@@ -44,7 +44,7 @@ function PlatformRow({
   platform: MusicSource
   status?: PlatformAuthStatus
   myStatus?: MyPlatformAuth
-  onQrLogin: () => void
+  onQrLogin: (platform: MusicSource) => void
   onCookieLogin: () => void
   onLogout: () => void
 }) {
@@ -78,8 +78,8 @@ function PlatformRow({
       <div className="flex shrink-0 items-center gap-1.5">
         {!isMyLoggedIn ? (
           <>
-            {platform === 'netease' && (
-              <Button variant="outline" size="sm" onClick={onQrLogin} className="gap-1">
+            {(platform === 'netease' || platform === 'kugou') && (
+              <Button variant="outline" size="sm" onClick={() => onQrLogin(platform)} className="gap-1">
                 <ScanLine className="h-3.5 w-3.5" />
                 扫码
               </Button>
@@ -112,8 +112,9 @@ export function PlatformAuthSection() {
 
   const platforms: MusicSource[] = ['netease', 'tencent', 'kugou']
 
-  const handleQrLogin = () => {
-    auth.requestQrCode('netease')
+  // NOTE: This legacy component is replaced by PlatformHub. Kept for backward compat.
+  const handleQrLogin = (platform: MusicSource) => {
+    auth.requestQrCode(platform)
     setQrDialogOpen(true)
   }
 
@@ -142,7 +143,7 @@ export function PlatformAuthSection() {
             platform={platform}
             status={getPlatformStatus(platform, auth.platformStatus)}
             myStatus={getMyPlatformStatus(platform, auth.myStatus)}
-            onQrLogin={handleQrLogin}
+            onQrLogin={(p) => handleQrLogin(p)}
             onCookieLogin={() => handleCookieLogin(platform)}
             onLogout={() => auth.logout(platform)}
           />
@@ -150,16 +151,17 @@ export function PlatformAuthSection() {
       ))}
 
       {/* QR Dialog */}
-      <NeteaseQrDialog
+      <QrLoginDialog
         open={qrDialogOpen}
         onOpenChange={(open: boolean) => {
           setQrDialogOpen(open)
           if (!open) auth.resetQr()
         }}
+        platform={auth.qrPlatform}
         qrData={auth.qrData}
         qrStatus={auth.qrStatus}
         isLoading={auth.isQrLoading}
-        onRefresh={() => auth.requestQrCode('netease')}
+        onRefresh={() => auth.requestQrCode(auth.qrPlatform)}
         onCheckStatus={(key: string) => auth.checkQrStatus(key)}
       />
 

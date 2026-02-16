@@ -1,6 +1,7 @@
-import { searchQuerySchema, urlQuerySchema, lyricQuerySchema, coverQuerySchema } from '@music-together/shared'
+import { searchQuerySchema, urlQuerySchema, lyricQuerySchema, coverQuerySchema, playlistQuerySchema } from '@music-together/shared'
 import { Router, type Router as RouterType } from 'express'
 import { musicProvider } from '../services/musicProvider.js'
+import * as authService from '../services/authService.js'
 import { logger } from '../utils/logger.js'
 
 const router: RouterType = Router()
@@ -71,6 +72,24 @@ router.get('/cover', async (req, res) => {
     res.json({ url })
   } catch (err) {
     logger.error('Get cover failed', err)
+    res.status(500).json({ error: 'Internal server error' })
+  }
+})
+
+router.get('/playlist', async (req, res) => {
+  try {
+    const parsed = playlistQuerySchema.safeParse(req.query)
+    if (!parsed.success) {
+      res.status(400).json({ error: parsed.error.issues[0]?.message ?? 'Invalid query parameters' })
+      return
+    }
+    const { source, id, limit, offset, total, roomId, userId } = parsed.data
+
+    const cookie = roomId && userId ? authService.getUserCookie(userId, source, roomId) : null
+    const result = await musicProvider.getPlaylistPage(source, id, limit, offset, total, cookie)
+    res.json({ tracks: result.tracks, total: result.total, offset, hasMore: result.hasMore })
+  } catch (err) {
+    logger.error('Get playlist failed', err)
     res.status(500).json({ error: 'Internal server error' })
   }
 })

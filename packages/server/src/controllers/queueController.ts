@@ -1,4 +1,4 @@
-import { EVENTS, ERROR_CODE, queueAddSchema, queueRemoveSchema, queueReorderSchema } from '@music-together/shared'
+import { EVENTS, ERROR_CODE, queueAddSchema, queueAddBatchSchema, queueRemoveSchema, queueReorderSchema } from '@music-together/shared'
 import type { Track } from '@music-together/shared'
 import type { TypedServer, TypedSocket } from '../middleware/types.js'
 import { createWithPermission } from '../middleware/withControl.js'
@@ -43,6 +43,41 @@ export function registerQueueController(io: TypedServer, socket: TypedSocket) {
       await playerService.autoPlayIfEmpty(io, ctx.roomId, track)
 
       logger.info(`Track added: ${track.title}`, { roomId: ctx.roomId })
+    }),
+  )
+
+  socket.on(
+    EVENTS.QUEUE_ADD_BATCH,
+    withPermission('add', 'Queue', async (ctx, raw) => {
+      if (!await checkSocketRateLimit(ctx.socket)) return
+      const parsed = queueAddBatchSchema.safeParse(raw)
+      if (!parsed.success) {
+        socket.emit(EVENTS.ROOM_ERROR, { code: ERROR_CODE.INVALID_DATA, message: '无效的歌曲数据' })
+        return
+      }
+      const { tracks: rawTracks, playlistName } = parsed.data
+      const tracks: Track[] = rawTracks.map(t => ({ ...t, requestedBy: ctx.user.nickname }))
+
+      const addedCount = queueService.addBatchTracks(ctx.roomId, tracks)
+      if (addedCount === 0) {
+        socket.emit(EVENTS.ROOM_ERROR, { code: ERROR_CODE.QUEUE_FULL, message: '播放队列已满' })
+        return
+      }
+      io.to(ctx.roomId).emit(EVENTS.QUEUE_UPDATED, { queue: ctx.room.queue })
+
+      const label = playlistName ? `歌单「${playlistName}」` : '歌单'
+      const msg = chatService.createSystemMessage(
+        ctx.roomId,
+        `${ctx.user.nickname} 从${label}导入了 ${addedCount} 首歌`,
+      )
+      io.to(ctx.roomId).emit(EVENTS.CHAT_MESSAGE, msg)
+
+      // Auto-play first added track if nothing is playing
+      if (addedCount > 0) {
+        await playerService.autoPlayIfEmpty(io, ctx.roomId, tracks[0])
+      }
+
+      logger.info(`Batch added ${addedCount} tracks from playlist`, { roomId: ctx.roomId })
     }),
   )
 

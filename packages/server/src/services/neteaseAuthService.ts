@@ -1,4 +1,5 @@
 import _ncmApi from '@neteasecloudmusicapienhanced/api'
+import type { Playlist } from '@music-together/shared'
 import { logger } from '../utils/logger.js'
 
 /**
@@ -9,7 +10,7 @@ import { logger } from '../utils/logger.js'
 // The library's type definitions are incomplete (missing `timestamp` param,
 // nested response types like `unikey`, `qrimg`, `profile`, etc.), but the
 // runtime API works correctly. Use `as any` to bypass the incomplete types.
-const ncmApi = _ncmApi as any
+export const ncmApi = _ncmApi as any
 
 // ---------------------------------------------------------------------------
 // QR Code Login
@@ -85,34 +86,95 @@ export async function checkQrStatus(key: string): Promise<{
 // Cookie validation & user info
 // ---------------------------------------------------------------------------
 
-/**
- * Validate a cookie and get user info.
- * @returns User info or null if cookie is invalid
- */
-export async function getUserInfo(cookie: string): Promise<{
+export interface UserInfoData {
   nickname: string
   vipType: number
   userId: number
-} | null> {
+}
+
+export type GetUserInfoResult =
+  | { ok: true; data: UserInfoData }
+  | { ok: false; reason: 'expired' | 'error' }
+
+/**
+ * Validate a cookie and get user info.
+ * Distinguishes between "cookie expired" (API responded but no profile)
+ * and "transient error" (network failure, timeout, etc.) so the caller
+ * can decide whether to remove the cookie from localStorage.
+ */
+export async function getUserInfo(cookie: string): Promise<GetUserInfoResult> {
   try {
     const res = await ncmApi.login_status({ cookie, timestamp: Date.now() })
     const profile = res?.body?.data?.profile
 
     if (!profile) {
-      logger.warn('Netease cookie validation failed: no profile in response')
-      return null
+      logger.warn('Netease cookie validation: no profile in response', { responseData: res?.body?.data })
+      return { ok: false, reason: 'expired' }
     }
 
     // vipType: 0=无, 1=VIP, 10=黑胶VIP, 11=黑胶VIP (alias)
     const vipType = profile.vipType ?? 0
 
     return {
-      nickname: profile.nickname || 'Unknown',
-      vipType,
-      userId: profile.userId,
+      ok: true,
+      data: {
+        nickname: profile.nickname || 'Unknown',
+        vipType,
+        userId: profile.userId,
+      },
     }
   } catch (err) {
-    logger.error('Netease getUserInfo failed', err)
-    return null
+    logger.error('Netease getUserInfo failed (transient error)', err)
+    return { ok: false, reason: 'error' }
+  }
+}
+
+// ---------------------------------------------------------------------------
+// User playlists
+// ---------------------------------------------------------------------------
+
+/**
+ * Get a user's playlists from Netease Cloud Music.
+ * Requires a valid cookie. Uses the userId from getUserInfo.
+ */
+export async function getUserPlaylists(cookie: string): Promise<Playlist[]> {
+  try {
+    const result = await getUserInfo(cookie)
+    if (!result.ok) {
+      logger.warn(`Cannot fetch playlists: cookie ${result.reason}`)
+      return []
+    }
+
+    const userInfo = result.data
+
+    const res = await ncmApi.user_playlist({
+      uid: userInfo.userId,
+      limit: 50,
+      offset: 0,
+      cookie,
+      timestamp: Date.now(),
+    })
+
+    const playlists = res?.body?.playlist
+    if (!Array.isArray(playlists)) {
+      logger.warn('Netease user_playlist: unexpected response', res?.body?.code)
+      return []
+    }
+
+    const mapped: Playlist[] = playlists.map((p: Record<string, any>) => ({
+      id: String(p.id),
+      name: String(p.name || ''),
+      cover: String(p.coverImgUrl || ''),
+      trackCount: Number(p.trackCount ?? 0),
+      source: 'netease' as const,
+      creator: String(p.creator?.nickname || ''),
+      description: String(p.description || ''),
+    }))
+
+    logger.info(`Fetched ${mapped.length} playlists for netease user ${userInfo.nickname}`)
+    return mapped
+  } catch (err) {
+    logger.error('Netease getUserPlaylists failed', err)
+    return []
   }
 }

@@ -10,6 +10,12 @@ export function useQueue() {
     [socket],
   )
 
+  const addBatchTracks = useCallback(
+    (tracks: Track[], playlistName?: string) =>
+      socket.emit(EVENTS.QUEUE_ADD_BATCH, { tracks, playlistName }),
+    [socket],
+  )
+
   const removeTrack = useCallback(
     (trackId: string) => socket.emit(EVENTS.QUEUE_REMOVE, { trackId }),
     [socket],
@@ -25,5 +31,5 @@ export function useQueue() {
     [socket],
   )
 
-  return { addTrack, removeTrack, reorderTracks, clearQueue }
+  return { addTrack, addBatchTracks, removeTrack, reorderTracks, clearQueue }
 }

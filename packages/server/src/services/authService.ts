@@ -114,6 +114,19 @@ export function getAnyCookie(platform: MusicSource, roomId: string): string | nu
   return sorted[0].cookie
 }
 
+/**
+ * Get a specific user's cookie for a platform in a specific room.
+ * Used for user-private operations like fetching personal playlists.
+ */
+export function getUserCookie(userId: string, platform: MusicSource, roomId: string): string | null {
+  const pool = roomCookiePool.get(roomId)
+  if (!pool) return null
+  const entries = pool.get(platform)
+  if (!entries) return null
+  const entry = entries.find((e) => e.userId === userId)
+  return entry?.cookie ?? null
+}
+
 // ---------------------------------------------------------------------------
 // Status for frontend
 // ---------------------------------------------------------------------------

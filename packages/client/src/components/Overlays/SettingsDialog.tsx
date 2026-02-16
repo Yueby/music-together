@@ -19,7 +19,7 @@ import { RoomSettingsSection } from './Settings/RoomSettingsSection'
 import { MembersSection } from './Settings/MembersSection'
 import { ProfileSettingsSection } from './Settings/ProfileSettingsSection'
 import { AppearanceSection } from './Settings/AppearanceSection'
-import { PlatformAuthSection } from './Settings/PlatformAuthSection'
+import { PlatformHub } from './Settings/PlatformHub'
 
 // ---------------------------------------------------------------------------
 // Types
@@ -116,7 +116,7 @@ export function SettingsDialog({
             <ResponsiveDialogTitle className="px-4 pt-4 pb-2 text-lg font-semibold">
               设置
             </ResponsiveDialogTitle>
-            <nav className="flex gap-1 overflow-x-auto px-4 pb-2" role="tablist" aria-label="设置分类">
+            <nav className="scrollbar-hide flex gap-1 overflow-x-auto px-4 pb-2" role="tablist" aria-label="设置分类">
               {TABS.map((t) => (
                 <button
                   key={t.id}
@@ -155,20 +155,25 @@ export function SettingsDialog({
             </div>
           </nav>
 
-          {/* Content area */}
-          <ScrollArea className="min-h-0 flex-1">
-            <div className="p-4 sm:p-6">
-              {tab === 'room' && (
-                <RoomSettingsSection onUpdateSettings={onUpdateSettings} />
-              )}
-              {tab === 'members' && (
-                <MembersSection onSetUserRole={onSetUserRole} />
-              )}
-              {tab === 'accounts' && <PlatformAuthSection />}
-              {tab === 'profile' && <ProfileSettingsSection />}
-              {tab === 'appearance' && <AppearanceSection />}
+          {/* Content area — accounts tab uses its own scroll management for virtual list */}
+          {tab === 'accounts' ? (
+            <div className="flex min-h-0 flex-1 flex-col p-4 sm:p-6">
+              <PlatformHub />
             </div>
-          </ScrollArea>
+          ) : (
+            <ScrollArea className="min-h-0 flex-1">
+              <div className="p-4 sm:p-6">
+                {tab === 'room' && (
+                  <RoomSettingsSection onUpdateSettings={onUpdateSettings} />
+                )}
+                {tab === 'members' && (
+                  <MembersSection onSetUserRole={onSetUserRole} />
+                )}
+                {tab === 'profile' && <ProfileSettingsSection />}
+                {tab === 'appearance' && <AppearanceSection />}
+              </div>
+            </ScrollArea>
+          )}
         </div>
       </ResponsiveDialogContent>
     </ResponsiveDialog>
