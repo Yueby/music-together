@@ -45,16 +45,18 @@ export function SearchDialog({ open, onOpenChange, onAddToQueue }: SearchDialogP
   const [hasSearched, setHasSearched] = useState(false)
   const scrollRef = useRef<HTMLDivElement>(null)
   const abortRef = useRef<AbortController | null>(null)
+  const loadMoreAbortRef = useRef<AbortController | null>(null)
   const searchIdRef = useRef(0)
   const queue = useRoomStore((s) => s.room?.queue ?? EMPTY_QUEUE)
   /** Use stable source:sourceId as key instead of nanoid-generated track.id */
   const trackKey = (t: Track) => `${t.source}:${t.sourceId}`
   const queueKeys = useMemo(() => new Set(queue.map(trackKey)), [queue])
 
-  // Cancel any in-flight request on unmount
+  // Cancel any in-flight requests on unmount
   useEffect(() => {
     return () => {
       abortRef.current?.abort()
+      loadMoreAbortRef.current?.abort()
     }
   }, [])
 
@@ -113,11 +115,14 @@ export function SearchDialog({ open, onOpenChange, onAddToQueue }: SearchDialogP
   }
 
   const handleLoadMore = async () => {
+    loadMoreAbortRef.current?.abort()
+    const controller = new AbortController()
+    loadMoreAbortRef.current = controller
     const currentSearchId = searchIdRef.current
     setLoadingMore(true)
     try {
       const nextPage = page + 1
-      const data = await fetchPage(source, keyword.trim(), nextPage, AbortSignal.timeout(30_000))
+      const data = await fetchPage(source, keyword.trim(), nextPage, controller.signal)
       // Stale response guard
       if (searchIdRef.current !== currentSearchId) return
       setResults((prev) => [...prev, ...data.tracks])

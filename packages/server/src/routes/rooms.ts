@@ -3,6 +3,11 @@ import { roomRepo } from '../repositories/roomRepository.js'
 
 const router: RouterType = Router()
 
+/** Validate roomId: alphanumeric, 1-20 chars */
+function isValidRoomId(roomId: string): boolean {
+  return typeof roomId === 'string' && roomId.length >= 1 && roomId.length <= 20 && /^[A-Za-z0-9]+$/.test(roomId)
+}
+
 /**
  * GET /api/rooms/:roomId/check
  * Pre-check whether a room exists and whether it requires a password.
@@ -12,6 +17,10 @@ const router: RouterType = Router()
  */
 router.get('/:roomId/check', (req, res) => {
   const { roomId } = req.params
+  if (!isValidRoomId(roomId)) {
+    res.status(400).json({ error: 'Invalid room ID' })
+    return
+  }
   const room = roomRepo.get(roomId)
 
   if (!room) {

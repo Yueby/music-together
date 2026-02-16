@@ -3,6 +3,7 @@ import { cn } from '@/lib/utils'
 import { usePlayerStore } from '@/stores/playerStore'
 import { Disc3 } from 'lucide-react'
 import { motion } from 'motion/react'
+import { useEffect, useState } from 'react'
 
 /** Apple-style easing: fast launch, graceful deceleration */
 const SPRING = { type: 'spring' as const, duration: 0.5, bounce: 0.1 }
@@ -17,12 +18,19 @@ interface NowPlayingProps {
 
 export function NowPlaying({ compact = false, onCoverClick }: NowPlayingProps) {
   const currentTrack = usePlayerStore((s) => s.currentTrack)
+  const [coverError, setCoverError] = useState(false)
 
-  const coverContent = currentTrack?.cover ? (
+  // Reset error state when track changes
+  useEffect(() => { setCoverError(false) }, [currentTrack?.id])
+
+  const showCover = currentTrack?.cover && !coverError
+
+  const coverContent = showCover ? (
     <img
       src={currentTrack.cover}
       alt={currentTrack.title}
       className="h-full w-full object-cover"
+      onError={() => setCoverError(true)}
     />
   ) : (
     <div className="flex h-full w-full items-center justify-center bg-secondary">

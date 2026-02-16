@@ -1,4 +1,4 @@
-import type { AudioQuality, MusicSource, PlayState, ScheduledPlayState, Track } from '@music-together/shared'
+import type { AudioQuality, MusicSource, PlayMode, PlayState, ScheduledPlayState, Track } from '@music-together/shared'
 import { EVENTS, ERROR_CODE, NTP } from '@music-together/shared'
 import { roomRepo } from '../repositories/roomRepository.js'
 import { musicProvider } from './musicProvider.js'
@@ -11,6 +11,23 @@ import { config } from '../config.js'
 import { logger } from '../utils/logger.js'
 import type { RoomData } from '../repositories/types.js'
 import type { TypedServer, TypedSocket } from '../middleware/types.js'
+
+// ---------------------------------------------------------------------------
+// Per-room mutex for playTrackInRoom (prevents concurrent execution)
+// ---------------------------------------------------------------------------
+
+const playMutexes = new Map<string, Promise<unknown>>()
+
+function withPlayMutex<T>(roomId: string, fn: () => Promise<T>): Promise<T> {
+  const prev = playMutexes.get(roomId) ?? Promise.resolve()
+  const next = prev.then(fn, fn)
+  playMutexes.set(roomId, next)
+  // Cleanup entry when chain settles to avoid unbounded growth
+  next.finally(() => {
+    if (playMutexes.get(roomId) === next) playMutexes.delete(roomId)
+  })
+  return next
+}
 
 // ---------------------------------------------------------------------------
 // Scheduled execution helpers
@@ -76,8 +93,34 @@ async function resolveStreamUrl(
 /**
  * Resolve stream URL / cover, set current track, and broadcast PLAYER_PLAY.
  * Returns true on success, false on failure.
+ * Serialized per room via mutex to prevent concurrent state corruption.
  */
-export async function playTrackInRoom(
+export function playTrackInRoom(
+  io: TypedServer,
+  roomId: string,
+  track: Track,
+): Promise<boolean> {
+  return withPlayMutex(roomId, () => _playTrackInRoom(io, roomId, track))
+}
+
+/**
+ * Auto-play when the queue was empty. Re-checks `room.currentTrack` inside
+ * the mutex so that concurrent QUEUE_ADD handlers don't both trigger playback
+ * (the second caller sees the track set by the first and bails out).
+ */
+export function autoPlayIfEmpty(
+  io: TypedServer,
+  roomId: string,
+  track: Track,
+): Promise<boolean> {
+  return withPlayMutex(roomId, async () => {
+    const room = roomRepo.get(roomId)
+    if (!room || room.currentTrack) return false
+    return _playTrackInRoom(io, roomId, track)
+  })
+}
+
+async function _playTrackInRoom(
   io: TypedServer,
   roomId: string,
   track: Track,
@@ -225,6 +268,80 @@ export function stopPlayback(io: TypedServer, roomId: string): void {
   broadcastRoomList(io)
 }
 
+/**
+ * Mutex-protected variant of `stopPlayback`. Use when the caller is NOT
+ * already inside the per-room mutex (e.g. QUEUE_CLEAR) to prevent races
+ * with concurrent `autoPlayIfEmpty` / `_playTrackInRoom` operations.
+ */
+export function stopPlaybackSafe(io: TypedServer, roomId: string): Promise<void> {
+  return withPlayMutex(roomId, async () => {
+    stopPlayback(io, roomId)
+  })
+}
+
+// ---------------------------------------------------------------------------
+// Next / Previous track (debounce + queue navigation inside mutex)
+// ---------------------------------------------------------------------------
+
+/**
+ * Advance to the next track in the queue. Debounce check and queue navigation
+ * run inside the per-room mutex so two rapid NEXT events can never both pass
+ * the debounce in the same event loop tick.
+ */
+export function playNextTrackInRoom(
+  io: TypedServer,
+  roomId: string,
+  playMode: PlayMode,
+  options?: { skipDebounce?: boolean },
+): Promise<void> {
+  return withPlayMutex(roomId, async () => {
+    if (options?.skipDebounce) {
+      // Still update the timestamp so a normal NEXT right after is debounced
+      lastNextTimestamp.set(roomId, Date.now())
+    } else if (_isNextDebounced(roomId)) {
+      return
+    }
+
+    const nextTrack = queueService.getNextTrack(roomId, playMode)
+    if (!nextTrack) {
+      stopPlayback(io, roomId)
+      return
+    }
+
+    const success = await _playTrackInRoom(io, roomId, nextTrack)
+    if (!success) {
+      const skipTrack = queueService.getNextTrack(roomId, playMode)
+      if (skipTrack) await _playTrackInRoom(io, roomId, skipTrack)
+    }
+  })
+}
+
+/**
+ * Go to the previous track in the queue. Same mutex serialization as next.
+ */
+export function playPrevTrackInRoom(
+  io: TypedServer,
+  roomId: string,
+  options?: { skipDebounce?: boolean },
+): Promise<void> {
+  return withPlayMutex(roomId, async () => {
+    if (options?.skipDebounce) {
+      lastNextTimestamp.set(roomId, Date.now())
+    } else if (_isNextDebounced(roomId)) {
+      return
+    }
+
+    const prevTrack = queueService.getPreviousTrack(roomId)
+    if (!prevTrack) return
+
+    const success = await _playTrackInRoom(io, roomId, prevTrack)
+    if (!success) {
+      const skipTrack = queueService.getPreviousTrack(roomId)
+      if (skipTrack) await _playTrackInRoom(io, roomId, skipTrack)
+    }
+  })
+}
+
 // ---------------------------------------------------------------------------
 // Playback sync for newly-joined clients
 // ---------------------------------------------------------------------------
@@ -272,12 +389,18 @@ const lastNextTimestamp = new Map<string, number>()
 
 /** Track consecutive rejected host reports per room to break deadlocks */
 const hostRejectCount = new Map<string, number>()
-const HOST_REJECT_FORCE_ACCEPT = 3
+
+/** Force-accept a host report after this many consecutive rejections */
+const HOST_REJECT_FORCE_ACCEPT_COUNT = 2
+
+/** Max allowed drift (seconds) between host-reported time and server estimate */
+const HOST_REJECT_DRIFT_THRESHOLD_S = 3
 
 /** Remove per-room entries for a deleted room */
 export function cleanupRoom(roomId: string): void {
   lastNextTimestamp.delete(roomId)
   hostRejectCount.delete(roomId)
+  playMutexes.delete(roomId)
 }
 
 /**
@@ -287,10 +410,10 @@ export function cleanupRoom(roomId: string): void {
  * rejections to break deadlocks when the server estimate has diverged.
  */
 export function validateHostReport(roomId: string, reportedTime: number, estimatedTime: number): boolean {
-  if (estimatedTime - reportedTime > 1) {
+  if (estimatedTime - reportedTime > HOST_REJECT_DRIFT_THRESHOLD_S) {
     const count = (hostRejectCount.get(roomId) ?? 0) + 1
     hostRejectCount.set(roomId, count)
-    if (count < HOST_REJECT_FORCE_ACCEPT) {
+    if (count < HOST_REJECT_FORCE_ACCEPT_COUNT) {
       return false // reject
     }
     // Too many consecutive rejections — force accept to break deadlock
@@ -304,8 +427,9 @@ export function validateHostReport(roomId: string, reportedTime: number, estimat
 /**
  * Check and update the next-track debounce for a room.
  * Returns true if the action should be SKIPPED (too soon), false if allowed.
+ * Internal: called inside mutex to prevent same-tick race conditions.
  */
-export function isNextDebounced(roomId: string): boolean {
+function _isNextDebounced(roomId: string): boolean {
   const now = Date.now()
   const lastNext = lastNextTimestamp.get(roomId) ?? 0
   if (now - lastNext < config.player.nextDebounceMs) return true

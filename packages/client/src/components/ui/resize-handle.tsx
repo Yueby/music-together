@@ -1,4 +1,4 @@
-import { useCallback, useRef } from 'react'
+import { useCallback, useEffect, useRef } from 'react'
 import { GripVertical } from 'lucide-react'
 import { cn } from '@/lib/utils'
 
@@ -21,6 +21,21 @@ export function ResizeHandle({
 }: ResizeHandleProps) {
   const isDragging = useRef(false)
   const lastX = useRef(0)
+  const moveHandlerRef = useRef<((e: PointerEvent) => void) | null>(null)
+  const upHandlerRef = useRef<(() => void) | null>(null)
+
+  // Cleanup document listeners on unmount (safety net for mid-drag unmount)
+  useEffect(() => {
+    return () => {
+      if (moveHandlerRef.current) document.removeEventListener('pointermove', moveHandlerRef.current)
+      if (upHandlerRef.current) document.removeEventListener('pointerup', upHandlerRef.current)
+      if (isDragging.current) {
+        document.body.style.cursor = ''
+        document.body.style.userSelect = ''
+        isDragging.current = false
+      }
+    }
+  }, [])
 
   const handlePointerDown = useCallback(
     (e: React.PointerEvent) => {
@@ -45,9 +60,13 @@ export function ResizeHandle({
         document.body.style.userSelect = ''
         document.removeEventListener('pointermove', handlePointerMove)
         document.removeEventListener('pointerup', handlePointerUp)
+        moveHandlerRef.current = null
+        upHandlerRef.current = null
         onResizeEnd?.()
       }
 
+      moveHandlerRef.current = handlePointerMove
+      upHandlerRef.current = handlePointerUp
       document.addEventListener('pointermove', handlePointerMove)
       document.addEventListener('pointerup', handlePointerUp)
     },

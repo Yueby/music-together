@@ -56,6 +56,14 @@ let pingCounter = 0
 let medianOffset = 0
 let calibrated = false
 
+// Anchor pair for monotonic getServerTime().
+// `performance.now()` is monotonic and immune to system clock adjustments
+// (NTP sync, manual time change, sleep/wake). We anchor a known server-time
+// to a performance.now() reading and derive future server-times from the
+// elapsed monotonic time, eliminating Date.now() jitter from getServerTime().
+let anchorPerfNow = performance.now()
+let anchorServerTime = Date.now() // uncalibrated initially; updated on each pong
+
 // ---------------------------------------------------------------------------
 // Internal helpers
 // ---------------------------------------------------------------------------
@@ -99,9 +107,11 @@ function computeWeightedMedian(now: number): number {
 // Public API
 // ---------------------------------------------------------------------------
 
-/** Returns the current server time (ms) compensated by the measured offset. */
+/** Returns the current server time (ms) compensated by the measured offset.
+ *  Uses a monotonic `performance.now()` anchor so the result is immune to
+ *  system clock adjustments (NTP sync, manual time change, sleep/wake). */
 export function getServerTime(): number {
-  return Date.now() + medianOffset
+  return anchorServerTime + (performance.now() - anchorPerfNow)
 }
 
 /** Whether the initial calibration phase has completed. */
@@ -171,6 +181,10 @@ export function processPong(clientPingId: number, serverTime: number): number | 
   // Recalculate time-decayed weighted median offset
   medianOffset = computeWeightedMedian(now)
 
+  // Refresh the monotonic anchor so getServerTime() stays accurate
+  anchorPerfNow = performance.now()
+  anchorServerTime = Date.now() + medianOffset
+
   if (!calibrated && samples.length >= NTP.MAX_INITIAL_SAMPLES) {
     calibrated = true
   }
@@ -185,4 +199,6 @@ export function resetClockSync(): void {
   pingCounter = 0
   medianOffset = 0
   calibrated = false
+  anchorPerfNow = performance.now()
+  anchorServerTime = Date.now()
 }

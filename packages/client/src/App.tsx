@@ -4,7 +4,7 @@ import { TooltipProvider } from '@/components/ui/tooltip'
 import { Button } from '@/components/ui/button'
 import { SocketProvider } from '@/providers/SocketProvider'
 import HomePage from '@/pages/HomePage'
-import { BrowserRouter, Route, Routes, useLocation } from 'react-router-dom'
+import { BrowserRouter, Route, Routes, useLocation, useNavigate } from 'react-router-dom'
 import { Toaster } from 'sonner'
 import { AnimatePresence } from 'motion/react'
 import { AlertTriangle } from 'lucide-react'
@@ -39,14 +39,27 @@ function RouteFallback() {
   )
 }
 
+/** Route-level ErrorBoundary: navigates home on reset instead of full reload */
+function RouteErrorBoundary({ children }: { children: React.ReactNode }) {
+  const navigate = useNavigate()
+  return (
+    <ErrorBoundary
+      FallbackComponent={ErrorFallback}
+      onReset={() => navigate('/', { replace: true })}
+    >
+      {children}
+    </ErrorBoundary>
+  )
+}
+
 function AnimatedRoutes() {
   const location = useLocation()
   return (
     <AnimatePresence mode="wait">
       <Suspense fallback={<RouteFallback />}>
         <Routes location={location} key={location.pathname}>
-          <Route path="/" element={<HomePage />} />
-          <Route path="/room/:roomId" element={<RoomPage />} />
+          <Route path="/" element={<RouteErrorBoundary><HomePage /></RouteErrorBoundary>} />
+          <Route path="/room/:roomId" element={<RouteErrorBoundary><RoomPage /></RouteErrorBoundary>} />
           <Route path="*" element={<NotFoundPage />} />
         </Routes>
       </Suspense>

@@ -1,9 +1,9 @@
 import { EVENTS, playerSeekSchema, playerSetModeSchema, playerSyncSchema } from '@music-together/shared'
 import type { TypedServer, TypedSocket } from '../middleware/types.js'
 import { createWithPermission } from '../middleware/withControl.js'
+import { checkSocketRateLimit } from '../middleware/socketRateLimiter.js'
 import { roomRepo } from '../repositories/roomRepository.js'
 import * as playerService from '../services/playerService.js'
-import * as queueService from '../services/queueService.js'
 import * as roomService from '../services/roomService.js'
 import { estimateCurrentTime } from '../services/syncService.js'
 import { logger } from '../utils/logger.js'
@@ -14,6 +14,7 @@ export function registerPlayerController(io: TypedServer, socket: TypedSocket) {
   socket.on(
     EVENTS.PLAYER_PLAY,
     withPermission('play', 'Player', async (ctx, data) => {
+      if (!await checkSocketRateLimit(ctx.socket)) return
       const track = data?.track ?? ctx.room.currentTrack ?? ctx.room.queue[0]
       if (!track) return
 
@@ -46,43 +47,14 @@ export function registerPlayerController(io: TypedServer, socket: TypedSocket) {
   socket.on(
     EVENTS.PLAYER_NEXT,
     withPermission('next', 'Player', async (ctx) => {
-      // Debounce: ignore if another NEXT was processed recently for this room
-      if (playerService.isNextDebounced(ctx.roomId)) return
-
-      const nextTrack = queueService.getNextTrack(ctx.roomId, ctx.room.playMode)
-      if (!nextTrack) {
-        playerService.stopPlayback(ctx.io, ctx.roomId)
-        return
-      }
-
-      const success = await playerService.playTrackInRoom(ctx.io, ctx.roomId, nextTrack)
-
-      // If stream URL failed, try the next one after that
-      if (!success) {
-        const skipTrack = queueService.getNextTrack(ctx.roomId, ctx.room.playMode)
-        if (skipTrack) {
-          await playerService.playTrackInRoom(ctx.io, ctx.roomId, skipTrack)
-        }
-      }
+      await playerService.playNextTrackInRoom(ctx.io, ctx.roomId, ctx.room.playMode)
     }),
   )
 
   socket.on(
     EVENTS.PLAYER_PREV,
     withPermission('prev', 'Player', async (ctx) => {
-      if (playerService.isNextDebounced(ctx.roomId)) return
-
-      const prevTrack = queueService.getPreviousTrack(ctx.roomId)
-      if (!prevTrack) return // already at the start, do nothing
-
-      const success = await playerService.playTrackInRoom(ctx.io, ctx.roomId, prevTrack)
-
-      if (!success) {
-        const skipTrack = queueService.getPreviousTrack(ctx.roomId)
-        if (skipTrack) {
-          await playerService.playTrackInRoom(ctx.io, ctx.roomId, skipTrack)
-        }
-      }
+      await playerService.playPrevTrackInRoom(ctx.io, ctx.roomId)
     }),
   )
 

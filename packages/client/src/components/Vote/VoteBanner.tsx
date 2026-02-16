@@ -64,7 +64,7 @@ export function VoteBanner({ vote, onCastVote }: VoteBannerProps) {
               <Button
                 size="sm"
                 variant="ghost"
-                className="h-7 gap-1 bg-green-500/20 px-3 text-xs text-green-300 hover:bg-green-500/30 hover:text-green-200"
+                className="h-7 min-h-11 sm:min-h-0 gap-1 bg-green-500/20 px-3 text-xs text-green-300 hover:bg-green-500/30 hover:text-green-200"
                 onClick={() => onCastVote(true)}
               >
                 <Check className="h-3.5 w-3.5" />
@@ -73,7 +73,7 @@ export function VoteBanner({ vote, onCastVote }: VoteBannerProps) {
               <Button
                 size="sm"
                 variant="ghost"
-                className="h-7 gap-1 bg-red-500/20 px-3 text-xs text-red-300 hover:bg-red-500/30 hover:text-red-200"
+                className="h-7 min-h-11 sm:min-h-0 gap-1 bg-red-500/20 px-3 text-xs text-red-300 hover:bg-red-500/30 hover:text-red-200"
                 onClick={() => onCastVote(false)}
               >
                 <X className="h-3.5 w-3.5" />

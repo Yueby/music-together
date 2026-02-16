@@ -206,7 +206,8 @@ src/
 ├── middleware/                  # Socket.IO 中间件
 │   ├── types.ts                #   TypedServer, TypedSocket, HandlerContext
 │   ├── withRoom.ts             #   房间成员身份校验
-│   └── withControl.ts          #   操作权限校验（包装 withRoom）
+│   ├── withControl.ts          #   操作权限校验（包装 withRoom）
+│   └── socketRateLimiter.ts    #   Socket 事件速率限制（per-socket，10次/5秒）
 │
 ├── routes/                     # Express REST 路由
 │   ├── music.ts                #   GET /api/music/search|url|lyric|cover
@@ -353,6 +354,7 @@ interface ChatMessage {
 - 稳定阶段：每 5 秒一次 NTP 心跳
 - NTP 仅在用户进入房间后启动（`ClockSyncRunner` 渲染在 `RoomPage` 中），大厅用户不运行时钟同步
 - 使用**时间衰减加权中位数**计算 offset：每个样本按 `exp(-age / halfLife)` 衰减（halfLife=30s），兼具中位数的异常值鲁棒性和对网络环境突变的快速收敛能力
+- **`performance.now()` 锚点**：`getServerTime()` 基于 `performance.now()`（单调递增）计算时间流逝，不受系统时钟突变影响（NTP 调整、手动改时间、休眠唤醒）。每次 `processPong` 刷新锚点：`anchorServerTime = Date.now() + medianOffset`、`anchorPerfNow = performance.now()`
 - **RTT 回报**：每次 `ntp:ping` 附带 `lastRttMs`（客户端中位 RTT），服务端在 `NTP_PING` handler 中调用 `roomRepo.setSocketRTT()` 存储，用于自适应调度延迟计算
 - 核心模块：`clockSync.ts`（采样引擎 + `getServerTime()` + `getMedianRTT()` + `computeWeightedMedian()`）、`useClockSync.ts`（React Hook，在 SocketProvider 中运行）
 
@@ -364,28 +366,31 @@ interface ChatMessage {
 - RTT 由客户端 NTP 测量后通过 `ntp:ping` 事件回报，服务端以指数移动平均（alpha=0.2）平滑存储在 `roomRepository` 的 per-socket RTT map
 - 全部客户端（含操作发起者）统一收到广播并在预定时刻执行
 - **serverTimestamp 对齐**：播放中的动作（play/resume/seek）将 `room.playState.serverTimestamp` 设为 `serverTimeToExecute` 而非 `Date.now()`，确保 `estimateCurrentTime()` 在下一次 Host 上报前也能准确估算位置
-- Scheduled action（seek/pause/resume）执行时自动重置 `rate(1)`，避免残留非正常速率
+- Scheduled action（seek/pause/resume）执行时自动重置 `rate(1)`，避免残留非正常速率；执行后同步更新 `roomStore.playState`（仅 `PlayState` 三字段，不含 `serverTimeToExecute`），确保 recovery effect 读到最新状态
+- **NTP 未校准保护**：`scheduleDelay()` 和 `usePlayer` 的 PLAYER_PLAY 调度在 NTP 未校准完成前退化为 0（立即执行），避免本地时钟偏差导致离谱的调度延迟
+- **Action ID 竞态保护**：每个 scheduled action 分配单调递增 ID，`setTimeout(fn, 0)` 回调执行前检查 ID 是否匹配，防止快速连续事件导致 stale 回调执行
 
 #### Layer 3：周期性比例漂移校正（EMA + Proportional Rate + Hard Seek）
 
-客户端每 `SYNC_REQUEST_INTERVAL_MS`（2s）向服务端发送 `PLAYER_SYNC_REQUEST`，服务端通过 `estimateCurrentTime()` 计算当前预期位置后回复 `PLAYER_SYNC_RESPONSE`。客户端利用 NTP 校准时钟补偿网络延迟，计算原始漂移量后经 **EMA 低通滤波**（alpha=0.3）得到 `smoothedDrift`，再进入比例控制器：
+**仅 Member 客户端**每 `SYNC_REQUEST_INTERVAL_MS`（2s）向服务端发送 `PLAYER_SYNC_REQUEST`（Host 跳过，因为 Host 是权威播放源，不应被 server 估算值反向校正），服务端通过 `estimateCurrentTime()` 计算当前预期位置后回复 `PLAYER_SYNC_RESPONSE`。客户端利用 NTP 校准时钟补偿网络延迟，计算原始漂移量后经 **EMA 低通滤波**（alpha=0.3）得到 `smoothedDrift`，再进入比例控制器：
 
 - **EMA 平滑**：`smoothed = alpha * rawDrift + (1 - alpha) * prevSmoothed`，消除测量噪声导致的正负跳动
+- **EMA 冷启动种子**：pause/resume/新曲/hard seek 后 EMA 重置，首次 sync response 直接用 rawDrift 种子初始化（而非从 0 开始混合），避免恢复播放后 6-8 秒的 EMA 收敛滞后
 - `|smoothedDrift|` > `DRIFT_SEEK_THRESHOLD_MS`（200ms）→ hard seek 到预期位置 + rate(1) + 重置 smoothedDrift
 - `|smoothedDrift|` 5~200ms（死区之上） → **比例控制**：`rate = 1 - clamp(smoothedDrift * Kp, ±MAX_RATE_ADJUSTMENT)`（Kp=0.5，最大 ±2%）。漂移越大修正越强，接近目标时自然减速——数学上保证不振荡
 - `|smoothedDrift|` < `DRIFT_DEAD_ZONE_MS`（5ms）→ 恢复正常速率 rate(1)（消除稳态微小抖动）
 - UI 展示 smoothedDrift 而非 rawDrift，界面数值更稳定
-- **插件干扰自动降级**：设置 rate 后通过 `setTimeout(50ms)` 验证是否生效（避免 rAF 后台标签页节流导致误判），若连续 3 次检测到被浏览器倍速插件覆盖才标记 `rateDisabled`；禁用后 hard seek 阈值降至 `DRIFT_PLUGIN_SEEK_THRESHOLD_MS`（30ms）；新曲加载时重置标记和计数器
+- **插件干扰自动降级**：设置 rate 后通过 `setTimeout(50ms)` 验证是否生效（timer 存于 ref，每次新 sync response 前清理上一个，组件卸载时也清理），若连续 3 次检测到被浏览器倍速插件覆盖才标记 `rateDisabled`；禁用后 hard seek 阈值降至 `DRIFT_PLUGIN_SEEK_THRESHOLD_MS`（30ms）；新曲加载时重置标记和计数器
 
 典型场景：手机息屏暂停后解锁、浏览器后台标签页节流、网络波动导致的累积偏移。
 
 #### Host 上报与服务端状态维护
 
-Host（房主）**自适应频率**上报当前播放位置到服务端：新曲开始后前 10 秒高频上报（每 2 秒，`HOST_REPORT_FAST_INTERVAL_MS`），之后回到正常频率（每 5 秒，`HOST_REPORT_INTERVAL_MS`），使用动态 `setTimeout` 链实现。仅用于维护 `room.playState` 的准确性（供 mid-song join、reconnect recovery 和漂移校正使用），**不会转发给其他客户端**。服务端通过 `playerService.validateHostReport()` 校验 Host 上报位置与 `estimateCurrentTime()` 预估值的偏差，超过 1 秒的报告视为过时数据（如手机息屏后恢复）被拒绝；但连续拒绝 3 次后强制接受以打破僵局。`hostRejectCount` 和 `lastNextTimestamp` 统一在 `playerService.cleanupRoom()` 中清理，避免内存泄漏。Host 切换时自动刷新 `playState.serverTimestamp` 和 `currentTime`，确保新 Host 的首个报告不会被误拒。
+Host（房主）**自适应频率**上报当前播放位置到服务端：新曲开始后前 10 秒高频上报（每 2 秒，`HOST_REPORT_FAST_INTERVAL_MS`），之后回到正常频率（每 5 秒，`HOST_REPORT_INTERVAL_MS`），使用动态 `setTimeout` 链实现。仅用于维护 `room.playState` 的准确性（供 mid-song join、reconnect recovery 和漂移校正使用），**不会转发给其他客户端**。Host 标签页从后台恢复时（`visibilitychange` → visible），立即补偿上报一次当前位置，避免 `setTimeout` 被浏览器节流后 `playState` 过时。服务端通过 `playerService.validateHostReport()` 校验 Host 上报位置与 `estimateCurrentTime()` 预估值的偏差，超过 `HOST_REJECT_DRIFT_THRESHOLD_S`（3 秒）的报告视为过时数据（如手机息屏后恢复）被拒绝；但连续拒绝 `HOST_REJECT_FORCE_ACCEPT_COUNT`（2）次后强制接受以打破僵局。`hostRejectCount`、`lastNextTimestamp`、`playMutexes` 统一在 `playerService.cleanupRoom()` 中清理，避免内存泄漏。Host 切换时自动刷新 `playState.serverTimestamp` 和 `currentTime`，确保新 Host 的首个报告不会被误拒。
 
-- `syncService.estimateCurrentTime()` 基于 Host 上报的位置 + 经过时间估算当前位置，对 `elapsed` 做 `Math.max(0, ...)` 防护（`serverTimestamp` 可能是未来的 `scheduleTime`）
+- `syncService.estimateCurrentTime()` 基于 Host 上报的位置 + 经过时间估算当前位置，对 `elapsed` 做 `Math.max(0, ...)` 防护（`serverTimestamp` 可能是未来的 `scheduleTime`），且 clamp 到曲目时长上界（`room.currentTrack.duration`），防止 Host 断线后估算值无限增长
 - 新用户加入时，通过 `ROOM_STATE` 获取 `playState` 并计算应跳转到的位置
-- 断线重连时，`usePlayer` 的 recovery 机制自动检测 desync 并重新加载音轨
+- 断线重连时，`usePlayer` 的 recovery 机制自动检测 desync 并重新加载音轨。Recovery 通过检查 `loadingRef` 避免与 `onPlayerPlay` 双重 `loadTrack`，且在加载前清理 `playTimerRef` 防止定时器重复触发
 - 漂移校正时，`PLAYER_SYNC_RESPONSE` 基于此数据返回准确位置
 
 #### 播放模式
@@ -443,10 +448,10 @@ Host（房主）**自适应频率**上报当前播放位置到服务端：新曲
 9. **断线时钟重置**：`resetAllRoomState()` 除重置 Zustand stores 外，还调用 `resetClockSync()` 清空 NTP 采样，确保重连后使用全新的时钟校准数据
 10. **Socket 断开竞态防护**：页面刷新时新旧 socket 的 join/disconnect 到达顺序不确定，`leaveRoom` 通过 `roomRepo.hasOtherSocketForUser()` 检测同一用户是否有更新的 socket 连接，避免旧 socket disconnect 误删活跃用户
 11. **投票安全网**：`voteController` 接收 `VOTE_START` 时，若检测到用户已有直接操作权限（host/admin），不再返回错误，而是直接执行该操作（`executeAction`），防止客户端-服务端角色不同步时操作失效。部分 VoteAction 通过 `PERM_MAP` 映射到不同的 CASL action+subject（如 `'play-track'` → `('play', 'Player')`，`'remove-track'` → `('remove', 'Queue')`）
-12. **切歌防抖**：500ms (`PLAYER_NEXT_DEBOUNCE_MS`) 内不重复触发下一首
-13. **停止播放统一处理**：`playerService.stopPlayback()` 统一处理"队列为空/清空"场景——清除 currentTrack、emit PLAYER_PAUSE、广播 ROOM_STATE、刷新大厅列表，避免 controller 中重复逻辑
+12. **切歌防抖**：500ms (`PLAYER_NEXT_DEBOUNCE_MS`) 内不重复触发下一首。`playNextTrackInRoom` / `playPrevTrackInRoom` 将 debounce 检查和队列导航封装在 per-room mutex 内部，确保同 tick 的多个 NEXT/PREV 事件不会都通过 debounce。支持 `{ skipDebounce: true }` 选项，投票执行、删除当前曲目等场景绕过 debounce 以确保操作不被静默吞掉
+13. **停止播放统一处理**：`playerService.stopPlayback()` 统一处理"队列为空/清空"场景——清除 currentTrack、emit PLAYER_PAUSE、广播 ROOM_STATE、刷新大厅列表，避免 controller 中重复逻辑。`stopPlaybackSafe()` 提供 mutex 保护版本，`QUEUE_CLEAR` 使用此版本防止与并发 `autoPlayIfEmpty` 竞态
 14. **大厅重连刷新**：`useLobby` 监听 socket `connect` 事件，断线重连后自动重新拉取房间列表
-15. **投票执行**：`VOTE_CAST` / `VOTE_START` 中 `executeAction` 使用 `await` 确保动作完成后才广播 `VOTE_RESULT`
+15. **投票执行**：`VOTE_CAST` / `VOTE_START` 中 `executeAction` 使用 `await` 确保动作完成后才广播 `VOTE_RESULT`。投票的 `next`/`prev` 通过 `playerService.playNextTrackInRoom` / `playPrevTrackInRoom`（`skipDebounce: true`）执行，与直接操作路径完全一致（含 stopPlayback 兜底和播放失败重试），且不受 debounce 影响
 
 ### REST API
 
@@ -653,8 +658,8 @@ Controller → Service → Repository / Utils
 - **Controller**：注册 Socket 事件监听器，薄编排层（校验输入 → 调用 Service → 编排通知）。不包含业务逻辑。
 - **Service**：业务逻辑、跨领域编排、Socket 广播。关键服务职责拆分：
   - `roomService`：房间 CRUD + 角色管理 + 加入校验（`validateJoinRequest`）。Re-export `toPublicRoomState` 和 `broadcastRoomList` 以保持控制器调用方式不变。
-  - `roomLifecycleService`：房间删除定时器 + 角色宽限期定时器（`roleGraceMap`，host + admin）+ 防抖广播。不依赖 `roomService`，消除循环依赖。API：`startRoleGrace`、`cancelRoleGrace`、`getGracedRole`、`hasHostGrace`、`cleanupAllGrace`。
-  - `playerService`：播放状态管理 + 流 URL 解析 + 切歌防抖（`isNextDebounced`）+ 加入播放同步（`syncPlaybackToSocket`）+ 房间清理（`cleanupRoom`，原在 playerController）。
+  - `roomLifecycleService`：房间删除定时器 + 角色宽限期定时器（`roleGraceMap`，host + admin）+ 防抖广播。不依赖 `roomService`，消除循环依赖。API：`startRoleGrace`、`cancelRoleGrace`、`getGracedRole`、`hasHostGrace`、`cleanupAllGrace`、`clearAllTimers`（shutdown 时清理所有模块级定时器）。
+  - `playerService`：播放状态管理 + 流 URL 解析 + 切歌防抖 + 加入播放同步（`syncPlaybackToSocket`）+ 房间清理（`cleanupRoom`）。`playTrackInRoom` 通过 per-room Promise 链互斥锁防止并发竞态。`playNextTrackInRoom` / `playPrevTrackInRoom` 将 debounce + 队列导航 + 播放统一封装在 mutex 内部。`autoPlayIfEmpty` 在 mutex 内重新检查 `room.currentTrack`，防止并发 QUEUE_ADD 双重自动播放。
 - **Repository**：数据存取（当前为内存 Map，接口抽象，可替换为数据库）
 - **Utils**：纯函数工具（`toPublicRoomState` 等），无状态，可被任意层引用
 
@@ -778,14 +783,17 @@ updateRoom: (partial) =>
 - **REST 路由**：每个 handler 使用 `try/catch`，返回适当的 HTTP 状态码
 - **Socket.IO**：中间件统一捕获异步错误，通过 `ROOM_ERROR` 事件回传 `ERROR_CODE` 枚举和消息
 - **客户端 Hook**：hook 中处理 Socket 错误事件，使用 `sonner` toast 提示用户（含限流反馈）
-- **客户端 ErrorBoundary**：`react-error-boundary` 包裹路由，提供 fallback UI + 重试按钮
+- **客户端 ErrorBoundary**：`react-error-boundary` 全局 + 路由级双层包裹（`RouteErrorBoundary` 包裹 `HomePage` 和 `RoomPage`），页面崩溃只影响当前路由并导航回首页
 - **客户端连接状态**：`SocketProvider` 监听 disconnect/reconnect，显示持久化 warning toast
-- **搜索竞态防护**：`SearchDialog` 使用 `AbortController` 取消上一次请求 + `searchIdRef` 忽略过时响应
+- **搜索竞态防护**：`SearchDialog` 使用 `AbortController` 取消上一次请求 + `searchIdRef` 忽略过时响应 + `loadMoreAbortRef` 在卸载时中止加载更多请求
+- **Socket 事件速率限制**：`socketRateLimiter` 中间件（`rate-limiter-flexible`）对 `QUEUE_ADD`、`PLAYER_PLAY`、`VOTE_START` 等关键事件做 per-socket 限流（10 次/5 秒）
+- **投票阈值动态更新**：`voteService.updateVoteThreshold` 在用户离开房间时重新计算 `requiredVotes`，防止人数减少后投票永远无法通过
 - **外部 API 超时保护**：`musicProvider` 所有 `@meting/core` 调用使用 `Promise.race` 包裹 15s 超时
 - **外部 API LRU 缓存**：`musicProvider` 对 search（10min TTL）、streamUrl（1h）、cover（24h）、lyric（24h）使用 `lru-cache` 做内存级缓存，同一首歌被多人/多房间播放时避免重复外部请求；VIP cookie 请求不走缓存
 - **广播防抖**：`broadcastRoomList` 使用 100ms trailing debounce，多次快速操作（create+join、多人 leave）合并为一次广播
 - **反向索引优化**：`roomRepository` 维护 `roomToSockets` 反向索引（`Map<string, Set<string>>`），使 `getP90RTT` 从 O(全局 socket 数) 降为 O(房间内 socket 数)
 - **Timer 泄漏防护**：`usePlayer`/`useHowl`/`usePlayerSync`/`PlayerControls` 中所有 `setTimeout` 均存入 ref 并在组件卸载时清理
+- **Stalled 检测**：`useHowl` 的 rAF 时间更新循环中检测播放卡住（`playing()` 为 true 但 `seek()` 8 秒内无变化），自动跳到下一首并 toast 提示。兜底播放中途网络断开等 Howler 不触发任何事件的场景
 
 ### ESLint 配置
 
@@ -910,6 +918,27 @@ import { cn } from '@/lib/utils'
 ```typescript
 <Toaster position="top-center" richColors />
 ```
+
+### 移动端触控优化
+
+- **Slider Thumb**：进度条 Thumb 默认透明，桌面端 `group-hover` 显示，移动端通过 `focus:opacity-100` 在触摸拖拽时显示（iOS 风格）
+- **触控目标尺寸**：所有可点击按钮在移动端通过 `min-h-11 min-w-11`（44px）扩大触控热区，桌面端 `sm:min-h-0 sm:min-w-0` 还原视觉尺寸。涉及 QueueDrawer 工具栏、VoteBanner、RoomHeader
+- **QueueDrawer 点击暗示**：移动端列表项右侧显示 `MoreHorizontal` 省略号图标，展开工具栏后隐藏
+
+### 封面图片 onError 回退
+
+- **NowPlaying**：使用 `coverError` state 追踪加载失败，切歌时重置；失败后回退到 `Disc3` 占位图标
+- **QueueDrawer**：`<img>` 的 `onError` 隐藏图片并显示 `Music` 占位图标（始终渲染占位 div，通过 `hidden` class 切换）
+
+### 音频加载失败重试
+
+`useHowl` 的 `onloaderror` 处理：
+- 首次失败自动重试一次（`retryRef` flag + `howl.load()`）
+- 重试仍失败则 toast 显示歌曲名（`trackTitleRef`）并跳到下一首
+- `onloaderror` 开头有 stale guard（`howlRef.current !== howl`），防止旧 Howl 实例的重试回调影响新曲
+- `loadTrack` 时重置 retry flag 和歌曲名 ref，并清理 `playErrorTimerRef`（防止上一首的 play-error 超时跳过新曲）
+- `onload` 和 `onplay` 中对 `howl.duration()` 做 `Number.isFinite` + `> 0` 校验，防止流式加载时无效 duration 写入 store
+- `queueAddSchema` 对 `duration` 做 `z.number().finite().nonnegative()` 校验，从数据入口杜绝无效时长
 
 ---
 

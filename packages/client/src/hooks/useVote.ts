@@ -68,6 +68,7 @@ export function useVote() {
   const startVote = useCallback(
     (action: VoteAction, payload?: Record<string, unknown>) => {
       socket.emit(EVENTS.VOTE_START, { action, payload })
+      toast.info(`已发起投票：${getVoteActionLabel(action, payload)}`)
     },
     [socket],
   )

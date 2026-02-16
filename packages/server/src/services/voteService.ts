@@ -99,6 +99,33 @@ export function castVote(roomId: string, userId: string, approve: boolean): Cast
   return { vote, decided: false, passed: false }
 }
 
+/**
+ * Update the vote threshold when users leave during an active vote.
+ * Recalculates requiredVotes based on current user count and removes
+ * the departing user's vote if they had cast one.
+ *
+ * Returns true if the vote state was modified (caller should broadcast updated state).
+ */
+export function updateVoteThreshold(
+  roomId: string,
+  currentUserCount: number,
+  departedUserId?: string,
+): boolean {
+  const vote = activeVotes.get(roomId)
+  if (!vote) return false
+
+  // Remove departed user's vote if they had cast one
+  if (departedUserId && departedUserId in vote.votes) {
+    delete vote.votes[departedUserId]
+  }
+
+  const newRequired = Math.floor(currentUserCount / 2) + 1
+  vote.requiredVotes = newRequired
+  vote.totalUsers = currentUserCount
+  logger.info(`Vote threshold updated: ${newRequired} required (${currentUserCount} users)`, { roomId })
+  return true
+}
+
 export function getActiveVote(roomId: string): Vote | null {
   return activeVotes.get(roomId) ?? null
 }

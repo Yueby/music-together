@@ -11,6 +11,7 @@ import { initializeSocket } from './controllers/index.js'
 import musicRoutes from './routes/music.js'
 import roomRoutes from './routes/rooms.js'
 import { logger } from './utils/logger.js'
+import { clearAllTimers } from './services/roomLifecycleService.js'
 
 const app = express()
 const httpServer = createServer(app)
@@ -83,6 +84,7 @@ httpServer.listen(config.port, () => {
 // Graceful shutdown
 function shutdown(signal: string) {
   logger.info(`Received ${signal}, shutting down gracefully...`)
+  clearAllTimers()
   io.close(() => {
     httpServer.close(() => {
       logger.info('Server closed')

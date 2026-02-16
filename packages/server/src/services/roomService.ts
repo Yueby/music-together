@@ -12,6 +12,7 @@ import {
   getGracedRole,
   hasHostGrace,
 } from './roomLifecycleService.js'
+import { updateVoteThreshold } from './voteService.js'
 import { logger } from '../utils/logger.js'
 import type { TypedServer } from '../middleware/types.js'
 
@@ -140,6 +141,7 @@ export function leaveRoom(socketId: string, io?: TypedServer): {
   user: User
   room: RoomData | null
   hostChanged: boolean
+  voteUpdated: boolean
 } | null {
   const mapping = roomRepo.getSocketMapping(socketId)
   if (!mapping) return null
@@ -172,15 +174,18 @@ export function leaveRoom(socketId: string, io?: TypedServer): {
   // If room is empty, schedule deletion after grace period
   if (room.users.length === 0) {
     scheduleDeletion(roomId, io)
-    return { roomId, user, room, hostChanged: false }
+    return { roomId, user, room, hostChanged: false, voteUpdated: false }
   }
 
   // hostChanged stays false — hostId is intentionally preserved during grace period
   // The actual transfer happens when the grace timer expires in roomLifecycleService
   let hostChanged = false
 
+  // Update active vote threshold so it doesn't become impossible to pass
+  const voteUpdated = updateVoteThreshold(roomId, room.users.length, user.id)
+
   logger.info(`User ${user.nickname} left room ${roomId}`, { roomId })
-  return { roomId, user, room, hostChanged }
+  return { roomId, user, room, hostChanged, voteUpdated }
 }
 
 // ---------------------------------------------------------------------------
