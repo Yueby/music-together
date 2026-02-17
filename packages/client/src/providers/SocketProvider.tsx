@@ -14,6 +14,7 @@ const DISCONNECT_TOAST_ID = 'socket-disconnect'
 
 export function SocketProvider({ children }: { children: ReactNode }) {
   const socketRef = useRef<TypedSocket>(connectSocket())
+  const hasDisconnectedRef = useRef(false)
   const [isConnected, setIsConnected] = useState(socketRef.current.connected)
 
   useEffect(() => {
@@ -22,22 +23,19 @@ export function SocketProvider({ children }: { children: ReactNode }) {
     const onConnect = () => {
       setIsConnected(true)
       toast.dismiss(DISCONNECT_TOAST_ID)
-      // Only show reconnect toast if we've been disconnected before
-      if (hasDisconnected.current) {
+      if (hasDisconnectedRef.current) {
         toast.success('已重新连接', { id: 'socket-reconnect' })
       }
     }
 
     const onDisconnect = () => {
       setIsConnected(false)
-      hasDisconnected.current = true
+      hasDisconnectedRef.current = true
       toast.warning('连接已断开，正在重连…', {
         id: DISCONNECT_TOAST_ID,
         duration: Infinity,
       })
     }
-
-    const hasDisconnected = { current: false }
 
     socket.on('connect', onConnect)
     socket.on('disconnect', onDisconnect)

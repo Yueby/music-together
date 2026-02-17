@@ -4,10 +4,7 @@ import { usePlayerStore } from '@/stores/playerStore'
 import { Disc3 } from 'lucide-react'
 import { motion } from 'motion/react'
 import { useEffect, useState } from 'react'
-
-/** Apple-style easing: fast launch, graceful deceleration */
-const SPRING = { type: 'spring' as const, duration: 0.5, bounce: 0.1 }
-const LAYOUT_TRANSITION = { layout: SPRING, borderRadius: SPRING }
+import { LAYOUT_TRANSITION, SPRING } from './constants'
 
 interface NowPlayingProps {
   /** Compact mode: small cover + song info in a single row (lyric view top bar) */
@@ -19,6 +16,11 @@ interface NowPlayingProps {
 export function NowPlaying({ compact = false, onCoverClick }: NowPlayingProps) {
   const currentTrack = usePlayerStore((s) => s.currentTrack)
   const [coverError, setCoverError] = useState(false)
+
+  // Skip layoutId on first frame to prevent unwanted entry animation
+  const [ready, setReady] = useState(false)
+  useEffect(() => { setReady(true) }, [])
+  const layoutId = ready ? 'cover-art' : undefined
 
   // Reset error state when track changes
   useEffect(() => { setCoverError(false) }, [currentTrack?.id])
@@ -43,21 +45,20 @@ export function NowPlaying({ compact = false, onCoverClick }: NowPlayingProps) {
   // ---------------------------------------------------------------------------
   if (compact) {
     return (
-      <div className="flex w-full items-center gap-3 pb-1">
+      <div className="flex w-full items-center gap-3.5">
         <motion.div
-          layoutId="cover-art"
+          layoutId={layoutId}
           onClick={onCoverClick}
           whileTap={{ scale: 0.92 }}
           transition={LAYOUT_TRANSITION}
-          animate={{ borderRadius: 6 }}
-          className="h-12 w-12 shrink-0 cursor-pointer overflow-hidden shadow-md shadow-black/20"
+          className="h-14 w-14 shrink-0 cursor-pointer overflow-hidden rounded-lg shadow-md shadow-black/20"
         >
           {coverContent}
         </motion.div>
-        <motion.div layoutId="song-info" transition={LAYOUT_TRANSITION} className="min-w-0 flex-1">
+        <motion.div layoutId={ready ? 'song-info' : undefined} transition={LAYOUT_TRANSITION} className="min-w-0 flex-1">
           <motion.div
             initial={{ fontSize: 20 }}
-            animate={{ fontSize: 18 }}
+            animate={{ fontSize: 22 }}
             transition={SPRING}
             className="font-semibold leading-tight text-white/90"
           >
@@ -84,20 +85,18 @@ export function NowPlaying({ compact = false, onCoverClick }: NowPlayingProps) {
   // Default mode: cover only (song info is handled by SongInfoBar)
   // ---------------------------------------------------------------------------
   return (
-    <div className="relative aspect-square w-full">
-      <motion.div
-        layoutId="cover-art"
-        onClick={onCoverClick}
-        whileTap={onCoverClick ? { scale: 0.96 } : undefined}
-        transition={LAYOUT_TRANSITION}
-        animate={{ borderRadius: 24 }}
-        className={cn(
-          'relative h-full w-full overflow-hidden shadow-lg shadow-black/15',
-          onCoverClick && 'cursor-pointer',
-        )}
-      >
-        {coverContent}
-      </motion.div>
-    </div>
+    <motion.div
+      layoutId={layoutId}
+      onClick={onCoverClick}
+      whileTap={onCoverClick ? { scale: 0.96 } : undefined}
+      transition={LAYOUT_TRANSITION}
+      style={{ width: 'min(100cqw, 100cqh)' }}
+      className={cn(
+        'relative mx-auto aspect-square overflow-hidden rounded-3xl shadow-lg shadow-black/15',
+        onCoverClick && 'cursor-pointer',
+      )}
+    >
+      {coverContent}
+    </motion.div>
   )
 }

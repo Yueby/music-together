@@ -1,6 +1,6 @@
 import { useState, useEffect, useCallback, useRef } from 'react'
 import { useParams, useNavigate } from 'react-router-dom'
-import { EVENTS } from '@music-together/shared'
+import { EVENTS, ERROR_CODE } from '@music-together/shared'
 import { motion } from 'motion/react'
 import { toast } from 'sonner'
 import { Loader2 } from 'lucide-react'
@@ -174,7 +174,7 @@ export default function RoomPage() {
     const onRoomError = (error: { code: string; message: string }) => {
       joiningRef.current = false
 
-      if (error.code === 'WRONG_PASSWORD') {
+      if (error.code === ERROR_CODE.WRONG_PASSWORD) {
         // If we came through the gate, revert to gate with error
         if (!passwordNeeded && !gateOpen) {
           // Gate was not yet open — shouldn't happen, but handle gracefully

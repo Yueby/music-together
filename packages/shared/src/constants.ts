@@ -20,6 +20,20 @@ export const TIMING = {
   VOTE_TIMEOUT_MS: 30_000,
 } as const
 
+/** QR code login status codes (shared between client polling and server responses) */
+export const QR_STATUS = {
+  EXPIRED: 800,
+  WAITING_SCAN: 801,
+  SCANNED: 802,
+  SUCCESS: 803,
+} as const
+
+/** QR code polling timing */
+export const QR_TIMING = {
+  POLL_INTERVAL_MS: 2_000,
+  SUCCESS_CLOSE_DELAY_MS: 1_000,
+} as const
+
 /** NTP clock synchronisation constants */
 export const NTP = {
   /** Fast sampling interval during initial calibration (ms) */

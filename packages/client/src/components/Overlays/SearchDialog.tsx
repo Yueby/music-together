@@ -10,6 +10,7 @@ import { Input } from '@/components/ui/input'
 import { Tabs, TabsList, TabsTrigger } from '@/components/ui/tabs'
 import { VirtualTrackList, type VirtualTrackListRef } from '@/components/VirtualTrackList'
 import { SERVER_URL } from '@/lib/config'
+import { trackKey } from '@/lib/utils'
 import { useRoomStore } from '@/stores/roomStore'
 import type { MusicSource, Track } from '@music-together/shared'
 import { Loader2, Music2, Search } from 'lucide-react'
@@ -47,7 +48,6 @@ export function SearchDialog({ open, onOpenChange, onAddToQueue }: SearchDialogP
   const searchIdRef = useRef(0)
   const listRef = useRef<VirtualTrackListRef>(null)
   const queue = useRoomStore((s) => s.room?.queue ?? EMPTY_QUEUE)
-  const trackKey = (t: Track) => `${t.source}:${t.sourceId}`
   const queueKeys = useMemo(() => new Set(queue.map(trackKey)), [queue])
 
   // Cancel any in-flight requests on unmount
@@ -139,10 +139,15 @@ export function SearchDialog({ open, onOpenChange, onAddToQueue }: SearchDialogP
   }, [loadingMore, page, source, keyword, fetchPage])
 
   const handleAdd = useCallback((track: Track) => {
+    const key = trackKey(track)
+    if (queueKeys.has(key) || addedIds.has(key)) {
+      toast.info(`「${track.title}」已在队列中`)
+      return
+    }
     onAddToQueue(track)
-    setAddedIds((prev) => new Set(prev).add(trackKey(track)))
-    toast.success(`已添加: ${track.title}`)
-  }, [onAddToQueue])
+    setAddedIds((prev) => new Set(prev).add(key))
+    toast.success(`已添加「${track.title}」`)
+  }, [onAddToQueue, queueKeys, addedIds])
 
   const isTrackAdded = useCallback((track: Track) => {
     return addedIds.has(trackKey(track)) || queueKeys.has(trackKey(track))
