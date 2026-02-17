@@ -1,6 +1,7 @@
 import { ERROR_CODE, EVENTS, roomCreateSchema, roomJoinSchema, roomSettingsSchema, setRoleSchema } from '@music-together/shared'
 import type { TypedServer, TypedSocket } from '../middleware/types.js'
 import { createWithHostOnly } from '../middleware/withControl.js'
+import { cleanupSocketRateLimit } from '../middleware/socketRateLimiter.js'
 import { roomRepo } from '../repositories/roomRepository.js'
 import * as chatService from '../services/chatService.js'
 import * as playerService from '../services/playerService.js'
@@ -184,10 +185,11 @@ export function registerRoomController(io: TypedServer, socket: TypedSocket) {
     try {
       logger.info(`Client disconnected: ${socket.id}, reason: ${reason}`, { socketId: socket.id })
       handleLeave(io, socket)
-      // Safety net: always clean up socket mapping & RTT data.
+      // Safety net: always clean up socket mapping, RTT data, and rate limiter.
       // handleLeave only cleans up if the socket was in a room, but
       // NTP_PING can store RTT even for sockets that never joined a room.
       roomRepo.deleteSocketMapping(socket.id)
+      cleanupSocketRateLimit(socket.id)
     } catch (err) {
       logger.error('disconnect handler error', err, { socketId: socket.id })
     }

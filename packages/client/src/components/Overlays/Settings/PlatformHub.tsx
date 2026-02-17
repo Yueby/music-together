@@ -2,34 +2,15 @@ import { Separator } from '@/components/ui/separator'
 import { Tabs, TabsContent, TabsList, TabsTrigger } from '@/components/ui/tabs'
 import { useAuth } from '@/hooks/useAuth'
 import { usePlaylist } from '@/hooks/usePlaylist'
+import { PLATFORM_SHORT_LABELS, PLATFORM_COLORS, getPlatformStatus, getMyPlatformStatus } from '@/lib/platform'
 import { storage } from '@/lib/storage'
-import type { MusicSource, MyPlatformAuth, Playlist, PlatformAuthStatus } from '@music-together/shared'
+import type { MusicSource, Playlist } from '@music-together/shared'
 import { useState, useCallback, useMemo } from 'react'
 import { LoginSection } from './LoginSection'
 import { ManualCookieDialog } from './ManualCookieDialog'
 import { QrLoginDialog } from './QrLoginDialog'
 import { PlaylistDetail } from './PlaylistDetail'
 import { PlaylistSection } from './PlaylistSection'
-
-const PLATFORM_LABELS: Record<MusicSource, string> = {
-  netease: '网易云',
-  tencent: 'QQ 音乐',
-  kugou: '酷狗',
-}
-
-const PLATFORM_COLORS: Record<MusicSource, string> = {
-  netease: 'data-[state=active]:text-red-500',
-  tencent: 'data-[state=active]:text-green-500',
-  kugou: 'data-[state=active]:text-blue-500',
-}
-
-function getPlatformStatus(platform: MusicSource, statusList: PlatformAuthStatus[]): PlatformAuthStatus | undefined {
-  return statusList.find((s) => s.platform === platform)
-}
-
-function getMyPlatformStatus(platform: MusicSource, myStatusList: MyPlatformAuth[]): MyPlatformAuth | undefined {
-  return myStatusList.find((s) => s.platform === platform)
-}
 
 type ViewState =
   | { type: 'list' }
@@ -148,7 +129,7 @@ export function PlatformHub() {
           <TabsList className="grid w-full grid-cols-3">
             {platforms.map((p) => (
               <TabsTrigger key={p} value={p} className={PLATFORM_COLORS[p]}>
-                {PLATFORM_LABELS[p]}
+                {PLATFORM_SHORT_LABELS[p]}
               </TabsTrigger>
             ))}
           </TabsList>

@@ -96,6 +96,7 @@ src/
 │   │       ├── ManualCookieDialog.tsx      # 手动输入 Cookie 弹窗
 │   │       └── QrLoginDialog.tsx           # 通用 QR 扫码登录弹窗（网易云 + 酷狗）
 │   ├── Player/
+│   │   ├── constants.ts        #     共享动画常量（SPRING / LAYOUT_TRANSITION），NowPlaying 和 SongInfoBar 统一导入
 │   │   ├── AudioPlayer.tsx     #     主播放器布局（桌面：左右分栏；移动：双模式封面/歌词切换）
 │   │   ├── LyricDisplay.tsx    #     AMLL 歌词渲染（LRC 正则支持 [mm:ss] / [mm:ss.x] / [mm:ss.xx] / [mm:ss.xxx]）
 │   │   ├── NowPlaying.tsx      #     当前曲目展示（支持 compact 小封面横排模式 + layoutId 共享动画）
@@ -150,7 +151,10 @@ src/
 │   ├── useLobby.ts             #   大厅房间列表与操作（使用 useSocketEvent）
 │   ├── useQueue.ts             #   播放队列操作（含 addBatchTracks 批量添加）
 │   ├── usePlaylist.ts          #   歌单管理（用户歌单列表、分页曲目获取 + 无限加载、URL 解析、批量导入）
-│   └── useIsMobile.ts          #   视口宽度检测（匹配 Tailwind sm: 断点）
+│   ├── useIsMobile.ts          #   布局维度：orientation 检测（portrait=竖屏布局，landscape=横屏布局）
+│   ├── useHasHover.ts          #   交互维度：hover 能力检测（(hover: hover) 媒体查询，触控设备=false）
+│   ├── useContainerPortrait.ts #   容器宽高比检测（ResizeObserver，用于播放器横竖屏切换）
+│   └── useCoverWidth.ts        #   封面容器最小尺寸测量（约束信息栏/控件宽度与封面对齐）
 │
 ├── stores/                     # Zustand 状态仓库
 │   ├── playerStore.ts          #   播放状态（currentTrack, isPlaying, volume 等）
@@ -170,9 +174,10 @@ src/
     ├── resetStores.ts          #   全局 store 重置工具
     ├── socket.ts               #   Socket.IO 客户端实例
     ├── storage.ts              #   localStorage 封装（带类型校验）
+    ├── platform.ts             #   平台常量（PLATFORM_LABELS / PLATFORM_SHORT_LABELS / PLATFORM_COLORS / VIP_LABELS / 状态查找函数）
     ├── format.ts               #   格式化工具（时间、文本等）
     ├── audioUnlock.ts          #   浏览器音频自动播放解锁
-    └── utils.ts                #   cn() 等通用工具
+    └── utils.ts                #   cn() + trackKey() 等通用工具
 ```
 
 ### packages/server/src/ — 后端源码
@@ -214,10 +219,10 @@ src/
 │   ├── types.ts                #   TypedServer, TypedSocket, HandlerContext
 │   ├── withRoom.ts             #   房间成员身份校验
 │   ├── withControl.ts          #   操作权限校验（包装 withRoom）
-│   └── socketRateLimiter.ts    #   Socket 事件速率限制（per-socket，10次/5秒）
+│   └── socketRateLimiter.ts    #   Socket 事件速率限制（per-socket，10次/5秒）+ 断连清理（cleanupSocketRateLimit）
 │
 ├── routes/                     # Express REST 路由
-│   ├── music.ts                #   GET /api/music/search|url|lyric|cover|playlist
+│   ├── music.ts                #   GET /api/music/search|url|lyric|cover|playlist（统一 validated() 路由包装器消除重复 try/catch + Zod 模式）
 │   └── rooms.ts                #   GET /api/rooms/:roomId/check（房间预检）
 │
 ├── types/
@@ -236,7 +241,7 @@ src/
 ├── types.ts           # 核心类型：ERROR_CODE, Track, RoomState, PlayState, ScheduledPlayState, PlayMode, AudioQuality, User, ChatMessage, VoteAction (incl. play-track, remove-track), VoteState, RoomListItem, Playlist
 ├── events.ts          # 事件常量：EVENTS 对象（room:*, player:*, queue:*, chat:*, auth:*, ntp:*, playlist:*）
 ├── socket-types.ts    # Socket.IO 类型：ServerToClientEvents, ClientToServerEvents
-├── constants.ts       # 业务常量：LIMITS（长度/数量限制）, TIMING（同步间隔/宽限期）, NTP（时钟同步参数）
+├── constants.ts       # 业务常量：LIMITS（长度/数量限制）, TIMING（同步间隔/宽限期）, NTP（时钟同步参数）, QR_STATUS（扫码状态码）, QR_TIMING（轮询间隔）
 ├── schemas.ts         # Zod 验证 schema
 └── abilities.ts       # CASL 权限定义（Actions incl. set-mode, Subjects, defineAbilityFor）
 ```
@@ -608,7 +613,7 @@ RoomPage
 
 其他独立 hook：`useChat`、`useLobby`、`useQueue`、`useVote`、`useAuth`、`usePlaylist`，每个 hook 负责将 Socket 事件绑定到对应 Store。
 
-`usePlaylist` 管理歌单功能：通过 Socket 获取用户歌单列表（`playlist:get_my` → `playlist:my_list`），通过 REST 分页获取歌单曲目（`GET /api/music/playlist?limit=100&offset=0`，返回 `{ tracks, total, offset, hasMore }`），提供 `loadMoreTracks()` 无限加载下一页、URL/ID 解析工具函数（`parsePlaylistInput`），以及单曲/批量添加到队列。切换歌单时立即重置状态防止闪旧数据，内部 `loadingMore` 标志防止快速滚动重复请求。
+`usePlaylist` 管理歌单功能：通过 Socket 获取用户歌单列表（`playlist:get_my` → `playlist:my_list`），通过 REST 分页获取歌单曲目（`GET /api/music/playlist?limit=100&offset=0`，返回 `{ tracks, total, offset, hasMore }`），提供 `loadMoreTracks()` 无限加载下一页、URL/ID 解析工具函数（`parsePlaylistInput`），以及单曲/批量添加到队列。切换歌单时立即重置状态防止闪旧数据，内部 `loadingMoreRef`（ref）做同步防重，避免 React 批量更新前的闭包竞态。URL 拼接通过 `buildPlaylistUrl()` 辅助函数集中管理。
 
 #### 受控 Dialog 模式
 
@@ -752,6 +757,12 @@ NTP.STEADY_STATE_INTERVAL_MS       // 5_000
 NTP.MAX_INITIAL_SAMPLES            // 20
 NTP.MIN_SCHEDULE_DELAY_MS          // 300
 NTP.MAX_SCHEDULE_DELAY_MS          // 3_000
+QR_STATUS.EXPIRED                  // 800
+QR_STATUS.WAITING_SCAN             // 801
+QR_STATUS.SCANNED                  // 802
+QR_STATUS.SUCCESS                  // 803
+QR_TIMING.POLL_INTERVAL_MS         // 2_000
+QR_TIMING.SUCCESS_CLOSE_DELAY_MS   // 1_000
 ```
 
 ---
@@ -800,7 +811,7 @@ updateRoom: (partial) =>
 
 ### 错误处理
 
-- **REST 路由**：每个 handler 使用 `try/catch`，返回适当的 HTTP 状态码
+- **REST 路由**：统一使用 `validated(schema, label, handler)` 包装器自动完成 Zod 验证 + try/catch + 日志记录，返回适当的 HTTP 状态码
 - **Socket.IO**：中间件统一捕获异步错误，通过 `ROOM_ERROR` 事件回传 `ERROR_CODE` 枚举和消息
 - **客户端 Hook**：hook 中处理 Socket 错误事件，使用 `sonner` toast 提示用户（含限流反馈）
 - **客户端 ErrorBoundary**：`react-error-boundary` 全局 + 路由级双层包裹（`RouteErrorBoundary` 包裹 `HomePage` 和 `RoomPage`），页面崩溃只影响当前路由并导航回首页
@@ -939,11 +950,20 @@ import { cn } from '@/lib/utils'
 <Toaster position="top-center" richColors />
 ```
 
-### 移动端触控优化
+### 触控与 Hover 双模式
 
-- **Slider Thumb**：进度条 Thumb 默认透明，桌面端 `group-hover` 显示，移动端通过 `focus:opacity-100` 在触摸拖拽时显示（iOS 风格）
+项目将**布局**和**交互**解耦为两个正交维度：
+
+| Hook | 维度 | 媒体查询 | 控制内容 |
+|------|------|----------|---------|
+| `useIsMobile()` | 布局 | `(orientation: portrait)` | Drawer 方向、面板高度、Dialog vs Drawer |
+| `useHasHover()` | 交互 | `(hover: hover)` | hover 工具栏 vs tap 展开、Slider thumb 可见性 |
+
+横屏手机 = `isMobile: false`（使用桌面布局）+ `hasHover: false`（使用触控交互）。
+
+- **Slider Thumb**：进度条 Thumb 默认透明，桌面端 `group-hover` 显示，触控设备通过 `focus:opacity-100` 在触摸拖拽时显示
 - **触控目标尺寸**：所有可点击按钮在移动端通过 `min-h-11 min-w-11`（44px）扩大触控热区，桌面端 `sm:min-h-0 sm:min-w-0` 还原视觉尺寸。涉及 QueueDrawer 工具栏、VoteBanner、RoomHeader
-- **QueueDrawer 点击暗示**：移动端列表项右侧显示 `MoreHorizontal` 省略号图标，展开工具栏后隐藏
+- **QueueDrawer tap-to-expand**：触控设备（`isTouch = !hasHover`）点击列表项展开操作工具栏；桌面端通过 `group-hover` 显示工具栏。两种模式在横屏手机上都能正确工作
 
 ### 封面图片 onError 回退
 
@@ -1028,7 +1048,7 @@ npx shadcn@latest add <component-name>
 - 服务端数据全部存储在内存中，重启后丢失
 - 无数据库、无服务端持久化（客户端 Cookie 通过 localStorage 持久化）
 - 用户身份基于持久化 nanoid（localStorage）+ 昵称（无注册/登录账号系统）；`socket.id` 仅用于 Socket 传输层映射
-- 平台认证（网易云/酷狗 QR 扫码登录、QQ 手动 Cookie）用于 VIP 歌曲访问，Cookie 作用域为房间级。QR 登录状态码在服务端归一化为 800-803，前端 `QrLoginDialog` 无需区分平台
+- 平台认证（网易云/酷狗 QR 扫码登录、QQ 手动 Cookie）用于 VIP 歌曲访问，Cookie 作用域为房间级。QR 登录状态码在 `shared/constants.ts` 中定义为 `QR_STATUS`（800-803），前后端共用，`QrLoginDialog` 无需区分平台
 - Auth Cookie 持久化策略：**只有用户主动登出（`useAuth.logout()`）才删除 localStorage 中的 cookie**。`useAuthSync` 在收到 `AUTH_SET_COOKIE_RESULT` 失败时（无论 `reason` 是 `expired` 还是 `error`）仅通过 toast 反馈，永远不删除 cookie，确保下次进房间时自动重试。`LoginSection` 在 localStorage 有 cookie 但服务端未确认时显示 "验证登录中…" 乐观状态
 - Auth Cookie 自动重发：`useRoomState` 在收到 `ROOM_STATE` 时自动重发 localStorage 中的 cookie。另外，当从 HomePage 导航到 RoomPage 时（`ROOM_STATE` 已被 HomePage 提前消费），`useRoomState` 挂载时检测到 room 已存在会立即补发 cookie，确保任何入口都能恢复认证
 - Auth Cookie 服务端验证双路径：`authController` 收到 `AUTH_SET_COOKIE` 时先检查 `hasCookie()`——如果 cookie 已在内存池中（刷新页面场景），走 **fast path** 跳过 API 调用直接返回成功；否则走 **slow path** 调用 `getUserInfo()` → `ncmApi.login_status()`。slow path 对**任何失败原因**（`expired` 或 `error`）都自动重试 1 次（间隔 1.5 秒），因为网易云 `login_status` API 可能对有效 cookie 临时返回空 profile

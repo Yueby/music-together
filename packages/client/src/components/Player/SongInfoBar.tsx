@@ -7,13 +7,10 @@ import { usePlayerStore } from '@/stores/playerStore'
 import { MessageSquare, Volume2, VolumeX } from 'lucide-react'
 import { motion } from 'motion/react'
 import { memo, useCallback, useLayoutEffect, useRef } from 'react'
+import { LAYOUT_TRANSITION, SPRING } from './constants'
 
 /** Must match PlayerControls.DESIGN_WIDTH so zoom factors are identical */
 const DESIGN_WIDTH = 300
-
-/** Apple-style easing — must match NowPlaying for shared layoutId animation */
-const SPRING = { type: 'spring' as const, duration: 0.5, bounce: 0.1 }
-const LAYOUT_TRANSITION = { layout: SPRING, borderRadius: SPRING }
 
 interface SongInfoBarProps {
   onOpenChat: () => void

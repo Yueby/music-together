@@ -1,4 +1,5 @@
-import { useIsMobile } from '@/hooks/useIsMobile'
+import { useContainerPortrait } from '@/hooks/useContainerPortrait'
+import { useCoverWidth } from '@/hooks/useCoverWidth'
 import { useVote } from '@/hooks/useVote'
 import { cn } from '@/lib/utils'
 import { usePlayerStore } from '@/stores/playerStore'
@@ -36,11 +37,18 @@ export function AudioPlayer({ onPlay, onPause, onSeek, onNext, onPrev, onOpenCha
   const bgFps = useSettingsStore((s) => s.bgFps)
   const bgFlowSpeed = useSettingsStore((s) => s.bgFlowSpeed)
   const bgRenderScale = useSettingsStore((s) => s.bgRenderScale)
-  const isMobile = useIsMobile()
+  const { ref: playerRef, isPortrait } = useContainerPortrait()
 
   // Mobile: toggle between cover view and lyric view
   const [lyricExpanded, setLyricExpanded] = useState(false)
+
+  // Measure cover area to constrain info/controls width (paused during lyric mode)
+  const { ref: coverAreaRef, coverWidth } = useCoverWidth(lyricExpanded)
   const toggleLyricView = useCallback(() => setLyricExpanded((v) => !v), [])
+
+  // Derived styles to constrain info/controls to cover width
+  const coverMaxStyle = coverWidth ? { maxWidth: coverWidth } : undefined
+  const coverMaxStyleUnlessExpanded = lyricExpanded ? undefined : coverMaxStyle
 
   const playerControlsProps = {
     onPlay, onPause, onSeek, onNext, onPrev,
@@ -70,22 +78,26 @@ export function AudioPlayer({ onPlay, onPause, onSeek, onNext, onPrev, onOpenCha
       )}
 
       {/* Content with padding */}
-      <div className="relative z-10 h-full px-5 py-7 md:px-[5%] md:py-[4%] lg:px-[6%] lg:py-[5%]">
-        <div className={cn('flex h-full', isMobile ? 'flex-col' : 'flex-row')}>
+      <div className="relative z-10 h-full p-5 md:p-[5%] lg:p-[5%]">
+        <div ref={playerRef} className={cn('flex h-full', isPortrait ? 'flex-col' : 'flex-row gap-[clamp(24px,3vw,48px)]')}>
 
           {/* ----------------------------------------------------------------- */}
           {/* Mobile layout: dual-mode (cover view / lyric view)                */}
           {/* ----------------------------------------------------------------- */}
-          {isMobile ? (
+          {isPortrait ? (
             <LayoutGroup>
-              <div className="relative mx-auto flex h-full w-full max-w-sm flex-col items-center gap-6">
-                {/* 1. Cover — fills remaining space in cover mode */}
-                <motion.div layout transition={{ layout: { type: 'spring' as const, duration: 0.5, bounce: 0.1 } }} className={cn('w-full', !lyricExpanded && 'flex-1 min-h-0')}>
+              <div className="relative mx-auto flex h-full w-full max-w-md flex-col items-center gap-[clamp(12px,3vh,32px)]">
+                {/* 1. Cover — fills remaining space in cover mode, centered within */}
+                <div
+                  ref={coverAreaRef}
+                  className={cn('w-full', !lyricExpanded && 'flex-1 min-h-0 flex items-center justify-center')}
+                  style={!lyricExpanded ? { containerType: 'size' } as React.CSSProperties : undefined}
+                >
                   <NowPlaying compact={lyricExpanded} onCoverClick={toggleLyricView} />
-                </motion.div>
+                </div>
 
-                {/* Lyrics — AnimatePresence always mounted so exit animation fires */}
-                <AnimatePresence mode="wait">
+                {/* Lyrics — popLayout so exiting lyrics don't occupy flex space */}
+                <AnimatePresence mode="popLayout">
                   {lyricExpanded && (
                     <motion.div
                       key="lyrics"
@@ -103,13 +115,13 @@ export function AudioPlayer({ onPlay, onPause, onSeek, onNext, onPrev, onOpenCha
 
                 {/* 2. Song info + action buttons (independent zoom module) */}
                 {!lyricExpanded && (
-                  <div className="w-full">
+                  <div className="w-full shrink-0 mx-auto" style={coverMaxStyle}>
                     <SongInfoBar {...songInfoProps} />
                   </div>
                 )}
 
                 {/* 3. Controls (independent zoom module) */}
-                <div className="relative z-10 w-full">
+                <div className="relative z-10 w-full shrink-0 mx-auto" style={coverMaxStyleUnlessExpanded}>
                   <PlayerControls {...playerControlsProps} />
                 </div>
 
@@ -126,18 +138,22 @@ export function AudioPlayer({ onPlay, onPause, onSeek, onNext, onPrev, onOpenCha
             // Desktop layout: left panel (cover + info + controls) + right lyrics
             // ---------------------------------------------------------------
             <>
-              <div className="relative flex w-[36%] flex-col items-center justify-center gap-8 lg:w-[33%]">
-                <div className="flex w-full max-w-[min(90%,48vh)] flex-col gap-8">
-                  {/* 1. Cover */}
+              <div className="relative flex w-[36%] flex-col items-center gap-[clamp(16px,3vh,40px)] lg:w-[33%]">
+                {/* 1. Cover — flex-1 fills remaining space, centered */}
+                <div ref={coverAreaRef} className="min-h-0 w-full flex-1" style={{ containerType: 'size' }}>
                   <NowPlaying />
-                  {/* 2. Song info + action buttons */}
+                </div>
+                {/* 2. Song info + action buttons */}
+                <div className="w-full shrink-0 mx-auto" style={coverMaxStyle}>
                   <SongInfoBar {...songInfoProps} />
-                  {/* 3. Controls */}
+                </div>
+                {/* 3. Controls */}
+                <div className="w-full shrink-0 mx-auto" style={coverMaxStyle}>
                   <PlayerControls {...playerControlsProps} />
                 </div>
                 {activeVote && (
                   <div className="absolute inset-x-0 bottom-0 z-20 flex justify-center px-2 pb-2">
-                    <div className="w-full max-w-[min(90%,48vh)]">
+                    <div className="w-full">
                       <VoteBanner vote={activeVote} onCastVote={castVote} />
                     </div>
                   </div>

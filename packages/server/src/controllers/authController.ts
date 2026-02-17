@@ -1,4 +1,4 @@
-import { EVENTS } from '@music-together/shared'
+import { EVENTS, QR_STATUS } from '@music-together/shared'
 import type { MusicSource } from '@music-together/shared'
 import * as authService from '../services/authService.js'
 import * as neteaseAuth from '../services/neteaseAuthService.js'
@@ -27,7 +27,7 @@ export function registerAuthController(io: TypedServer, socket: TypedSocket) {
     try {
       const platform = data?.platform
       if (!platform || !QR_PLATFORMS.has(platform)) {
-        socket.emit(EVENTS.AUTH_QR_STATUS, { status: 800, message: '暂不支持该平台扫码登录' })
+        socket.emit(EVENTS.AUTH_QR_STATUS, { status: QR_STATUS.EXPIRED, message: '暂不支持该平台扫码登录' })
         return
       }
 
@@ -36,20 +36,23 @@ export function registerAuthController(io: TypedServer, socket: TypedSocket) {
         : await kugouAuth.generateQrCode()
 
       if (!result) {
-        socket.emit(EVENTS.AUTH_QR_STATUS, { status: 800, message: '生成二维码失败，请重试' })
+        socket.emit(EVENTS.AUTH_QR_STATUS, { status: QR_STATUS.EXPIRED, message: '生成二维码失败，请重试' })
         return
       }
 
       socket.emit(EVENTS.AUTH_QR_GENERATED, { key: result.key, qrimg: result.qrimg })
     } catch (err) {
       logger.error('AUTH_REQUEST_QR error', err, { socketId: socket.id })
-      socket.emit(EVENTS.AUTH_QR_STATUS, { status: 800, message: '请求失败，请重试' })
+      socket.emit(EVENTS.AUTH_QR_STATUS, { status: QR_STATUS.EXPIRED, message: '请求失败，请重试' })
     }
   })
 
   socket.on(EVENTS.AUTH_CHECK_QR, async (data) => {
     try {
-      if (!data?.key) return
+      if (!data?.key) {
+        socket.emit(EVENTS.AUTH_QR_STATUS, { status: QR_STATUS.EXPIRED, message: '缺少二维码 key' })
+        return
+      }
 
       const platform = data.platform
       if (!platform || !(['netease', 'kugou'] as const).includes(platform as 'netease' | 'kugou')) {
@@ -64,7 +67,7 @@ export function registerAuthController(io: TypedServer, socket: TypedSocket) {
       socket.emit(EVENTS.AUTH_QR_STATUS, { status: result.status, message: result.message })
 
       // On successful login, validate cookie and add to pool (guard against duplicate 803)
-      if (result.status === 803 && result.cookie && !qrSuccessHandled) {
+      if (result.status === QR_STATUS.SUCCESS && result.cookie && !qrSuccessHandled) {
         qrSuccessHandled = true
 
         const infoResult = platform === 'kugou'
@@ -96,7 +99,7 @@ export function registerAuthController(io: TypedServer, socket: TypedSocket) {
       }
     } catch (err) {
       logger.error('AUTH_CHECK_QR error', err, { socketId: socket.id })
-      socket.emit(EVENTS.AUTH_QR_STATUS, { status: 800, message: '检查登录状态失败，请重试' })
+      socket.emit(EVENTS.AUTH_QR_STATUS, { status: QR_STATUS.EXPIRED, message: '检查登录状态失败，请重试' })
     }
   })
 

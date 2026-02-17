@@ -14,6 +14,7 @@ import { useRoomStore } from '@/stores/roomStore'
 import { useSocketContext } from '@/providers/SocketProvider'
 import type { Track } from '@music-together/shared'
 import { EVENTS } from '@music-together/shared'
+import { useHasHover } from '@/hooks/useHasHover'
 import { useIsMobile } from '@/hooks/useIsMobile'
 import { useCallback, useContext, useEffect, useRef, useState } from 'react'
 import { AbilityContext } from '@/providers/AbilityProvider'
@@ -43,7 +44,9 @@ export function QueueDrawer({ open, onOpenChange, onRemoveFromQueue, onReorderQu
   const queue = useRoomStore((s) => s.room?.queue ?? EMPTY_QUEUE)
   const currentTrack = usePlayerStore((s) => s.currentTrack)
   const { socket } = useSocketContext()
-  const isMobile = useIsMobile()
+  const isMobile = useIsMobile()       // layout: Drawer direction, height
+  const hasHover = useHasHover()        // interaction: hover vs touch
+  const isTouch = !hasHover
   const ability = useContext(AbilityContext)
   const canRemove = ability.can('remove', 'Queue')
   const canReorder = ability.can('reorder', 'Queue')
@@ -189,7 +192,7 @@ export function QueueDrawer({ open, onOpenChange, onRemoveFromQueue, onReorderQu
                     currentTrack?.id === track.id && 'bg-primary/10',
                   )}
                   onClick={() => {
-                    if (isMobile) {
+                    if (isTouch) {
                       setActiveTrackId((prev) => prev === track.id ? null : track.id)
                     }
                   }}
@@ -256,7 +259,7 @@ export function QueueDrawer({ open, onOpenChange, onRemoveFromQueue, onReorderQu
                       'opacity-0 pointer-events-none transition-opacity',
                       'group-hover:opacity-100 group-hover:pointer-events-auto',
                       'group-focus-within:opacity-100 group-focus-within:pointer-events-auto',
-                      isMobile && activeTrackId === track.id && 'opacity-100 pointer-events-auto',
+                      isTouch && activeTrackId === track.id && 'opacity-100 pointer-events-auto',
                     )}
                     onClick={(e) => e.stopPropagation()}
                   >

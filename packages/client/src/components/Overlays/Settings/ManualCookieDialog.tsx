@@ -7,14 +7,9 @@ import {
   DialogHeader,
   DialogTitle,
 } from '@/components/ui/dialog'
+import { PLATFORM_LABELS } from '@/lib/platform'
 import type { MusicSource } from '@music-together/shared'
 import { useState } from 'react'
-
-const PLATFORM_LABELS: Record<MusicSource, string> = {
-  netease: '网易云音乐',
-  tencent: 'QQ 音乐',
-  kugou: '酷狗音乐',
-}
 
 interface ManualCookieDialogProps {
   open: boolean

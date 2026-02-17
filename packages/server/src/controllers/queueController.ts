@@ -85,7 +85,10 @@ export function registerQueueController(io: TypedServer, socket: TypedSocket) {
     EVENTS.QUEUE_REMOVE,
     withPermission('remove', 'Queue', async (ctx, raw) => {
       const parsed = queueRemoveSchema.safeParse(raw)
-      if (!parsed.success) return
+      if (!parsed.success) {
+        socket.emit(EVENTS.ROOM_ERROR, { code: ERROR_CODE.INVALID_DATA, message: '无效的移除请求' })
+        return
+      }
       const { trackId } = parsed.data
       const isCurrentTrack = ctx.room.currentTrack?.id === trackId
 
@@ -107,7 +110,10 @@ export function registerQueueController(io: TypedServer, socket: TypedSocket) {
     EVENTS.QUEUE_REORDER,
     withPermission('reorder', 'Queue', (ctx, raw) => {
       const parsed = queueReorderSchema.safeParse(raw)
-      if (!parsed.success) return
+      if (!parsed.success) {
+        socket.emit(EVENTS.ROOM_ERROR, { code: ERROR_CODE.INVALID_DATA, message: '无效的排序数据' })
+        return
+      }
       const { trackIds } = parsed.data
       queueService.reorderTracks(ctx.roomId, trackIds)
       io.to(ctx.roomId).emit(EVENTS.QUEUE_UPDATED, { queue: ctx.room.queue })

@@ -6,15 +6,11 @@ import {
   DialogHeader,
   DialogTitle,
 } from '@/components/ui/dialog'
+import { PLATFORM_LABELS } from '@/lib/platform'
 import type { MusicSource } from '@music-together/shared'
+import { QR_STATUS, QR_TIMING } from '@music-together/shared'
 import { Loader2, RefreshCw, CheckCircle2, AlertCircle, Smartphone } from 'lucide-react'
 import { useEffect, useRef } from 'react'
-
-const PLATFORM_LABELS: Record<MusicSource, string> = {
-  netease: '网易云音乐',
-  tencent: 'QQ 音乐',
-  kugou: '酷狗音乐',
-}
 
 interface QrLoginDialogProps {
   open: boolean
@@ -50,10 +46,9 @@ export function QrLoginDialog({
       return
     }
 
-    // Start polling
     pollRef.current = setInterval(() => {
       onCheckStatus(qrData.key)
-    }, 2000)
+    }, QR_TIMING.POLL_INTERVAL_MS)
 
     return () => {
       if (pollRef.current) {
@@ -63,17 +58,17 @@ export function QrLoginDialog({
     }
   }, [open, qrData?.key, onCheckStatus])
 
-  // On success (803) or expiry (800): stop polling immediately + auto-close on success
+  // On success or expiry: stop polling immediately + auto-close on success
   useEffect(() => {
     const status = qrStatus?.status
-    if (status === 800 || status === 803) {
+    if (status === QR_STATUS.EXPIRED || status === QR_STATUS.SUCCESS) {
       if (pollRef.current) {
         clearInterval(pollRef.current)
         pollRef.current = null
       }
     }
-    if (status === 803) {
-      const t = setTimeout(() => onOpenChange(false), 1000)
+    if (status === QR_STATUS.SUCCESS) {
+      const t = setTimeout(() => onOpenChange(false), QR_TIMING.SUCCESS_CLOSE_DELAY_MS)
       return () => clearTimeout(t)
     }
   }, [qrStatus?.status, onOpenChange])
@@ -104,13 +99,13 @@ export function QrLoginDialog({
                   className="h-full w-full rounded-lg object-contain p-2"
                 />
                 {/* Overlay for expired/success */}
-                {statusCode === 800 && (
+                {statusCode === QR_STATUS.EXPIRED && (
                   <div className="absolute inset-0 flex flex-col items-center justify-center rounded-lg bg-black/60">
                     <AlertCircle className="mb-2 h-8 w-8 text-white" />
                     <p className="text-sm text-white">二维码已过期</p>
                   </div>
                 )}
-                {statusCode === 803 && (
+                {statusCode === QR_STATUS.SUCCESS && (
                   <div className="absolute inset-0 flex flex-col items-center justify-center rounded-lg bg-green-600/80">
                     <CheckCircle2 className="mb-2 h-8 w-8 text-white" />
                     <p className="text-sm text-white">登录成功</p>
@@ -125,25 +120,25 @@ export function QrLoginDialog({
 
           {/* Status message */}
           <div className="flex items-center gap-2 text-sm">
-            {statusCode === 801 && (
+            {statusCode === QR_STATUS.WAITING_SCAN && (
               <>
                 <Smartphone className="text-muted-foreground h-4 w-4" />
                 <span className="text-muted-foreground">打开{label} App 扫码</span>
               </>
             )}
-            {statusCode === 802 && (
+            {statusCode === QR_STATUS.SCANNED && (
               <>
                 <Loader2 className="h-4 w-4 animate-spin text-blue-500" />
                 <span className="text-blue-600">已扫码，请在手机上确认</span>
               </>
             )}
-            {statusCode === 803 && (
+            {statusCode === QR_STATUS.SUCCESS && (
               <>
                 <CheckCircle2 className="h-4 w-4 text-green-500" />
                 <span className="text-green-600">登录成功！</span>
               </>
             )}
-            {statusCode === 800 && (
+            {statusCode === QR_STATUS.EXPIRED && (
               <>
                 <AlertCircle className="text-destructive h-4 w-4" />
                 <span className="text-destructive">二维码已过期</span>
@@ -152,7 +147,7 @@ export function QrLoginDialog({
           </div>
 
           {/* Refresh button */}
-          {(statusCode === 800 || (!qrData && !isLoading)) && (
+          {(statusCode === QR_STATUS.EXPIRED || (!qrData && !isLoading)) && (
             <Button variant="outline" size="sm" onClick={onRefresh} className="gap-1.5">
               <RefreshCw className="h-3.5 w-3.5" />
               重新获取二维码

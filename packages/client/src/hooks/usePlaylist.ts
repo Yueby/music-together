@@ -7,6 +7,26 @@ import { SERVER_URL } from '@/lib/config'
 
 const PAGE_SIZE = 100
 
+/** Build the playlist API URL with all query parameters */
+function buildPlaylistUrl(
+  source: MusicSource,
+  id: string,
+  limit: number,
+  offset: number,
+  options?: { total?: number; roomId?: string; userId?: string },
+): string {
+  const params = new URLSearchParams({
+    source,
+    id,
+    limit: String(limit),
+    offset: String(offset),
+  })
+  if (options?.total) params.set('total', String(options.total))
+  if (options?.roomId) params.set('roomId', options.roomId)
+  if (options?.userId) params.set('userId', options.userId)
+  return `${SERVER_URL}/api/music/playlist?${params.toString()}`
+}
+
 /**
  * Extract a playlist ID from a URL or raw ID string.
  * Supports common URL formats for netease, tencent, and kugou.
@@ -78,6 +98,7 @@ export function usePlaylist() {
   // Track current playlist context to prevent stale responses
   const currentPlaylistRef = useRef<{ source: MusicSource; id: string } | null>(null)
   const offsetRef = useRef(0)
+  const loadingMoreRef = useRef(false)
 
   useEffect(() => {
     const onMyList = (data: { platform: MusicSource; playlists: Playlist[] }) => {
@@ -111,17 +132,19 @@ export function usePlaylist() {
       setHasMoreTracks(false)
       setTracksLoading(true)
       setLoadingMore(false)
+      loadingMoreRef.current = false
 
       // Track current context for stale response detection
       currentPlaylistRef.current = { source, id: playlistId }
       offsetRef.current = 0
 
       try {
-        const roomId = useRoomStore.getState().room?.id
-        const userId = storage.getUserId()
-        const res = await fetch(
-          `${SERVER_URL}/api/music/playlist?source=${encodeURIComponent(source)}&id=${encodeURIComponent(playlistId)}&limit=${PAGE_SIZE}&offset=0${trackCount ? `&total=${trackCount}` : ''}${roomId ? `&roomId=${encodeURIComponent(roomId)}` : ''}${userId ? `&userId=${encodeURIComponent(userId)}` : ''}`,
-        )
+        const url = buildPlaylistUrl(source, playlistId, PAGE_SIZE, 0, {
+          total: trackCount,
+          roomId: useRoomStore.getState().room?.id,
+          userId: storage.getUserId(),
+        })
+        const res = await fetch(url)
         if (!res.ok) {
           setTracksLoading(false)
           return []
@@ -155,25 +178,24 @@ export function usePlaylist() {
 
   /**
    * Load the next page of tracks for the current playlist.
-   * Guarded by loadingMore flag to prevent duplicate requests from fast scrolling.
+   * Uses a ref for synchronous dedup — prevents duplicate requests from fast scrolling
+   * even before React batches the state update.
    */
   const loadMoreTracks = useCallback(async () => {
     const ctx = currentPlaylistRef.current
-    if (!ctx || loadingMore || !hasMoreTracks) return
+    if (!ctx || loadingMoreRef.current || !hasMoreTracks) return
 
+    loadingMoreRef.current = true
     setLoadingMore(true)
 
     try {
       const offset = offsetRef.current
-      const roomId = useRoomStore.getState().room?.id
-      const userId = storage.getUserId()
-      const res = await fetch(
-        `${SERVER_URL}/api/music/playlist?source=${encodeURIComponent(ctx.source)}&id=${encodeURIComponent(ctx.id)}&limit=${PAGE_SIZE}&offset=${offset}${roomId ? `&roomId=${encodeURIComponent(roomId)}` : ''}${userId ? `&userId=${encodeURIComponent(userId)}` : ''}`,
-      )
-      if (!res.ok) {
-        setLoadingMore(false)
-        return
-      }
+      const url = buildPlaylistUrl(ctx.source, ctx.id, PAGE_SIZE, offset, {
+        roomId: useRoomStore.getState().room?.id,
+        userId: storage.getUserId(),
+      })
+      const res = await fetch(url)
+      if (!res.ok) return
 
       // Stale response guard — context might have changed while we were fetching
       const currentCtx = currentPlaylistRef.current
@@ -188,9 +210,10 @@ export function usePlaylist() {
     } catch {
       // Silently fail — user can scroll again to retry
     } finally {
+      loadingMoreRef.current = false
       setLoadingMore(false)
     }
-  }, [loadingMore, hasMoreTracks])
+  }, [hasMoreTracks])
 
   const addTrackToQueue = useCallback(
     (track: Track) => {

@@ -6,6 +6,9 @@ import { Loader2, Music2 } from 'lucide-react'
 import { forwardRef, useEffect, useImperativeHandle, useRef } from 'react'
 import { TrackListItem } from './TrackListItem'
 
+/** Start loading more items when the last visible row is within this many rows of the end */
+const LOAD_MORE_THRESHOLD = 5
+
 export interface VirtualTrackListProps {
   tracks: Track[]
   loading: boolean
@@ -80,7 +83,7 @@ export const VirtualTrackList = forwardRef<VirtualTrackListRef, VirtualTrackList
 
     useEffect(() => {
       if (!lastItem) return
-      if (lastItem.index >= tracks.length - 5 && hasMore && !loadingMore) {
+      if (lastItem.index >= tracks.length - LOAD_MORE_THRESHOLD && hasMore && !loadingMore) {
         onLoadMore()
       }
     }, [lastItem?.index, tracks.length, hasMore, loadingMore, onLoadMore])

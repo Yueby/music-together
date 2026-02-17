@@ -74,7 +74,7 @@ function ResponsiveDialogContent({
   const isMobile = useIsResponsiveMobile()
 
   if (isMobile) {
-    return <DrawerContent className={className}>{children}</DrawerContent>
+    return <DrawerContent>{children}</DrawerContent>
   }
 
   return (

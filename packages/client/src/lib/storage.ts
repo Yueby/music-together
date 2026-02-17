@@ -86,7 +86,7 @@ export const storage = {
 
   // Lyric settings
   getLyricAlignAnchor: () => safeEnum('lyricAlignAnchor', LYRIC_ANCHORS, 'center'),
-  setLyricAlignAnchor: (v: string) => safeSet('lyricAlignAnchor', v),
+  setLyricAlignAnchor: (v: typeof LYRIC_ANCHORS[number]) => safeSet('lyricAlignAnchor', v),
 
   getLyricAlignPosition: () => {
     const pos = safeFloat('lyricAlignPosition', 0.4)

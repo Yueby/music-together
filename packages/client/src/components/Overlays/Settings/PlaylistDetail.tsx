@@ -1,6 +1,7 @@
 import { Button } from '@/components/ui/button'
 import { Separator } from '@/components/ui/separator'
 import { VirtualTrackList } from '@/components/VirtualTrackList'
+import { trackKey } from '@/lib/utils'
 import { useRoomStore } from '@/stores/roomStore'
 import type { Playlist, Track } from '@music-together/shared'
 import { LIMITS } from '@music-together/shared'
@@ -37,8 +38,6 @@ export function PlaylistDetail({
 }: PlaylistDetailProps) {
   const queue = useRoomStore((s) => s.room?.queue ?? EMPTY_QUEUE)
   const [addedIds, setAddedIds] = useState<Set<string>>(new Set())
-
-  const trackKey = (t: Track) => `${t.source}:${t.sourceId}`
   const queueKeys = useMemo(() => new Set(queue.map(trackKey)), [queue])
 
   const isTrackAdded = useCallback(

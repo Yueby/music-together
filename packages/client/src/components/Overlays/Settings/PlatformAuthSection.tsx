@@ -2,32 +2,12 @@ import { Badge } from '@/components/ui/badge'
 import { Button } from '@/components/ui/button'
 import { Separator } from '@/components/ui/separator'
 import { useAuth } from '@/hooks/useAuth'
+import { PLATFORM_LABELS, VIP_LABELS, getPlatformStatus, getMyPlatformStatus } from '@/lib/platform'
 import type { MusicSource, MyPlatformAuth, PlatformAuthStatus } from '@music-together/shared'
 import { Crown, KeyRound, LogOut, ScanLine } from 'lucide-react'
 import { useState } from 'react'
 import { ManualCookieDialog } from './ManualCookieDialog'
 import { QrLoginDialog } from './QrLoginDialog'
-
-const PLATFORM_LABELS: Record<MusicSource, string> = {
-  netease: '网易云音乐',
-  tencent: 'QQ 音乐',
-  kugou: '酷狗音乐',
-}
-
-const VIP_LABELS: Record<number, string> = {
-  0: '',
-  1: 'VIP',
-  10: '黑胶VIP',
-  11: '黑胶VIP',
-}
-
-function getPlatformStatus(platform: MusicSource, statusList: PlatformAuthStatus[]): PlatformAuthStatus | undefined {
-  return statusList.find((s) => s.platform === platform)
-}
-
-function getMyPlatformStatus(platform: MusicSource, myStatusList: MyPlatformAuth[]): MyPlatformAuth | undefined {
-  return myStatusList.find((s) => s.platform === platform)
-}
 
 // ---------------------------------------------------------------------------
 // Platform row
