@@ -639,7 +639,7 @@ async function checkVipStatus(cookie: string, uin: string): Promise<number> {
 // 暂时禁用此功能以避免日志刷屏。
 // ---------------------------------------------------------------------------
 
-export async function getUserPlaylists(_cookie: string): Promise<Array<{ id: string; name: string; cover: string }>> {
+export async function getUserPlaylists(_cookie: string): Promise<Playlist[]> {
   // Silent return to avoid log spam
   logger.warn('QQ getUserPlaylists: Feature disabled due to anti-bot restrictions')
   return []
