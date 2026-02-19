@@ -1,9 +1,5 @@
 <p align="center">
-  <picture>
-    <source media="(prefers-color-scheme: dark)" srcset="public/logo-light.svg">
-    <source media="(prefers-color-scheme: light)" srcset="public/logo-dark.svg">
-    <img alt="Music Together" src="public/logo-dark.svg" width="80">
-  </picture>
+  <img alt="Music Together" src="public/logo.svg" width="80">
 </p>
 
 <h1 align="center">Music Together</h1>
@@ -45,6 +41,12 @@
 | 首页 | 搜索 | 播放 | 聊天 |
 |:---:|:---:|:---:|:---:|
 | ![首页](screenshots/1_m.png) | ![搜索](screenshots/2_m.png) | ![播放](screenshots/3_m.png) | ![聊天](screenshots/4_m.png) |
+
+### 歌词展示对比
+
+| 桌面端歌词 | 竖屏默认（封面） | 竖屏歌词模式 |
+|:---:|:---:|:---:|
+| ![桌面端歌词](screenshots/3.png) | ![竖屏默认](screenshots/3_m.png) | ![竖屏歌词](screenshots/3_m1.png) |
 
 ## 功能特性
 

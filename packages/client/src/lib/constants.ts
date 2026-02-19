@@ -44,11 +44,18 @@ export const DRIFT_SMOOTH_ALPHA = 0.3
 /** Fallback seek threshold (ms) when rate correction is disabled by plugin */
 export const DRIFT_PLUGIN_SEEK_THRESHOLD_MS = 30
 
+/** Grace period (ms) after new track before drift correction activates.
+ *  Allows at least one host report to correct estimateCurrentTime. */
+export const DRIFT_GRACE_PERIOD_MS = 3_000
+
 /** Safety clamp for network delay estimation (seconds) — prevents clock-skew outliers */
 export const MAX_NETWORK_DELAY_S = 5
 
 /** Loading time threshold (seconds) before compensating with a seek */
-export const LOAD_COMPENSATION_THRESHOLD_S = 0.5
+export const LOAD_COMPENSATION_THRESHOLD_S = 0.15
+
+/** 加载补偿 seek 的最大值（秒），防止网络慢时跳过歌曲开头过多 */
+export const MAX_LOAD_COMPENSATION_S = 2
 
 /** Safety timeout for lobby action loading state */
 export const ACTION_LOADING_TIMEOUT_MS = 15_000

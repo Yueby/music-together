@@ -11,6 +11,7 @@ import {
   HOST_REPORT_FAST_DURATION_MS,
   MAX_NETWORK_DELAY_S,
   SYNC_REQUEST_INTERVAL_MS,
+  DRIFT_GRACE_PERIOD_MS,
 } from '@/lib/constants'
 import { useSocketContext } from '@/providers/SocketProvider'
 import { usePlayerStore } from '@/stores/playerStore'
@@ -59,10 +60,7 @@ function clamp(value: number, limit: number): number {
  * If a browser speed plugin (e.g. Global Speed) overrides the rate,
  * rate correction is automatically disabled and only hard seek is used.
  */
-export function usePlayerSync(
-  howlRef: RefObject<Howl | null>,
-  soundIdRef: RefObject<number | undefined>,
-) {
+export function usePlayerSync(howlRef: RefObject<Howl | null>, soundIdRef: RefObject<number | undefined>) {
   const { socket } = useSocketContext()
   const setCurrentTime = usePlayerStore((s) => s.setCurrentTime)
 
@@ -83,7 +81,7 @@ export function usePlayerSync(
   // avoiding the cold-start lag after pause/resume/new-track.
   const emaColdStartRef = useRef(true)
   // Timestamp when the current track started playing (for adaptive host reporting)
-  const trackStartTimeRef = useRef(Date.now())
+  const trackStartTimeRef = useRef(0)
 
   const clearScheduled = () => {
     if (scheduledTimerRef.current) {
@@ -210,8 +208,16 @@ export function usePlayerSync(
       const currentRole = useRoomStore.getState().currentUser?.role
       if (currentRole === 'host') return
 
+      // Grace period after new track: skip rate micro-adjustments
+      // (estimateCurrentTime is unreliable until host submits at least
+      // one progress report), but still allow hard seek for large drifts.
+      const inGracePeriod = Date.now() - trackStartTimeRef.current < DRIFT_GRACE_PERIOD_MS
+
       // Use NTP-calibrated server time for accurate delay estimation
-      const networkDelaySec = Math.max(0, Math.min(MAX_NETWORK_DELAY_S, (getServerTime() - data.serverTimestamp) / 1000))
+      const networkDelaySec = Math.max(
+        0,
+        Math.min(MAX_NETWORK_DELAY_S, (getServerTime() - data.serverTimestamp) / 1000),
+      )
       const expectedTime = data.currentTime + (data.isPlaying ? networkDelaySec : 0)
 
       const currentSeek = howlRef.current.seek() as number
@@ -224,8 +230,7 @@ export function usePlayerSync(
         smoothedDriftRef.current = rawDrift
         emaColdStartRef.current = false
       } else {
-        smoothedDriftRef.current =
-          DRIFT_SMOOTH_ALPHA * rawDrift + (1 - DRIFT_SMOOTH_ALPHA) * smoothedDriftRef.current
+        smoothedDriftRef.current = DRIFT_SMOOTH_ALPHA * rawDrift + (1 - DRIFT_SMOOTH_ALPHA) * smoothedDriftRef.current
       }
       const sd = smoothedDriftRef.current
       const absDrift = Math.abs(sd)
@@ -246,6 +251,8 @@ export function usePlayerSync(
         smoothedDriftRef.current = 0
         emaColdStartRef.current = true
       } else if (absDrift > DRIFT_DEAD_ZONE_MS / 1000 && !rateDisabledRef.current) {
+        // 宽限期内跳过 rate 微调 — 等 host report 稳定后再启用
+        if (inGracePeriod) return
         // Proportional rate correction: larger drift → stronger correction,
         // naturally decelerating as we approach the target — no oscillation.
         const adj = clamp(sd * DRIFT_RATE_KP, MAX_RATE_ADJUSTMENT)
@@ -264,7 +271,9 @@ export function usePlayerSync(
             rateOverrideCountRef.current++
             if (rateOverrideCountRef.current >= 3) {
               rateDisabledRef.current = true
-              console.warn('Rate correction disabled: external plugin detected (confirmed after 3 consecutive overrides)')
+              console.warn(
+                'Rate correction disabled: external plugin detected (confirmed after 3 consecutive overrides)',
+              )
             }
           } else {
             // Rate applied successfully — reset counter
@@ -325,13 +334,12 @@ export function usePlayerSync(
       if (currentUser?.role === 'host' && howlRef.current?.playing()) {
         socket.emit(EVENTS.PLAYER_SYNC, {
           currentTime: howlRef.current.seek() as number,
+          hostServerTime: getServerTime(),
         })
       }
       // Schedule next report — fast if within the initial window, slow otherwise
       const elapsed = Date.now() - trackStartTimeRef.current
-      const interval = elapsed < HOST_REPORT_FAST_DURATION_MS
-        ? HOST_REPORT_FAST_INTERVAL_MS
-        : HOST_REPORT_INTERVAL_MS
+      const interval = elapsed < HOST_REPORT_FAST_DURATION_MS ? HOST_REPORT_FAST_INTERVAL_MS : HOST_REPORT_INTERVAL_MS
       timerId = setTimeout(report, interval)
     }
 
@@ -343,6 +351,7 @@ export function usePlayerSync(
       if (currentUser?.role === 'host' && howlRef.current?.playing()) {
         socket.emit(EVENTS.PLAYER_SYNC, {
           currentTime: howlRef.current.seek() as number,
+          hostServerTime: getServerTime(),
         })
       }
     }

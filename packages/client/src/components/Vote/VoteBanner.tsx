@@ -40,8 +40,8 @@ export function VoteBanner({ vote, onCastVote }: VoteBannerProps) {
       >
         {/* Title */}
         <div className="mb-2 text-center text-sm font-medium text-white/90">
-          <span className="text-white/60">{vote.initiatorNickname}</span>{' '}
-          发起投票：{getVoteActionLabel(vote.action, vote.payload)}
+          <span className="text-white/60">{vote.initiatorNickname}</span> 发起投票：
+          {getVoteActionLabel(vote.action, vote.payload)}
         </div>
 
         {/* Progress bar (time remaining) */}

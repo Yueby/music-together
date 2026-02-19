@@ -23,12 +23,8 @@ export const useChatStore = create<ChatStore>((set) => ({
     set((state) => {
       const next = [...state.messages, message]
       return {
-        messages: next.length > LIMITS.CHAT_HISTORY_MAX
-          ? next.slice(-LIMITS.CHAT_HISTORY_MAX)
-          : next,
-        unreadCount: state.isChatOpen || message.type === 'system'
-          ? state.unreadCount
-          : state.unreadCount + 1,
+        messages: next.length > LIMITS.CHAT_HISTORY_MAX ? next.slice(-LIMITS.CHAT_HISTORY_MAX) : next,
+        unreadCount: state.isChatOpen || message.type === 'system' ? state.unreadCount : state.unreadCount + 1,
       }
     }),
   setMessages: (messages) => set({ messages, unreadCount: 0 }),

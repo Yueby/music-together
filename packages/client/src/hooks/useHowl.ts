@@ -7,6 +7,7 @@ import {
   HOWL_UNMUTE_DELAY_SEEK_MS,
   HOWL_UNMUTE_DELAY_DEFAULT_MS,
   LOAD_COMPENSATION_THRESHOLD_S,
+  MAX_LOAD_COMPENSATION_S,
 } from '@/lib/constants'
 import { toast } from 'sonner'
 
@@ -91,7 +92,11 @@ export function useHowl(onTrackEnd: () => void) {
       }
 
       if (howlRef.current) {
-        try { howlRef.current.unload() } catch { /* ignore */ }
+        try {
+          howlRef.current.unload()
+        } catch {
+          /* ignore */
+        }
         howlRef.current = null
         stopTimeUpdate()
       }
@@ -126,20 +131,23 @@ export function useHowl(onTrackEnd: () => void) {
             howl.once('play', () => {
               if (howlRef.current !== howl) return
               const elapsed = (Date.now() - loadStartTime) / 1000
-              const seekTarget = (seekTo ?? 0) + elapsed
+              const seekTarget = (seekTo ?? 0) + Math.min(elapsed, MAX_LOAD_COMPENSATION_S)
               // seekTo > 0: must seek to correct position (+ loading compensation)
               // seekTo === 0: only compensate if loading took significant time
               if ((seekTo && seekTo > 0) || elapsed > LOAD_COMPENSATION_THRESHOLD_S) {
                 howl.seek(seekTarget)
               }
             })
-            unmuteTimerRef.current = setTimeout(() => {
-              if (howlRef.current === howl) {
-                const latestVolume = usePlayerStore.getState().volume
-                howl.fade(0, latestVolume, 200) // Smooth fade-in with latest volume
-                syncReadyRef.current = true
-              }
-            }, seekTo && seekTo > 0 ? HOWL_UNMUTE_DELAY_SEEK_MS : HOWL_UNMUTE_DELAY_DEFAULT_MS)
+            unmuteTimerRef.current = setTimeout(
+              () => {
+                if (howlRef.current === howl) {
+                  const latestVolume = usePlayerStore.getState().volume
+                  howl.fade(0, latestVolume, 200) // Smooth fade-in with latest volume
+                  syncReadyRef.current = true
+                }
+              },
+              seekTo && seekTo > 0 ? HOWL_UNMUTE_DELAY_SEEK_MS : HOWL_UNMUTE_DELAY_DEFAULT_MS,
+            )
           } else {
             if (seekTo && seekTo > 0) howl.seek(seekTo)
             howl.volume(currentVolume)
@@ -223,7 +231,11 @@ export function useHowl(onTrackEnd: () => void) {
         playErrorTimerRef.current = null
       }
       if (howlRef.current) {
-        try { howlRef.current.unload() } catch { /* ignore */ }
+        try {
+          howlRef.current.unload()
+        } catch {
+          /* ignore */
+        }
         howlRef.current = null
       }
       stopTimeUpdate()

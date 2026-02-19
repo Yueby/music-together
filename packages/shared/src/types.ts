@@ -52,6 +52,7 @@ export interface Track {
 export interface RoomState {
   id: string
   name: string
+  creatorId: string
   hostId: string
   hasPassword: boolean
   audioQuality: AudioQuality

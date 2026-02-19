@@ -4,11 +4,7 @@ import { LIMITS } from '@music-together/shared'
 import { Button } from '@/components/ui/button'
 import { Input } from '@/components/ui/input'
 import { Separator } from '@/components/ui/separator'
-import {
-  Popover,
-  PopoverContent,
-  PopoverTrigger,
-} from '@/components/ui/popover'
+import { Popover, PopoverContent, PopoverTrigger } from '@/components/ui/popover'
 import { storage } from '@/lib/storage'
 import { toast } from 'sonner'
 
@@ -50,16 +46,8 @@ export function UserPopover() {
   return (
     <Popover open={open} onOpenChange={handleOpenChange}>
       <PopoverTrigger asChild>
-        <Button
-          variant="ghost"
-          size="icon"
-          className="h-9 w-9 rounded-full border border-border/60"
-        >
-          {initial ? (
-            <span className="text-sm font-semibold">{initial}</span>
-          ) : (
-            <CircleUser className="h-5 w-5" />
-          )}
+        <Button variant="ghost" size="icon" className="h-9 w-9 rounded-full border border-border/60">
+          {initial ? <span className="text-sm font-semibold">{initial}</span> : <CircleUser className="h-5 w-5" />}
         </Button>
       </PopoverTrigger>
       <PopoverContent align="end" className="w-64">
@@ -74,9 +62,7 @@ export function UserPopover() {
           <Separator />
 
           <div className="space-y-1.5">
-            <label className="text-xs font-medium text-muted-foreground">
-              昵称
-            </label>
+            <label className="text-xs font-medium text-muted-foreground">昵称</label>
             <Input
               placeholder="输入昵称..."
               value={nickname}

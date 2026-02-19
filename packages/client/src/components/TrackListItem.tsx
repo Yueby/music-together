@@ -28,24 +28,14 @@ export const TrackListItem = memo(function TrackListItem({
   return (
     <div
       style={style}
-      className={cn(
-        'group flex items-center gap-3 px-3 py-2.5 transition-colors hover:bg-muted/50',
-        className,
-      )}
+      className={cn('group flex items-center gap-3 px-3 py-2.5 transition-colors hover:bg-muted/50', className)}
     >
       {/* Index */}
-      <span className="w-6 shrink-0 text-center text-xs tabular-nums text-muted-foreground">
-        {index + 1}
-      </span>
+      <span className="w-6 shrink-0 text-center text-xs tabular-nums text-muted-foreground">{index + 1}</span>
 
       {/* Cover thumbnail */}
       {track.cover ? (
-        <img
-          src={track.cover}
-          alt=""
-          className="h-10 w-10 shrink-0 rounded object-cover"
-          loading="lazy"
-        />
+        <img src={track.cover} alt="" className="h-10 w-10 shrink-0 rounded object-cover" loading="lazy" />
       ) : (
         <div className="flex h-10 w-10 shrink-0 items-center justify-center rounded bg-muted">
           <Music2 className="h-4 w-4 text-muted-foreground" />
@@ -85,9 +75,7 @@ export const TrackListItem = memo(function TrackListItem({
       </div>
 
       {/* Duration */}
-      <span className="shrink-0 text-xs tabular-nums text-muted-foreground">
-        {formatDuration(track.duration)}
-      </span>
+      <span className="shrink-0 text-xs tabular-nums text-muted-foreground">{formatDuration(track.duration)}</span>
 
       {/* Add button */}
       <Tooltip>
@@ -95,19 +83,12 @@ export const TrackListItem = memo(function TrackListItem({
           <Button
             variant={isAdded ? 'ghost' : 'outline'}
             size="icon"
-            className={cn(
-              'h-8 w-8 shrink-0',
-              isAdded && 'text-emerald-500 hover:text-emerald-500',
-            )}
+            className={cn('h-8 w-8 shrink-0', isAdded && 'text-emerald-500 hover:text-emerald-500')}
             disabled={isAdded}
             onClick={() => onAdd(track)}
             aria-label={isAdded ? '已添加' : `添加 ${track.title} 到播放列表`}
           >
-            {isAdded ? (
-              <Check className="h-4 w-4" />
-            ) : (
-              <Plus className="h-4 w-4" />
-            )}
+            {isAdded ? <Check className="h-4 w-4" /> : <Plus className="h-4 w-4" />}
           </Button>
         </TooltipTrigger>
         <TooltipContent>{isAdded ? '已添加' : '添加到播放列表'}</TooltipContent>

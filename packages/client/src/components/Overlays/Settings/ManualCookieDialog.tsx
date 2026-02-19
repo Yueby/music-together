@@ -18,12 +18,7 @@ interface ManualCookieDialogProps {
   onSubmit: (cookie: string) => void
 }
 
-export function ManualCookieDialog({
-  open,
-  onOpenChange,
-  platform,
-  onSubmit,
-}: ManualCookieDialogProps) {
+export function ManualCookieDialog({ open, onOpenChange, platform, onSubmit }: ManualCookieDialogProps) {
   const [cookie, setCookie] = useState('')
 
   const handleSubmit = () => {
@@ -44,9 +39,7 @@ export function ManualCookieDialog({
       <DialogContent className="sm:max-w-md">
         <DialogHeader>
           <DialogTitle>手动输入 Cookie — {PLATFORM_LABELS[platform]}</DialogTitle>
-          <DialogDescription>
-            从浏览器中复制 Cookie 并粘贴到下方。
-          </DialogDescription>
+          <DialogDescription>从浏览器中复制 Cookie 并粘贴到下方。</DialogDescription>
         </DialogHeader>
 
         <div className="space-y-3 py-2">
@@ -60,23 +53,18 @@ export function ManualCookieDialog({
           <div className="text-muted-foreground space-y-1.5 text-xs">
             <p className="font-medium">如何获取 Cookie：</p>
             <ol className="list-inside list-decimal space-y-0.5">
-              <li>
-                打开{PLATFORM_LABELS[platform]}网页版并登录
-              </li>
+              <li>打开{PLATFORM_LABELS[platform]}网页版并登录</li>
               <li>
                 按 <kbd className="bg-muted rounded px-1 py-0.5 text-xs">F12</kbd> 打开开发者工具
               </li>
               <li>
-                切换到 <kbd className="bg-muted rounded px-1 py-0.5 text-xs">Application</kbd>{' '}
-                (应用) 标签
+                切换到 <kbd className="bg-muted rounded px-1 py-0.5 text-xs">Application</kbd> (应用) 标签
               </li>
               <li>
                 在左侧找到 <kbd className="bg-muted rounded px-1 py-0.5 text-xs">Cookies</kbd>，复制所有 Cookie
               </li>
             </ol>
-            <p className="mt-2 text-yellow-500">
-              Cookie 仅存储在服务端内存，不会持久化保存。服务端重启后需重新登录。
-            </p>
+            <p className="mt-2 text-yellow-500">Cookie 仅存储在服务端内存，不会持久化保存。服务端重启后需重新登录。</p>
           </div>
         </div>
 

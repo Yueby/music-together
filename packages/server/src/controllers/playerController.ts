@@ -14,7 +14,7 @@ export function registerPlayerController(io: TypedServer, socket: TypedSocket) {
   socket.on(
     EVENTS.PLAYER_PLAY,
     withPermission('play', 'Player', async (ctx, data) => {
-      if (!await checkSocketRateLimit(ctx.socket)) return
+      if (!(await checkSocketRateLimit(ctx.socket))) return
       const track = data?.track ?? ctx.room.currentTrack ?? ctx.room.queue[0]
       if (!track) return
 
@@ -66,7 +66,9 @@ export function registerPlayerController(io: TypedServer, socket: TypedSocket) {
       ctx.room.playMode = parsed.data.mode
       // Broadcast updated room state so all clients see the new play mode
       ctx.io.to(ctx.roomId).emit(EVENTS.ROOM_STATE, roomService.toPublicRoomState(ctx.room))
-      logger.info(`Play mode set to ${parsed.data.mode}`, { roomId: ctx.roomId })
+      logger.info(`Play mode set to ${parsed.data.mode}`, {
+        roomId: ctx.roomId,
+      })
     }),
   )
 
@@ -115,7 +117,19 @@ export function registerPlayerController(io: TypedServer, socket: TypedSocket) {
         }
       }
 
-      room.playState = { ...room.playState, currentTime, serverTimestamp: Date.now() }
+      // Prefer hostServerTime (NTP-calibrated) to eliminate Host→Server
+      // one-way network delay (~RTT/2) from estimateCurrentTime.
+      // Fall back to Date.now() if missing or unreasonably far from server clock.
+      const serverNow = Date.now()
+      const timestamp =
+        parsed.data.hostServerTime && Math.abs(parsed.data.hostServerTime - serverNow) < 10_000
+          ? parsed.data.hostServerTime
+          : serverNow
+      room.playState = {
+        ...room.playState,
+        currentTime,
+        serverTimestamp: timestamp,
+      }
     } catch (err) {
       // Sync is best-effort; log but don't emit error to avoid noise
       logger.error('PLAYER_SYNC handler error', err, { socketId: socket.id })
@@ -135,7 +149,9 @@ export function registerPlayerController(io: TypedServer, socket: TypedSocket) {
         serverTimestamp: Date.now(),
       })
     } catch (err) {
-      logger.error('PLAYER_SYNC_REQUEST handler error', err, { socketId: socket.id })
+      logger.error('PLAYER_SYNC_REQUEST handler error', err, {
+        socketId: socket.id,
+      })
     }
   })
 }

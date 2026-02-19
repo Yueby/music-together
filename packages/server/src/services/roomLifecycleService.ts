@@ -31,8 +31,8 @@ import { cleanupRoom as cleanupVoteRoom } from './voteService.js'
 const roomDeletionTimers = new Map<string, ReturnType<typeof setTimeout>>()
 
 /**
- * 角色宽限期：特权用户（host / admin）断线后保留其角色，
- * 给重连一个恢复窗口。一个房间可同时跟踪多个断线的特权用户。
+ * 角色宽限期：host 断线后保留其角色，给重连一个恢复窗口。
+ * Admin 角色已通过 room.adminUserIds 永久持久化，不再使用 grace period。
  */
 interface GracedUser {
   role: UserRole
@@ -85,24 +85,21 @@ export function cancelDeletionTimer(roomId: string): void {
 }
 
 // ---------------------------------------------------------------------------
-// Role grace period (host + admin)
+// Role grace period (host only — admin roles are now permanently persisted)
 // ---------------------------------------------------------------------------
 
 /**
- * Start a role grace period for a privileged user (host or admin).
+ * Start a role grace period for a disconnecting host.
  *
- * - When a **host**'s grace expires: transfer host to the best candidate
- *   (admin first, then first member by join order).
- * - When an **admin**'s grace expires: simply remove the entry (no transfer).
+ * When the grace expires: transfer host to the best candidate
+ * (admin first, then first member by join order).
+ * The demoted host is added to room.adminUserIds so they retain admin on return.
+ *
+ * Admin roles no longer use grace periods — they are persisted in room.adminUserIds.
  */
-export function startRoleGrace(
-  roomId: string,
-  userId: string,
-  role: UserRole,
-  io?: TypedServer,
-): void {
-  // Only track host and admin — members don't need grace
-  if (role !== 'host' && role !== 'admin') return
+export function startRoleGrace(roomId: string, userId: string, role: UserRole, io?: TypedServer): void {
+  // Only host needs grace — admin is permanently persisted
+  if (role !== 'host') return
 
   // Cancel any existing grace for this user (e.g. rapid disconnect/reconnect)
   cancelRoleGrace(roomId, userId)
@@ -112,58 +109,57 @@ export function startRoleGrace(
     roomGrace = new Map()
     roleGraceMap.set(roomId, roomGrace)
   }
+  // Capture as const for the setTimeout closure (TS can't narrow `let` across closures)
+  const grace = roomGrace
 
-  logger.info(
-    `${role} (${userId}) left room ${roomId}, grace period ${TIMING.ROLE_GRACE_PERIOD_MS / 1000}s started`,
-    { roomId },
-  )
+  logger.info(`Host (${userId}) left room ${roomId}, grace period ${TIMING.ROLE_GRACE_PERIOD_MS / 1000}s started`, {
+    roomId,
+  })
 
   const timer = setTimeout(() => {
     // Remove this user's grace entry
-    roomGrace.delete(userId)
-    if (roomGrace.size === 0) roleGraceMap.delete(roomId)
+    grace.delete(userId)
+    if (grace.size === 0) roleGraceMap.delete(roomId)
 
-    if (role === 'host') {
-      // Host grace expired — attempt to transfer host
-      const room = roomRepo.get(roomId)
-      if (!room || room.users.length === 0) return
+    // Host grace expired — attempt to transfer host
+    const room = roomRepo.get(roomId)
+    if (!room || room.users.length === 0) return
 
-      // Check if the original host has already returned
-      if (room.users.some((u) => u.id === room.hostId)) return
+    // Check if the original host has already returned
+    if (room.users.some((u) => u.id === room.hostId)) return
 
-      // Pick the best candidate: admin first, then first member by join order
-      const candidate = room.users.find((u) => u.role === 'admin') ?? room.users[0]
-      const oldHostId = room.hostId
-      const previousRole = candidate.role
-      room.hostId = candidate.id
-      candidate.role = 'host'
+    // Pick the best candidate: admin first, then first member by join order
+    const candidate = room.users.find((u) => u.role === 'admin') ?? room.users[0]
+    const oldHostId = room.hostId
+    const previousRole = candidate.role
+    room.hostId = candidate.id
+    candidate.role = 'host'
 
-      // Refresh playState timestamp so the new Host's first report isn't
-      // rejected by the stale-report guard (estimated - reported > 1s).
-      if (room.playState.isPlaying) {
-        room.playState = {
-          ...room.playState,
-          currentTime: estimateCurrentTime(roomId),
-          serverTimestamp: Date.now(),
-        }
+    // Record the old host as a persistent admin so they get admin on return
+    room.adminUserIds.add(oldHostId)
+
+    // Refresh playState timestamp so the new Host's first report isn't
+    // rejected by the stale-report guard (estimated - reported > 1s).
+    if (room.playState.isPlaying) {
+      room.playState = {
+        ...room.playState,
+        currentTime: estimateCurrentTime(roomId),
+        serverTimestamp: Date.now(),
       }
+    }
 
-      logger.info(
-        `Host grace expired: transferred from ${oldHostId} to ${candidate.nickname} (was ${previousRole}) in room ${roomId}`,
-        { roomId },
-      )
+    logger.info(
+      `Host grace expired: transferred from ${oldHostId} to ${candidate.nickname} (was ${previousRole}) in room ${roomId}`,
+      { roomId },
+    )
 
-      // Broadcast updated room state so all clients see the new host
-      if (io) {
-        io.to(roomId).emit(EVENTS.ROOM_STATE, toPublicRoomState(room))
-      }
-    } else {
-      // Admin grace expired — just log, no action needed
-      logger.info(`Admin grace expired for user ${userId} in room ${roomId}`, { roomId })
+    // Broadcast updated room state so all clients see the new host
+    if (io) {
+      io.to(roomId).emit(EVENTS.ROOM_STATE, toPublicRoomState(room))
     }
   }, TIMING.ROLE_GRACE_PERIOD_MS)
 
-  roomGrace.set(userId, { role, timer })
+  grace.set(userId, { role, timer })
 }
 
 /** Cancel a specific user's role grace timer */

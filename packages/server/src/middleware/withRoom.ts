@@ -8,9 +8,7 @@ import type { HandlerContext, TypedServer, TypedSocket } from './types.js'
  * 失败时 emit ROOM_ERROR 并中止。
  */
 export function createWithRoom(io: TypedServer) {
-  return function withRoom<T = void>(
-    handler: (ctx: HandlerContext, data: T) => void | Promise<void>,
-  ) {
+  return function withRoom<T = void>(handler: (ctx: HandlerContext, data: T) => void | Promise<void>) {
     return function (this: TypedSocket, data: T) {
       const socket = this
       const mapping = roomRepo.getSocketMapping(socket.id)

@@ -21,8 +21,8 @@ const EMPTY_QUEUE: Track[] = []
 
 const SOURCES: { id: MusicSource; label: string }[] = [
   { id: 'netease', label: '网易云' },
-  { id: 'tencent', label: 'QQ音乐' },
   { id: 'kugou', label: '酷狗' },
+  { id: 'tencent', label: 'QQ音乐' },
 ]
 
 const PAGE_SIZE = 20
@@ -58,21 +58,24 @@ export function SearchDialog({ open, onOpenChange, onAddToQueue }: SearchDialogP
     }
   }, [])
 
-  const fetchPage = useCallback(async (
-    searchSource: MusicSource,
-    searchKeyword: string,
-    searchPage: number,
-    signal: AbortSignal,
-  ): Promise<{ tracks: Track[]; hasMore: boolean }> => {
-    const res = await fetch(
-      `${SERVER_URL}/api/music/search?source=${searchSource}&keyword=${encodeURIComponent(searchKeyword)}&limit=${PAGE_SIZE}&page=${searchPage}`,
-      { signal },
-    )
-    if (!res.ok) throw new Error('Search failed')
-    const data = await res.json()
-    const tracks: Track[] = data.tracks || []
-    return { tracks, hasMore: data.hasMore ?? tracks.length >= PAGE_SIZE }
-  }, [])
+  const fetchPage = useCallback(
+    async (
+      searchSource: MusicSource,
+      searchKeyword: string,
+      searchPage: number,
+      signal: AbortSignal,
+    ): Promise<{ tracks: Track[]; hasMore: boolean }> => {
+      const res = await fetch(
+        `${SERVER_URL}/api/music/search?source=${searchSource}&keyword=${encodeURIComponent(searchKeyword)}&limit=${PAGE_SIZE}&page=${searchPage}`,
+        { signal },
+      )
+      if (!res.ok) throw new Error('Search failed')
+      const data = await res.json()
+      const tracks: Track[] = data.tracks || []
+      return { tracks, hasMore: data.hasMore ?? tracks.length >= PAGE_SIZE }
+    },
+    [],
+  )
 
   const handleSearch = async (overrideKeyword?: string) => {
     const searchKeyword = (overrideKeyword ?? keyword).trim()
@@ -138,20 +141,26 @@ export function SearchDialog({ open, onOpenChange, onAddToQueue }: SearchDialogP
       })
   }, [loadingMore, page, source, keyword, fetchPage])
 
-  const handleAdd = useCallback((track: Track) => {
-    const key = trackKey(track)
-    if (queueKeys.has(key) || addedIds.has(key)) {
-      toast.info(`「${track.title}」已在队列中`)
-      return
-    }
-    onAddToQueue(track)
-    setAddedIds((prev) => new Set(prev).add(key))
-    toast.success(`已添加「${track.title}」`)
-  }, [onAddToQueue, queueKeys, addedIds])
+  const handleAdd = useCallback(
+    (track: Track) => {
+      const key = trackKey(track)
+      if (queueKeys.has(key) || addedIds.has(key)) {
+        toast.info(`「${track.title}」已在队列中`)
+        return
+      }
+      onAddToQueue(track)
+      setAddedIds((prev) => new Set(prev).add(key))
+      toast.success(`已添加「${track.title}」`)
+    },
+    [onAddToQueue, queueKeys, addedIds],
+  )
 
-  const isTrackAdded = useCallback((track: Track) => {
-    return addedIds.has(trackKey(track)) || queueKeys.has(trackKey(track))
-  }, [addedIds, queueKeys])
+  const isTrackAdded = useCallback(
+    (track: Track) => {
+      return addedIds.has(trackKey(track)) || queueKeys.has(trackKey(track))
+    },
+    [addedIds, queueKeys],
+  )
 
   const resetState = () => {
     setResults([])
@@ -198,11 +207,7 @@ export function SearchDialog({ open, onOpenChange, onAddToQueue }: SearchDialogP
               aria-label="搜索关键词"
             />
             <Button onClick={() => handleSearch()} disabled={loading} aria-label="搜索">
-              {loading ? (
-                <Loader2 className="h-4 w-4 animate-spin" />
-              ) : (
-                <Search className="h-4 w-4" />
-              )}
+              {loading ? <Loader2 className="h-4 w-4 animate-spin" /> : <Search className="h-4 w-4" />}
             </Button>
           </div>
 

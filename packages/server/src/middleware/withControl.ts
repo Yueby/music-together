@@ -36,9 +36,7 @@ export function createWithPermission(io: TypedServer) {
 export function createWithHostOnly(io: TypedServer) {
   const withRoom = createWithRoom(io)
 
-  return function withHostOnly<T = void>(
-    handler: (ctx: HandlerContext, data: T) => void | Promise<void>,
-  ) {
+  return function withHostOnly<T = void>(handler: (ctx: HandlerContext, data: T) => void | Promise<void>) {
     return withRoom<T>((ctx, data) => {
       if (ctx.room.hostId !== ctx.user.id) {
         ctx.socket.emit(EVENTS.ROOM_ERROR, {

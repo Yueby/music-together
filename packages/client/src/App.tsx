@@ -20,9 +20,7 @@ function ErrorFallback({ error, resetErrorBoundary }: { error: unknown; resetErr
       <div className="flex max-w-md flex-col items-center gap-4 rounded-xl border bg-card p-8 text-center shadow-lg">
         <AlertTriangle className="h-12 w-12 text-destructive" />
         <h2 className="text-xl font-semibold">出了点问题</h2>
-        <p className="text-sm text-muted-foreground">
-          {message}
-        </p>
+        <p className="text-sm text-muted-foreground">{message}</p>
         <Button onClick={resetErrorBoundary} variant="default">
           重试
         </Button>
@@ -43,10 +41,7 @@ function RouteFallback() {
 function RouteErrorBoundary({ children }: { children: React.ReactNode }) {
   const navigate = useNavigate()
   return (
-    <ErrorBoundary
-      FallbackComponent={ErrorFallback}
-      onReset={() => navigate('/', { replace: true })}
-    >
+    <ErrorBoundary FallbackComponent={ErrorFallback} onReset={() => navigate('/', { replace: true })}>
       {children}
     </ErrorBoundary>
   )
@@ -58,8 +53,22 @@ function AnimatedRoutes() {
     <AnimatePresence mode="wait">
       <Suspense fallback={<RouteFallback />}>
         <Routes location={location} key={location.pathname}>
-          <Route path="/" element={<RouteErrorBoundary><HomePage /></RouteErrorBoundary>} />
-          <Route path="/room/:roomId" element={<RouteErrorBoundary><RoomPage /></RouteErrorBoundary>} />
+          <Route
+            path="/"
+            element={
+              <RouteErrorBoundary>
+                <HomePage />
+              </RouteErrorBoundary>
+            }
+          />
+          <Route
+            path="/room/:roomId"
+            element={
+              <RouteErrorBoundary>
+                <RoomPage />
+              </RouteErrorBoundary>
+            }
+          />
           <Route path="*" element={<NotFoundPage />} />
         </Routes>
       </Suspense>

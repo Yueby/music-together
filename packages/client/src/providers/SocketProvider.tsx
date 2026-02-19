@@ -51,16 +51,9 @@ export function SocketProvider({ children }: { children: ReactNode }) {
     }
   }, [])
 
-  const value = useMemo<SocketContextValue>(
-    () => ({ socket: socketRef.current, isConnected }),
-    [isConnected],
-  )
+  const value = useMemo<SocketContextValue>(() => ({ socket: socketRef.current, isConnected }), [isConnected])
 
-  return (
-    <SocketContext.Provider value={value}>
-      {children}
-    </SocketContext.Provider>
-  )
+  return <SocketContext.Provider value={value}>{children}</SocketContext.Provider>
 }
 
 export function useSocketContext(): SocketContextValue {

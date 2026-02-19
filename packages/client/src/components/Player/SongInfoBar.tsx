@@ -59,9 +59,7 @@ export const SongInfoBar = memo(function SongInfoBar({ onOpenChat, chatUnreadCou
             transition={SPRING}
             className="font-bold leading-tight text-white/90"
           >
-            <MarqueeText>
-              {currentTrack?.title ?? '暂无歌曲'}
-            </MarqueeText>
+            <MarqueeText>{currentTrack?.title ?? '暂无歌曲'}</MarqueeText>
           </motion.div>
           <motion.div
             initial={{ fontSize: 16 }}
@@ -69,9 +67,7 @@ export const SongInfoBar = memo(function SongInfoBar({ onOpenChat, chatUnreadCou
             transition={SPRING}
             className="text-white/50"
           >
-            <MarqueeText>
-              {currentTrack ? currentTrack.artist.join(' / ') : '点击搜索添加歌曲到队列'}
-            </MarqueeText>
+            <MarqueeText>{currentTrack ? currentTrack.artist.join(' / ') : '点击搜索添加歌曲到队列'}</MarqueeText>
           </motion.div>
         </motion.div>
 
@@ -92,30 +88,16 @@ export const SongInfoBar = memo(function SongInfoBar({ onOpenChat, chatUnreadCou
                 </PopoverTrigger>
               </TooltipTrigger>
               <TooltipContent>音量</TooltipContent>
-              <PopoverContent
-                side="top"
-                align="center"
-                className="flex w-44 items-center gap-2 rounded-xl px-3 py-2"
-              >
+              <PopoverContent side="top" align="center" className="flex w-44 items-center gap-2 rounded-xl px-3 py-2">
                 <Tooltip delayDuration={300}>
                   <TooltipTrigger asChild>
-                    <Button
-                      variant="ghost"
-                      size="icon"
-                      className="h-7 w-7 shrink-0 text-white/70"
-                      onClick={toggleMute}
-                    >
+                    <Button variant="ghost" size="icon" className="h-7 w-7 shrink-0 text-white/70" onClick={toggleMute}>
                       {volume === 0 ? <VolumeX className="size-4" /> : <Volume2 className="size-4" />}
                     </Button>
                   </TooltipTrigger>
                   <TooltipContent>{volume === 0 ? '取消静音' : '静音'}</TooltipContent>
                 </Tooltip>
-                <Slider
-                  min={0}
-                  max={100}
-                  value={[volume * 100]}
-                  onValueChange={([v]) => setVolume(v / 100)}
-                />
+                <Slider min={0} max={100} value={[volume * 100]} onValueChange={([v]) => setVolume(v / 100)} />
                 <span className="w-8 shrink-0 text-right text-xs tabular-nums text-white/50">
                   {Math.round(volume * 100)}
                 </span>

@@ -1,4 +1,11 @@
-import { ERROR_CODE, EVENTS, roomCreateSchema, roomJoinSchema, roomSettingsSchema, setRoleSchema } from '@music-together/shared'
+import {
+  ERROR_CODE,
+  EVENTS,
+  roomCreateSchema,
+  roomJoinSchema,
+  roomSettingsSchema,
+  setRoleSchema,
+} from '@music-together/shared'
 import type { TypedServer, TypedSocket } from '../middleware/types.js'
 import { createWithHostOnly } from '../middleware/withControl.js'
 import { cleanupSocketRateLimit } from '../middleware/socketRateLimiter.js'
@@ -26,7 +33,10 @@ export function registerRoomController(io: TypedServer, socket: TypedSocket) {
     try {
       const parsed = roomCreateSchema.safeParse(raw)
       if (!parsed.success) {
-        socket.emit(EVENTS.ROOM_ERROR, { code: ERROR_CODE.INVALID_INPUT, message: parsed.error.issues[0]?.message ?? '输入格式错误' })
+        socket.emit(EVENTS.ROOM_ERROR, {
+          code: ERROR_CODE.INVALID_INPUT,
+          message: parsed.error.issues[0]?.message ?? '输入格式错误',
+        })
         return
       }
       const { nickname, roomName, password, userId } = parsed.data
@@ -54,7 +64,10 @@ export function registerRoomController(io: TypedServer, socket: TypedSocket) {
     try {
       const parsed = roomJoinSchema.safeParse(raw)
       if (!parsed.success) {
-        socket.emit(EVENTS.ROOM_ERROR, { code: ERROR_CODE.INVALID_INPUT, message: parsed.error.issues[0]?.message ?? '输入格式错误' })
+        socket.emit(EVENTS.ROOM_ERROR, {
+          code: ERROR_CODE.INVALID_INPUT,
+          message: parsed.error.issues[0]?.message ?? '输入格式错误',
+        })
         return
       }
       const { roomId, nickname, password, userId } = parsed.data
@@ -81,13 +94,20 @@ export function registerRoomController(io: TypedServer, socket: TypedSocket) {
         return
       }
 
-      const { room: updatedRoom, user } = result
+      const { room: updatedRoom, user, hostChanged } = result
 
       socket.leave('lobby')
       socket.join(roomId)
 
       // Send full room state + chat history
-      socket.emit(EVENTS.ROOM_STATE, roomService.toPublicRoomState(updatedRoom))
+      // If host changed (creator reclaim, etc.), broadcast to ALL clients.
+      // Otherwise, only send to the joining socket.
+      const publicState = roomService.toPublicRoomState(updatedRoom)
+      if (hostChanged) {
+        io.to(roomId).emit(EVENTS.ROOM_STATE, publicState)
+      } else {
+        socket.emit(EVENTS.ROOM_STATE, publicState)
+      }
       socket.emit(EVENTS.CHAT_HISTORY, chatService.getHistory(roomId))
 
       // Sync playback state to the joining client (auto-resume, auto-play)
@@ -133,7 +153,10 @@ export function registerRoomController(io: TypedServer, socket: TypedSocket) {
     withHostOnly((ctx, raw) => {
       const parsed = roomSettingsSchema.safeParse(raw)
       if (!parsed.success) {
-        ctx.socket.emit(EVENTS.ROOM_ERROR, { code: ERROR_CODE.INVALID_INPUT, message: parsed.error.issues[0]?.message ?? '输入格式错误' })
+        ctx.socket.emit(EVENTS.ROOM_ERROR, {
+          code: ERROR_CODE.INVALID_INPUT,
+          message: parsed.error.issues[0]?.message ?? '输入格式错误',
+        })
         return
       }
 
@@ -164,7 +187,10 @@ export function registerRoomController(io: TypedServer, socket: TypedSocket) {
     withHostOnly((ctx, raw) => {
       const parsed = setRoleSchema.safeParse(raw)
       if (!parsed.success) {
-        ctx.socket.emit(EVENTS.ROOM_ERROR, { code: ERROR_CODE.INVALID_INPUT, message: parsed.error.issues[0]?.message ?? '输入格式错误' })
+        ctx.socket.emit(EVENTS.ROOM_ERROR, {
+          code: ERROR_CODE.INVALID_INPUT,
+          message: parsed.error.issues[0]?.message ?? '输入格式错误',
+        })
         return
       }
 

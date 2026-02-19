@@ -34,9 +34,7 @@ export function ActionCards({
             </div>
             <h2 className="text-base font-semibold text-foreground">创建房间</h2>
           </div>
-          <p className="text-xs text-muted-foreground">
-            新建一个房间，分享房间号邀请朋友加入
-          </p>
+          <p className="text-xs text-muted-foreground">新建一个房间，分享房间号邀请朋友加入</p>
         </div>
         <Button onClick={onCreateClick} className="w-full">
           <Home className="mr-2 h-4 w-4" />
@@ -53,9 +51,7 @@ export function ActionCards({
             </div>
             <h2 className="text-base font-semibold text-foreground">加入房间</h2>
           </div>
-          <p className="text-xs text-muted-foreground">
-            输入房间号直接加入已有房间
-          </p>
+          <p className="text-xs text-muted-foreground">输入房间号直接加入已有房间</p>
         </div>
         <div className="flex gap-2">
           <Input
@@ -65,11 +61,7 @@ export function ActionCards({
             onKeyDown={(e) => e.key === 'Enter' && onDirectJoin()}
             className="flex-1"
           />
-          <Button
-            variant="secondary"
-            onClick={onDirectJoin}
-            disabled={actionLoading}
-          >
+          <Button variant="secondary" onClick={onDirectJoin} disabled={actionLoading}>
             加入
           </Button>
         </div>

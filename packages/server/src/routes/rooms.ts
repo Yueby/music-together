@@ -3,9 +3,9 @@ import { roomRepo } from '../repositories/roomRepository.js'
 
 const router: RouterType = Router()
 
-/** Validate roomId: alphanumeric, 1-20 chars */
+/** Validate roomId: alphanumeric + _ -, 1-20 chars (matches nanoid urlAlphabet) */
 function isValidRoomId(roomId: string): boolean {
-  return typeof roomId === 'string' && roomId.length >= 1 && roomId.length <= 20 && /^[A-Za-z0-9]+$/.test(roomId)
+  return typeof roomId === 'string' && roomId.length >= 1 && roomId.length <= 20 && /^[A-Za-z0-9_-]+$/.test(roomId)
 }
 
 /**

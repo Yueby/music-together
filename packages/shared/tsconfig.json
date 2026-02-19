@@ -8,7 +8,7 @@
     "skipLibCheck": true,
     "noEmit": true,
     "verbatimModuleSyntax": true,
-    "erasableSyntaxOnly": true
+
   },
   "include": ["src"]
 }

@@ -30,7 +30,10 @@ export const VIP_LABELS: Record<number, string> = {
 }
 
 /** Find a platform's auth status from the room-wide status list */
-export function getPlatformStatus(platform: MusicSource, statusList: PlatformAuthStatus[]): PlatformAuthStatus | undefined {
+export function getPlatformStatus(
+  platform: MusicSource,
+  statusList: PlatformAuthStatus[],
+): PlatformAuthStatus | undefined {
   return statusList.find((s) => s.platform === platform)
 }
 

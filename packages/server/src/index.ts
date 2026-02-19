@@ -41,10 +41,13 @@ const indexHtml = path.join(clientDist, 'index.html')
 
 if (fs.existsSync(indexHtml)) {
   // Vite 产物带 content hash -> 长缓存
-  app.use('/assets', express.static(path.join(clientDist, 'assets'), {
-    maxAge: '1y',
-    immutable: true,
-  }))
+  app.use(
+    '/assets',
+    express.static(path.join(clientDist, 'assets'), {
+      maxAge: '1y',
+      immutable: true,
+    }),
+  )
   // 其他静态文件 (favicon, manifest 等)
   app.use(express.static(clientDist, { maxAge: '1h' }))
   // SPA fallback: 所有非 API 的 GET -> index.html

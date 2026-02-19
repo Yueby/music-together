@@ -98,6 +98,8 @@ function toAMLLLines(lines: LyricLine[]): AMLLLyricLine[] {
 export function LyricDisplay() {
   const lyric = usePlayerStore((s) => s.lyric)
   const tlyric = usePlayerStore((s) => s.tlyric)
+  const lyricLoading = usePlayerStore((s) => s.lyricLoading)
+  const ttmlLines = usePlayerStore((s) => s.ttmlLines)
   const currentTime = usePlayerStore((s) => s.currentTime)
   const isPlaying = usePlayerStore((s) => s.isPlaying)
 
@@ -110,13 +112,18 @@ export function LyricDisplay() {
   const fontSize = useSettingsStore((s) => s.lyricFontSize)
   const translationFontSize = useSettingsStore((s) => s.lyricTranslationFontSize)
 
-  const lines = useMemo(() => mergeLyrics(lyric, tlyric), [lyric, tlyric])
-  const amllLines = useMemo(() => toAMLLLines(lines), [lines])
+  // LRC 解析（仅在没有 TTML 时使用）
+  const lrcLines = useMemo(() => mergeLyrics(lyric, tlyric), [lyric, tlyric])
+  const lrcAmllLines = useMemo(() => toAMLLLines(lrcLines), [lrcLines])
 
-  if (!lyric || lines.length === 0) {
+  // TTML 优先，LRC 回退
+  const amllLines = ttmlLines ?? lrcAmllLines
+  const hasLyrics = ttmlLines ? ttmlLines.length > 0 : lrcLines.length > 0
+
+  if (!hasLyrics) {
     return (
       <div className="flex h-full items-center justify-center">
-        <p className="text-xl text-white/50">暂无歌词</p>
+        <p className="text-xl text-white/50">{lyricLoading ? '歌词加载中...' : '暂无歌词'}</p>
       </div>
     )
   }
@@ -124,11 +131,13 @@ export function LyricDisplay() {
   return (
     <div
       className="amll-container h-full w-full"
-      style={{
-        fontWeight,
-        '--amll-lp-font-size': `clamp(16px, calc(min(5vh, 7vw) * ${fontSize / 100}), 80px)`,
-        '--amll-translated-font-size': `${translationFontSize / 100}em`,
-      } as React.CSSProperties}
+      style={
+        {
+          fontWeight,
+          '--amll-lp-font-size': `clamp(16px, calc(min(5vh, 7vw) * ${fontSize / 100}), 80px)`,
+          '--amll-translated-font-size': `${translationFontSize / 100}em`,
+        } as React.CSSProperties
+      }
     >
       <LyricPlayer
         lyricLines={amllLines}
@@ -144,3 +153,4 @@ export function LyricDisplay() {
     </div>
   )
 }
+

@@ -22,9 +22,7 @@ export async function unlockAudio(): Promise<void> {
 
   // 2. Play a silent WAV to force-activate (iOS Safari compat)
   const silentHowl = new Howl({
-    src: [
-      'data:audio/wav;base64,UklGRiQAAABXQVZFZm10IBAAAAABAAEAQB8AAIA+AAACABAAZGF0YQAAAAA=',
-    ],
+    src: ['data:audio/wav;base64,UklGRiQAAABXQVZFZm10IBAAAAABAAEAQB8AAIA+AAACABAAZGF0YQAAAAA='],
     volume: 0,
     html5: true,
   })

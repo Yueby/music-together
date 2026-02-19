@@ -61,16 +61,14 @@ export function LoginSection({
           )}
         </div>
         <p className="text-muted-foreground truncate text-xs">
-          {loggedInCount > 0
-            ? `房间内 ${loggedInCount} 人已登录${hasVip ? '，VIP 可用' : ''}`
-            : '房间暂无人登录此平台'}
+          {loggedInCount > 0 ? `房间内 ${loggedInCount} 人已登录${hasVip ? '，VIP 可用' : ''}` : '房间暂无人登录此平台'}
         </p>
       </div>
 
       <div className="flex shrink-0 items-center gap-1.5">
         {!isMyLoggedIn && !isVerifying ? (
           <>
-            {(platform === 'netease' || platform === 'kugou') && (
+            {(platform === 'netease' || platform === 'kugou' || platform === 'tencent') && (
               <Button variant="outline" size="icon" className="h-8 w-8" onClick={onQrLogin} title="扫码登录">
                 <ScanLine className="h-3.5 w-3.5" />
               </Button>

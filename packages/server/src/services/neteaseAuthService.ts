@@ -92,9 +92,7 @@ export interface UserInfoData {
   userId: number
 }
 
-export type GetUserInfoResult =
-  | { ok: true; data: UserInfoData }
-  | { ok: false; reason: 'expired' | 'error' }
+export type GetUserInfoResult = { ok: true; data: UserInfoData } | { ok: false; reason: 'expired' | 'error' }
 
 /**
  * Validate a cookie and get user info.

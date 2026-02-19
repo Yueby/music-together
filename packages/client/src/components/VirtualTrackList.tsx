@@ -43,120 +43,94 @@ function TrackSkeleton() {
   )
 }
 
-export const VirtualTrackList = forwardRef<VirtualTrackListRef, VirtualTrackListProps>(
-  function VirtualTrackList(
-    {
-      tracks,
-      loading,
-      hasMore,
-      loadingMore,
-      onLoadMore,
-      isTrackAdded,
-      onAddTrack,
-      onArtistClick,
-      emptyIcon,
-      emptyMessage = '暂无内容',
-      rowHeight = 52,
-      overscan = 5,
-      className,
-    },
-    ref,
-  ) {
-    const scrollRef = useRef<HTMLDivElement>(null)
+export const VirtualTrackList = forwardRef<VirtualTrackListRef, VirtualTrackListProps>(function VirtualTrackList(
+  {
+    tracks,
+    loading,
+    hasMore,
+    loadingMore,
+    onLoadMore,
+    isTrackAdded,
+    onAddTrack,
+    onArtistClick,
+    emptyIcon,
+    emptyMessage = '暂无内容',
+    rowHeight = 52,
+    overscan = 5,
+    className,
+  },
+  ref,
+) {
+  const scrollRef = useRef<HTMLDivElement>(null)
 
-    useImperativeHandle(ref, () => ({
-      scrollToTop: () => scrollRef.current?.scrollTo({ top: 0 }),
-    }))
+  useImperativeHandle(ref, () => ({
+    scrollToTop: () => scrollRef.current?.scrollTo({ top: 0 }),
+  }))
 
-    const rowCount = tracks.length + (hasMore ? 1 : 0)
+  const rowCount = tracks.length + (hasMore ? 1 : 0)
 
-    const virtualizer = useVirtualizer({
-      count: rowCount,
-      getScrollElement: () => scrollRef.current,
-      estimateSize: () => rowHeight,
-      overscan,
-    })
+  const virtualizer = useVirtualizer({
+    count: rowCount,
+    getScrollElement: () => scrollRef.current,
+    estimateSize: () => rowHeight,
+    overscan,
+  })
 
-    // Infinite scroll: trigger onLoadMore when approaching the bottom
-    const virtualItems = virtualizer.getVirtualItems()
-    const lastItem = virtualItems.at(-1)
+  // Infinite scroll: trigger onLoadMore when approaching the bottom
+  const virtualItems = virtualizer.getVirtualItems()
+  const lastItem = virtualItems.at(-1)
 
-    useEffect(() => {
-      if (!lastItem) return
-      if (lastItem.index >= tracks.length - LOAD_MORE_THRESHOLD && hasMore && !loadingMore) {
-        onLoadMore()
-      }
-    }, [lastItem?.index, tracks.length, hasMore, loadingMore, onLoadMore])
-
-    // Loading skeleton
-    if (loading) {
-      return (
-        <div className={cn('min-h-0 flex-1 overflow-y-auto rounded-md border', className)}>
-          <div className="divide-y">
-            {Array.from({ length: 5 }).map((_, i) => (
-              <TrackSkeleton key={i} />
-            ))}
-          </div>
-        </div>
-      )
+  useEffect(() => {
+    if (!lastItem) return
+    if (lastItem.index >= tracks.length - LOAD_MORE_THRESHOLD && hasMore && !loadingMore) {
+      onLoadMore()
     }
+  }, [lastItem?.index, tracks.length, hasMore, loadingMore, onLoadMore])
 
-    // Empty state
-    if (tracks.length === 0) {
-      return (
-        <div className={cn('min-h-0 flex-1 overflow-y-auto rounded-md border', className)}>
-          <div className="flex h-48 flex-col items-center justify-center gap-2 text-muted-foreground">
-            {emptyIcon ?? <Music2 className="h-8 w-8" />}
-            <span className="text-sm">{emptyMessage}</span>
-          </div>
-        </div>
-      )
-    }
-
+  // Loading skeleton
+  if (loading) {
     return (
+      <div className={cn('min-h-0 flex-1 overflow-y-auto rounded-md border', className)}>
+        <div className="divide-y">
+          {Array.from({ length: 5 }).map((_, i) => (
+            <TrackSkeleton key={i} />
+          ))}
+        </div>
+      </div>
+    )
+  }
+
+  // Empty state
+  if (tracks.length === 0) {
+    return (
+      <div className={cn('min-h-0 flex-1 overflow-y-auto rounded-md border', className)}>
+        <div className="flex h-48 flex-col items-center justify-center gap-2 text-muted-foreground">
+          {emptyIcon ?? <Music2 className="h-8 w-8" />}
+          <span className="text-sm">{emptyMessage}</span>
+        </div>
+      </div>
+    )
+  }
+
+  return (
+    <div
+      ref={scrollRef}
+      className={cn('min-h-0 min-w-0 flex-1 overflow-x-hidden overflow-y-auto rounded-md border', className)}
+    >
       <div
-        ref={scrollRef}
-        className={cn('min-h-0 min-w-0 flex-1 overflow-x-hidden overflow-y-auto rounded-md border', className)}
+        style={{
+          height: `${virtualizer.getTotalSize()}px`,
+          width: '100%',
+          position: 'relative',
+        }}
       >
-        <div
-          style={{
-            height: `${virtualizer.getTotalSize()}px`,
-            width: '100%',
-            position: 'relative',
-          }}
-        >
-          {virtualItems.map((virtualRow) => {
-            const isLoaderRow = virtualRow.index >= tracks.length
+        {virtualItems.map((virtualRow) => {
+          const isLoaderRow = virtualRow.index >= tracks.length
 
-            if (isLoaderRow) {
-              return (
-                <div
-                  key="loader"
-                  style={{
-                    position: 'absolute',
-                    top: 0,
-                    left: 0,
-                    width: '100%',
-                    height: `${virtualRow.size}px`,
-                    transform: `translateY(${virtualRow.start}px)`,
-                  }}
-                  className="flex items-center justify-center"
-                >
-                  <Loader2 className="h-4 w-4 animate-spin text-muted-foreground" />
-                </div>
-              )
-            }
-
-            const track = tracks[virtualRow.index]
-
+          if (isLoaderRow) {
             return (
-              <TrackListItem
-                key={track.id}
-                track={track}
-                index={virtualRow.index}
-                isAdded={isTrackAdded(track)}
-                onAdd={onAddTrack}
-                onArtistClick={onArtistClick}
+              <div
+                key="loader"
                 style={{
                   position: 'absolute',
                   top: 0,
@@ -165,11 +139,35 @@ export const VirtualTrackList = forwardRef<VirtualTrackListRef, VirtualTrackList
                   height: `${virtualRow.size}px`,
                   transform: `translateY(${virtualRow.start}px)`,
                 }}
-              />
+                className="flex items-center justify-center"
+              >
+                <Loader2 className="h-4 w-4 animate-spin text-muted-foreground" />
+              </div>
             )
-          })}
-        </div>
+          }
+
+          const track = tracks[virtualRow.index]
+
+          return (
+            <TrackListItem
+              key={track.id}
+              track={track}
+              index={virtualRow.index}
+              isAdded={isTrackAdded(track)}
+              onAdd={onAddTrack}
+              onArtistClick={onArtistClick}
+              style={{
+                position: 'absolute',
+                top: 0,
+                left: 0,
+                width: '100%',
+                height: `${virtualRow.size}px`,
+                transform: `translateY(${virtualRow.start}px)`,
+              }}
+            />
+          )
+        })}
       </div>
-    )
-  },
-)
+    </div>
+  )
+})

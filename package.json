@@ -8,7 +8,8 @@
     "dev": "concurrently --kill-others --names server,client --prefix-colors blue,green \"pnpm run dev:server\" \"pnpm run dev:client\"",
     "dev:client": "pnpm --filter @music-together/client dev",
     "dev:server": "pnpm --filter @music-together/server dev",
-    "build": "pnpm -r run build"
+    "build": "pnpm -r run build",
+    "format": "prettier --write \"packages/*/src/**/*.{ts,tsx}\" \"packages/shared/src/**/*.ts\""
   },
   "keywords": [],
   "author": "",
@@ -16,6 +17,7 @@
   "packageManager": "pnpm@10.29.2",
   "devDependencies": {
     "concurrently": "^9.2.1",
-    "kill-port": "^2.0.1"
+    "kill-port": "^2.0.1",
+    "prettier": "^3.8.1"
   }
 }

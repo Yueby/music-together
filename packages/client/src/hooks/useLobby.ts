@@ -25,9 +25,12 @@ export function useLobby() {
   }, [socket])
 
   // Listen for real-time room list updates
-  useSocketEvent(EVENTS.ROOM_LIST_UPDATE, useCallback((rooms: RoomListItem[]) => {
-    useLobbyStore.getState().setRooms(rooms)
-  }, []))
+  useSocketEvent(
+    EVENTS.ROOM_LIST_UPDATE,
+    useCallback((rooms: RoomListItem[]) => {
+      useLobbyStore.getState().setRooms(rooms)
+    }, []),
+  )
 
   const createRoom = useCallback(
     (nickname: string, roomName?: string, password?: string) => {

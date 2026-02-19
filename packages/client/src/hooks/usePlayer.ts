@@ -47,7 +47,9 @@ export function usePlayer() {
       loadingRef.current = null
     }
     socket.on('disconnect', onDisconnect)
-    return () => { socket.off('disconnect', onDisconnect) }
+    return () => {
+      socket.off('disconnect', onDisconnect)
+    }
   }, [socket])
 
   // Listen for PLAYER_PLAY events (new track load)
@@ -87,9 +89,7 @@ export function usePlayer() {
         // the scheduling delay account for buffering.
         // When NTP is not yet calibrated, execute immediately (delay=0) to
         // avoid wildly inaccurate scheduling from uncorrected local clocks.
-        const delay = isCalibrated()
-          ? Math.max(0, data.playState.serverTimeToExecute - getServerTime())
-          : 0
+        const delay = isCalibrated() ? Math.max(0, data.playState.serverTimeToExecute - getServerTime()) : 0
         if (playTimerRef.current) clearTimeout(playTimerRef.current)
         playTimerRef.current = setTimeout(() => {
           playTimerRef.current = null
@@ -142,7 +142,11 @@ export function usePlayer() {
       if (!roomTrack && playerTrack) {
         hasRecovered = true
         if (howlRef.current) {
-          try { howlRef.current.unload() } catch { /* ignore */ }
+          try {
+            howlRef.current.unload()
+          } catch {
+            /* ignore */
+          }
           howlRef.current = null
         }
         soundIdRef.current = undefined
@@ -168,9 +172,7 @@ export function usePlayer() {
           playTimerRef.current = null
         }
         const ps = room.playState
-        const elapsed = ps.isPlaying
-          ? (getServerTime() - ps.serverTimestamp) / 1000
-          : 0
+        const elapsed = ps.isPlaying ? (getServerTime() - ps.serverTimestamp) / 1000 : 0
         loadTrack(roomTrack, ps.currentTime + Math.max(0, elapsed), ps.isPlaying)
         fetchLyric(roomTrack)
       }

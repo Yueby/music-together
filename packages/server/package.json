@@ -12,6 +12,7 @@
     "@meting/core": "^1.6.0",
     "@music-together/shared": "workspace:*",
     "@neteasecloudmusicapienhanced/api": "^4.30.1",
+    "@s4p/kugou-lrc": "^0.2.0",
     "cors": "^2.8.5",
     "dotenv": "^16.4.5",
     "escape-html": "^1.0.3",

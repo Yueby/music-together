@@ -35,4 +35,3 @@ export function createSystemMessage(roomId: string, content: string): ChatMessag
 export function getHistory(roomId: string): ChatMessage[] {
   return chatRepo.getHistory(roomId)
 }
-

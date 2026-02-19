@@ -17,9 +17,7 @@ export function RoomListSection({ rooms, isLoading, onRoomClick }: RoomListSecti
         <h2 className="text-lg font-semibold text-foreground/80">
           活跃房间
           {!isLoading && rooms.length > 0 && (
-            <span className="ml-2 text-sm font-normal text-muted-foreground">
-              ({rooms.length})
-            </span>
+            <span className="ml-2 text-sm font-normal text-muted-foreground">({rooms.length})</span>
           )}
         </h2>
       </div>
@@ -55,12 +53,7 @@ export function RoomListSection({ rooms, isLoading, onRoomClick }: RoomListSecti
       ) : (
         <div className="grid gap-3 sm:grid-cols-2 lg:grid-cols-3">
           {rooms.map((room, i) => (
-            <RoomCard
-              key={room.id}
-              room={room}
-              index={i}
-              onClick={() => onRoomClick(room)}
-            />
+            <RoomCard key={room.id} room={room} index={i} onClick={() => onRoomClick(room)} />
           ))}
         </div>
       )}

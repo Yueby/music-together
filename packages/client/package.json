@@ -12,6 +12,7 @@
   },
   "dependencies": {
     "@applemusic-like-lyrics/core": "^0.2.0",
+    "@applemusic-like-lyrics/lyric": "^0.3.0",
     "@applemusic-like-lyrics/react": "^0.2.0",
     "@casl/react": "^5.0.1",
     "@music-together/shared": "workspace:*",
@@ -60,6 +61,8 @@
     "tw-animate-css": "^1.4.0",
     "typescript": "~5.9.3",
     "typescript-eslint": "^8.48.0",
-    "vite": "^7.3.1"
+    "vite": "^7.3.1",
+    "vite-plugin-top-level-await": "^1.6.0",
+    "vite-plugin-wasm": "^3.5.0"
   }
 }

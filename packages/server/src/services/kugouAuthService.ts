@@ -62,9 +62,7 @@ function rsaEncrypt(data: string | Record<string, unknown>): string {
   const str = typeof data === 'object' ? JSON.stringify(data) : data
   const buffer = Buffer.from(str)
   const padded = Buffer.concat([buffer, Buffer.alloc(128 - buffer.length)])
-  return crypto
-    .publicEncrypt({ key: RSA_PUBLIC_KEY, padding: crypto.constants.RSA_NO_PADDING }, padded)
-    .toString('hex')
+  return crypto.publicEncrypt({ key: RSA_PUBLIC_KEY, padding: crypto.constants.RSA_NO_PADDING }, padded).toString('hex')
 }
 
 function randomString(len = 16): string {
@@ -336,9 +334,7 @@ export interface KugouUserInfoData {
   userId: number
 }
 
-export type GetUserInfoResult =
-  | { ok: true; data: KugouUserInfoData }
-  | { ok: false; reason: 'expired' | 'error' }
+export type GetUserInfoResult = { ok: true; data: KugouUserInfoData } | { ok: false; reason: 'expired' | 'error' }
 
 /**
  * Validate a Kugou cookie (token+userid) and get VIP info + nickname.
@@ -370,7 +366,7 @@ export async function getUserInfo(cookie: string): Promise<GetUserInfoResult> {
 
     const vipData = body.data as Record<string, unknown>
     const isVip = vipData.is_vip === 1 || Number(vipData.vip_type) > 0
-    const vipType = isVip ? (Number(vipData.vip_type) || 1) : 0
+    const vipType = isVip ? Number(vipData.vip_type) || 1 : 0
 
     // Fetch nickname (non-blocking — fallback to userid if failed)
     const nickname = await fetchUserDetail({ token, userid })

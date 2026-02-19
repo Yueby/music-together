@@ -46,9 +46,7 @@ function PlatformRow({
           )}
         </div>
         <p className="text-xs text-muted-foreground">
-          {loggedInCount > 0
-            ? `${loggedInCount} 人已登录${hasVip ? '，VIP 可用' : ''}`
-            : '暂无人登录'}
+          {loggedInCount > 0 ? `${loggedInCount} 人已登录${hasVip ? '，VIP 可用' : ''}` : '暂无人登录'}
           {isMyLoggedIn && myStatus?.nickname && (
             <span className="text-foreground ml-1">（我：{myStatus.nickname}）</span>
           )}
@@ -58,7 +56,7 @@ function PlatformRow({
       <div className="flex shrink-0 items-center gap-1.5">
         {!isMyLoggedIn ? (
           <>
-            {(platform === 'netease' || platform === 'kugou') && (
+            {(platform === 'netease' || platform === 'kugou' || platform === 'tencent') && (
               <Button variant="outline" size="sm" onClick={() => onQrLogin(platform)} className="gap-1">
                 <ScanLine className="h-3.5 w-3.5" />
                 扫码
@@ -112,9 +110,7 @@ export function PlatformAuthSection() {
     <div className="space-y-1">
       <h3 className="text-base font-semibold">平台账号</h3>
       <Separator className="mt-2 mb-4" />
-      <p className="text-muted-foreground mb-4 text-xs">
-        登录音乐平台 VIP 账号后，房间内所有人都可以播放 VIP 歌曲
-      </p>
+      <p className="text-muted-foreground mb-4 text-xs">登录音乐平台 VIP 账号后，房间内所有人都可以播放 VIP 歌曲</p>
 
       {platforms.map((platform, i) => (
         <div key={platform}>

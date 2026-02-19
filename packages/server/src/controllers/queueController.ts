@@ -1,4 +1,11 @@
-import { EVENTS, ERROR_CODE, queueAddSchema, queueAddBatchSchema, queueRemoveSchema, queueReorderSchema } from '@music-together/shared'
+import {
+  EVENTS,
+  ERROR_CODE,
+  queueAddSchema,
+  queueAddBatchSchema,
+  queueRemoveSchema,
+  queueReorderSchema,
+} from '@music-together/shared'
 import type { Track } from '@music-together/shared'
 import type { TypedServer, TypedSocket } from '../middleware/types.js'
 import { createWithPermission } from '../middleware/withControl.js'
@@ -14,7 +21,7 @@ export function registerQueueController(io: TypedServer, socket: TypedSocket) {
   socket.on(
     EVENTS.QUEUE_ADD,
     withPermission('add', 'Queue', async (ctx, raw) => {
-      if (!await checkSocketRateLimit(ctx.socket)) return
+      if (!(await checkSocketRateLimit(ctx.socket))) return
       const parsed = queueAddSchema.safeParse(raw)
       if (!parsed.success) {
         socket.emit(EVENTS.ROOM_ERROR, { code: ERROR_CODE.INVALID_DATA, message: '无效的歌曲数据' })
@@ -30,10 +37,7 @@ export function registerQueueController(io: TypedServer, socket: TypedSocket) {
       io.to(ctx.roomId).emit(EVENTS.QUEUE_UPDATED, { queue: ctx.room.queue })
 
       // System message
-      const msg = chatService.createSystemMessage(
-        ctx.roomId,
-        `${ctx.user.nickname} 点了一首「${track.title}」`,
-      )
+      const msg = chatService.createSystemMessage(ctx.roomId, `${ctx.user.nickname} 点了一首「${track.title}」`)
       io.to(ctx.roomId).emit(EVENTS.CHAT_MESSAGE, msg)
 
       // If nothing was playing, auto-play this track.
@@ -49,14 +53,14 @@ export function registerQueueController(io: TypedServer, socket: TypedSocket) {
   socket.on(
     EVENTS.QUEUE_ADD_BATCH,
     withPermission('add', 'Queue', async (ctx, raw) => {
-      if (!await checkSocketRateLimit(ctx.socket)) return
+      if (!(await checkSocketRateLimit(ctx.socket))) return
       const parsed = queueAddBatchSchema.safeParse(raw)
       if (!parsed.success) {
         socket.emit(EVENTS.ROOM_ERROR, { code: ERROR_CODE.INVALID_DATA, message: '无效的歌曲数据' })
         return
       }
       const { tracks: rawTracks, playlistName } = parsed.data
-      const tracks: Track[] = rawTracks.map(t => ({ ...t, requestedBy: ctx.user.nickname }))
+      const tracks: Track[] = rawTracks.map((t) => ({ ...t, requestedBy: ctx.user.nickname }))
 
       const addedCount = queueService.addBatchTracks(ctx.roomId, tracks)
       if (addedCount === 0) {

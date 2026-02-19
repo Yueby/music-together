@@ -18,8 +18,8 @@ export const config = {
   port: env.PORT,
   clientUrl: env.CLIENT_URL,
   corsOrigins: isDefaultClientUrl
-    ? true as const
-    : [env.CLIENT_URL, ...env.CORS_ORIGINS.split(',').filter(Boolean)] as string[],
+    ? (true as const)
+    : ([env.CLIENT_URL, ...env.CORS_ORIGINS.split(',').filter(Boolean)] as string[]),
   room: {
     gracePeriodMs: TIMING.ROOM_GRACE_PERIOD_MS,
   },
