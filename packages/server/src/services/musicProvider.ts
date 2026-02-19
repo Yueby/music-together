@@ -329,7 +329,11 @@ class MusicProvider {
       } catch {
         return null
       }
-      const url = (data.url as string) || null
+      let url = (data.url as string) || null
+      // 强制 HTTPS，避免 HTTPS 页面加载 HTTP 音频触发 Mixed Content 警告
+      if (url?.startsWith('http://')) {
+        url = url.replace(/^http:\/\//, 'https://')
+      }
 
       // Only cache non-cookie & successful results (null = transient failure, retry next time)
       if (!cookie && url) {
