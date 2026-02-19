@@ -1,17 +1,17 @@
-import path from 'node:path'
-import fs from 'node:fs'
-import { fileURLToPath } from 'node:url'
-import express from 'express'
-import cors from 'cors'
-import { createServer } from 'node:http'
-import { Server } from 'socket.io'
 import type { ClientToServerEvents, ServerToClientEvents } from '@music-together/shared'
+import cors from 'cors'
+import express from 'express'
+import fs from 'node:fs'
+import { createServer } from 'node:http'
+import path from 'node:path'
+import { fileURLToPath } from 'node:url'
+import { Server } from 'socket.io'
 import { config } from './config.js'
 import { initializeSocket } from './controllers/index.js'
 import musicRoutes from './routes/music.js'
 import roomRoutes from './routes/rooms.js'
-import { logger } from './utils/logger.js'
 import { clearAllTimers } from './services/roomLifecycleService.js'
+import { logger } from './utils/logger.js'
 
 const app = express()
 const httpServer = createServer(app)
@@ -48,10 +48,20 @@ if (fs.existsSync(indexHtml)) {
       immutable: true,
     }),
   )
-  // 其他静态文件 (favicon, manifest 等)
-  app.use(express.static(clientDist, { maxAge: '1h' }))
+  // 其他静态文件 (favicon, manifest 等)。index.html 不缓存，确保部署后立即生效
+  app.use(
+    express.static(clientDist, {
+      maxAge: '1h',
+      setHeaders: (res, filePath) => {
+        if (filePath.endsWith('index.html')) {
+          res.setHeader('Cache-Control', 'no-cache, must-revalidate')
+        }
+      },
+    }),
+  )
   // SPA fallback: 所有非 API 的 GET -> index.html
   app.get('*', (_req, res) => {
+    res.setHeader('Cache-Control', 'no-cache, must-revalidate')
     res.sendFile(indexHtml)
   })
   logger.info(`Serving client SPA from ${clientDist}`)
