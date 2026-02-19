@@ -64,10 +64,7 @@ export function PlaylistDetail({
 
   // Dynamic "add all" logic — filter duplicates
   const availableSlots = LIMITS.QUEUE_MAX_SIZE - queue.length
-  const uniqueTracks = useMemo(
-    () => tracks.filter((t) => !isTrackAdded(t)),
-    [tracks, isTrackAdded],
-  )
+  const uniqueTracks = useMemo(() => tracks.filter((t) => !isTrackAdded(t)), [tracks, isTrackAdded])
   const addCount = Math.min(availableSlots, uniqueTracks.length)
   const isQueueFull = availableSlots <= 0
 
@@ -106,9 +103,7 @@ export function PlaylistDetail({
         <Button variant="ghost" size="icon" onClick={onBack} className="h-8 w-8 shrink-0">
           <ArrowLeft className="h-4 w-4" />
         </Button>
-        <h4 className="min-w-0 flex-1 truncate text-sm font-semibold">
-          {playlist?.name ?? '歌单详情'}
-        </h4>
+        <h4 className="min-w-0 flex-1 truncate text-sm font-semibold">{playlist?.name ?? '歌单详情'}</h4>
       </div>
 
       {/* Row 2: Info + Action */}

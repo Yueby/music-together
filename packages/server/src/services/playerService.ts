@@ -39,10 +39,7 @@ function withPlayMutex<T>(roomId: string, fn: () => Promise<T>): Promise<T> {
  */
 function getScheduleTime(roomId: string): number {
   const maxRTT = roomRepo.getP90RTT(roomId)
-  const delay = Math.min(
-    Math.max(maxRTT * 1.5 + 100, NTP.MIN_SCHEDULE_DELAY_MS),
-    NTP.MAX_SCHEDULE_DELAY_MS,
-  )
+  const delay = Math.min(Math.max(maxRTT * 1.5 + 100, NTP.MIN_SCHEDULE_DELAY_MS), NTP.MAX_SCHEDULE_DELAY_MS)
   return Date.now() + delay
 }
 
@@ -95,11 +92,7 @@ async function resolveStreamUrl(
  * Returns true on success, false on failure.
  * Serialized per room via mutex to prevent concurrent state corruption.
  */
-export function playTrackInRoom(
-  io: TypedServer,
-  roomId: string,
-  track: Track,
-): Promise<boolean> {
+export function playTrackInRoom(io: TypedServer, roomId: string, track: Track): Promise<boolean> {
   return withPlayMutex(roomId, () => _playTrackInRoom(io, roomId, track))
 }
 
@@ -108,11 +101,7 @@ export function playTrackInRoom(
  * the mutex so that concurrent QUEUE_ADD handlers don't both trigger playback
  * (the second caller sees the track set by the first and bails out).
  */
-export function autoPlayIfEmpty(
-  io: TypedServer,
-  roomId: string,
-  track: Track,
-): Promise<boolean> {
+export function autoPlayIfEmpty(io: TypedServer, roomId: string, track: Track): Promise<boolean> {
   return withPlayMutex(roomId, async () => {
     const room = roomRepo.get(roomId)
     if (!room || room.currentTrack) return false
@@ -120,11 +109,7 @@ export function autoPlayIfEmpty(
   })
 }
 
-async function _playTrackInRoom(
-  io: TypedServer,
-  roomId: string,
-  track: Track,
-): Promise<boolean> {
+async function _playTrackInRoom(io: TypedServer, roomId: string, track: Track): Promise<boolean> {
   const room = roomRepo.get(roomId)
   if (!room) return false
 
@@ -139,9 +124,7 @@ async function _playTrackInRoom(
 
       if (!url) {
         const isVip = resolved.vip
-        const hint = isVip && !cookie
-          ? '（VIP 歌曲，需要有用户登录 VIP 账号）'
-          : ''
+        const hint = isVip && !cookie ? '（VIP 歌曲，需要有用户登录 VIP 账号）' : ''
         logger.warn(`Cannot get stream URL for "${resolved.title}"${hint}, removing from queue`, { roomId })
         // Auto-remove the invalid track from the queue
         queueService.removeTrack(roomId, resolved.id)

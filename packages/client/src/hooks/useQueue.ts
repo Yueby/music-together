@@ -5,31 +5,18 @@ import { useSocketContext } from '@/providers/SocketProvider'
 export function useQueue() {
   const { socket } = useSocketContext()
 
-  const addTrack = useCallback(
-    (track: Track) => socket.emit(EVENTS.QUEUE_ADD, { track }),
-    [socket],
-  )
+  const addTrack = useCallback((track: Track) => socket.emit(EVENTS.QUEUE_ADD, { track }), [socket])
 
   const addBatchTracks = useCallback(
-    (tracks: Track[], playlistName?: string) =>
-      socket.emit(EVENTS.QUEUE_ADD_BATCH, { tracks, playlistName }),
+    (tracks: Track[], playlistName?: string) => socket.emit(EVENTS.QUEUE_ADD_BATCH, { tracks, playlistName }),
     [socket],
   )
 
-  const removeTrack = useCallback(
-    (trackId: string) => socket.emit(EVENTS.QUEUE_REMOVE, { trackId }),
-    [socket],
-  )
+  const removeTrack = useCallback((trackId: string) => socket.emit(EVENTS.QUEUE_REMOVE, { trackId }), [socket])
 
-  const reorderTracks = useCallback(
-    (trackIds: string[]) => socket.emit(EVENTS.QUEUE_REORDER, { trackIds }),
-    [socket],
-  )
+  const reorderTracks = useCallback((trackIds: string[]) => socket.emit(EVENTS.QUEUE_REORDER, { trackIds }), [socket])
 
-  const clearQueue = useCallback(
-    () => socket.emit(EVENTS.QUEUE_CLEAR),
-    [socket],
-  )
+  const clearQueue = useCallback(() => socket.emit(EVENTS.QUEUE_CLEAR), [socket])
 
   return { addTrack, addBatchTracks, removeTrack, reorderTracks, clearQueue }
 }

@@ -9,10 +9,7 @@ import { useEffect, useRef } from 'react'
  * @example
  * useSocketEvent(EVENTS.ROOM_STATE, useCallback((room) => { ... }, []))
  */
-export function useSocketEvent<E extends keyof ServerToClientEvents>(
-  event: E,
-  handler: ServerToClientEvents[E],
-) {
+export function useSocketEvent<E extends keyof ServerToClientEvents>(event: E, handler: ServerToClientEvents[E]) {
   const { socket } = useSocketContext()
 
   // Keep a stable ref so the effect doesn't re-subscribe on every render

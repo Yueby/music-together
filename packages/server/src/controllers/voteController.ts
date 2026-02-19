@@ -1,4 +1,12 @@
-import { EVENTS, ERROR_CODE, TIMING, defineAbilityFor, voteStartSchema, voteCastSchema, playerSetModeSchema } from '@music-together/shared'
+import {
+  EVENTS,
+  ERROR_CODE,
+  TIMING,
+  defineAbilityFor,
+  voteStartSchema,
+  voteCastSchema,
+  playerSetModeSchema,
+} from '@music-together/shared'
 import type { Actions, Subjects, PlayMode, VoteAction } from '@music-together/shared'
 import { createWithRoom } from '../middleware/withRoom.js'
 import { checkSocketRateLimit } from '../middleware/socketRateLimiter.js'
@@ -14,7 +22,12 @@ import type { TypedServer, TypedSocket } from '../middleware/types.js'
  * Execute the voted action on the player.
  * No initiatorSocket — broadcast to everyone since this is a collective decision.
  */
-async function executeAction(io: TypedServer, roomId: string, action: VoteAction, payload?: Record<string, unknown>): Promise<void> {
+async function executeAction(
+  io: TypedServer,
+  roomId: string,
+  action: VoteAction,
+  payload?: Record<string, unknown>,
+): Promise<void> {
   switch (action) {
     case 'pause':
       playerService.pauseTrack(io, roomId)
@@ -52,7 +65,7 @@ async function executeAction(io: TypedServer, roomId: string, action: VoteAction
       }
       const room = roomRepo.get(roomId)
       if (!room) break
-      const track = room.queue.find(t => t.id === trackId)
+      const track = room.queue.find((t) => t.id === trackId)
       if (track) {
         await playerService.playTrackInRoom(io, roomId, track)
         logger.info(`Play-track executed for track ${trackId}`, { roomId })
@@ -87,7 +100,7 @@ export function registerVoteController(io: TypedServer, socket: TypedSocket) {
   socket.on(
     EVENTS.VOTE_START,
     withRoom(async (ctx, raw) => {
-      if (!await checkSocketRateLimit(ctx.socket)) return
+      if (!(await checkSocketRateLimit(ctx.socket))) return
       const parsed = voteStartSchema.safeParse(raw)
       if (!parsed.success) {
         ctx.socket.emit(EVENTS.ROOM_ERROR, { code: ERROR_CODE.INVALID_INPUT, message: '无效的投票请求' })
@@ -112,7 +125,9 @@ export function registerVoteController(io: TypedServer, socket: TypedSocket) {
       const permSubject = perm?.subject ?? 'Player'
       if (ability.can(permAction as Actions, permSubject as Subjects)) {
         await executeAction(io, ctx.roomId, action, payload)
-        logger.info(`Direct-executed ${action} for privileged user ${ctx.user.nickname} (role: ${ctx.user.role})`, { roomId: ctx.roomId })
+        logger.info(`Direct-executed ${action} for privileged user ${ctx.user.nickname} (role: ${ctx.user.role})`, {
+          roomId: ctx.roomId,
+        })
         return
       }
 
@@ -122,14 +137,7 @@ export function registerVoteController(io: TypedServer, socket: TypedSocket) {
         return
       }
 
-      const vote = voteService.createVote(
-        ctx.roomId,
-        ctx.room.hostId,
-        ctx.user,
-        action,
-        ctx.room.users.length,
-        payload,
-      )
+      const vote = voteService.createVote(ctx.roomId, ctx.room.hostId, ctx.user, action, ctx.room.users.length, payload)
 
       if (!vote) {
         ctx.socket.emit(EVENTS.ROOM_ERROR, { code: ERROR_CODE.VOTE_IN_PROGRESS, message: '已有投票正在进行中' })

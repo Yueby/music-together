@@ -7,6 +7,15 @@ description: Universal coding standards, best practices, and patterns for TypeSc
 
 Universal coding standards applicable across all projects.
 
+## When to Activate
+
+- Starting a new project or module
+- Reviewing code for quality and maintainability
+- Refactoring existing code to follow conventions
+- Enforcing naming, formatting, or structural consistency
+- Setting up linting, formatting, or type-checking rules
+- Onboarding new contributors to coding conventions
+
 ## Code Quality Principles
 
 ### 1. Readability First

@@ -8,17 +8,17 @@
 
 ### 核心功能
 
-| 功能 | 说明 |
-|------|------|
-| 房间系统 | 创建/加入房间，房间号邀请，可选密码保护 |
-| 多音源搜索 | 网易云、QQ音乐、酷狗 |
-| 同步播放 | 房间内播放进度实时同步 |
-| 实时聊天 | 房间内文字聊天 |
-| 权限控制 | RBAC 三级权限（host > admin > member）基于 @casl/ability |
-| 播放模式 | 顺序播放、列表循环、单曲循环、随机播放（Host/Admin 直接切换，Member 投票切换） |
-| 投票系统 | 普通成员通过投票控制播放（暂停/恢复/切歌/切换播放模式/指定播放/移除歌曲） |
-| VIP 认证 | 平台账号登录（网易云/QQ/酷狗），房间级 Cookie 池（VIP 播放共享）+ 用户级歌单（私有） |
-| 歌词展示 | Apple Music 风格歌词动画 (AMLL) |
+| 功能       | 说明                                                                                                                                            |
+| ---------- | ----------------------------------------------------------------------------------------------------------------------------------------------- |
+| 房间系统   | 创建/加入房间，房间号邀请，可选密码保护                                                                                                         |
+| 多音源搜索 | 网易云、QQ音乐、酷狗                                                                                                                            |
+| 同步播放   | 房间内播放进度实时同步                                                                                                                          |
+| 实时聊天   | 房间内文字聊天                                                                                                                                  |
+| 权限控制   | RBAC 三级权限（host > admin > member）基于 @casl/ability，支持 creatorId 房主回收                                                               |
+| 播放模式   | 顺序播放、列表循环、单曲循环、随机播放（Host/Admin 直接切换，Member 投票切换）                                                                  |
+| 投票系统   | 普通成员通过投票控制播放（暂停/恢复/切歌/切换播放模式/指定播放/移除歌曲）                                                                       |
+| VIP 认证   | 平台账号登录（网易云/QQ/酷狗），房间级 Cookie 池（VIP 播放共享）+ 用户级歌单（私有）                                                            |
+| 歌词展示   | Apple Music 风格歌词动画 (AMLL)，四级优先级：TTML 在线逐词（网易云/QQ，可配置）> 平台原生逐词（网易云 YRC / 酷狗 KRC）> LRC 行级歌词 |
 
 ### 技术栈
 
@@ -135,7 +135,7 @@ src/
 │   ├── useSocketEvent.ts       #   通用 Socket 事件订阅工具 Hook（自动 on/off，ref 稳定）
 │   ├── usePlayer.ts            #   播放器主 hook（组合 useHowl + useLyric + usePlayerSync）
 │   ├── useHowl.ts              #   Howler.js 音频实例管理
-│   ├── useLyric.ts             #   歌词加载与解析
+│   ├── useLyric.ts             #   歌词加载（TTML → 平台逐词 YRC/KRC → LRC）
 │   ├── usePlayerSync.ts        #   播放同步（Scheduled Execution + Host 上报 + 周期性漂移校正）
 │   ├── useClockSync.ts         #   NTP 时钟同步 hook（校准客户端时钟与服务器对齐）
 │   ├── useRoom.ts              #   房间组合 hook（编排 5 个子 hook，对外 API 不变）
@@ -222,7 +222,7 @@ src/
 │   └── socketRateLimiter.ts    #   Socket 事件速率限制（per-socket，10次/5秒）+ 断连清理（cleanupSocketRateLimit）
 │
 ├── routes/                     # Express REST 路由
-│   ├── music.ts                #   GET /api/music/search|url|lyric|cover|playlist（统一 validated() 路由包装器消除重复 try/catch + Zod 模式）
+│   ├── music.ts                #   GET /api/music/search|url|lyric|cover|playlist|ttml（统一 validated() 路由包装器消除重复 try/catch + Zod 模式）
 │   └── rooms.ts                #   GET /api/rooms/:roomId/check（房间预检）
 │
 ├── types/
@@ -289,29 +289,36 @@ graph TB
 
 ### Socket 事件清单
 
-| 分类 | 客户端 → 服务端 | 服务端 → 客户端 |
-|------|-----------------|-----------------|
-| **Room** | `room:create`, `room:join`, `room:leave`, `room:list`, `room:settings`, `room:set_role` | `room:created`, `room:state`, `room:user_joined`, `room:user_left`, `room:settings`, `room:error`, `room:list_update`, `room:role_changed` |
-| **Player** | `player:play`, `player:pause`, `player:seek`, `player:next`, `player:prev`, `player:sync`, `player:sync_request`, `player:set_mode` | `player:play`, `player:pause`, `player:resume`, `player:seek`, `player:sync_response` |
-| **Queue** | `queue:add`, `queue:add_batch`, `queue:remove`, `queue:reorder`, `queue:clear` | `queue:updated` |
-| **Chat** | `chat:message` | `chat:message`, `chat:history` |
-| **Vote** | `vote:start`, `vote:cast` | `vote:started`, `vote:result` |
-| **Auth** | `auth:request_qr`, `auth:check_qr`, `auth:set_cookie`, `auth:logout`, `auth:get_status` | `auth:qr_generated`, `auth:qr_status`, `auth:set_cookie_result`, `auth:status_update`, `auth:my_status` |
-| **Playlist** | `playlist:get_my` | `playlist:my_list` |
-| **NTP** | `ntp:ping` | `ntp:pong` |
+| 分类         | 客户端 → 服务端                                                                                                                     | 服务端 → 客户端                                                                                                                            |
+| ------------ | ----------------------------------------------------------------------------------------------------------------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------ |
+| **Room**     | `room:create`, `room:join`, `room:leave`, `room:list`, `room:settings`, `room:set_role`                                             | `room:created`, `room:state`, `room:user_joined`, `room:user_left`, `room:settings`, `room:error`, `room:list_update`, `room:role_changed` |
+| **Player**   | `player:play`, `player:pause`, `player:seek`, `player:next`, `player:prev`, `player:sync`, `player:sync_request`, `player:set_mode` | `player:play`, `player:pause`, `player:resume`, `player:seek`, `player:sync_response`                                                      |
+| **Queue**    | `queue:add`, `queue:add_batch`, `queue:remove`, `queue:reorder`, `queue:clear`                                                      | `queue:updated`                                                                                                                            |
+| **Chat**     | `chat:message`                                                                                                                      | `chat:message`, `chat:history`                                                                                                             |
+| **Vote**     | `vote:start`, `vote:cast`                                                                                                           | `vote:started`, `vote:result`                                                                                                              |
+| **Auth**     | `auth:request_qr`, `auth:check_qr`, `auth:set_cookie`, `auth:logout`, `auth:get_status`                                             | `auth:qr_generated`, `auth:qr_status`, `auth:set_cookie_result`, `auth:status_update`, `auth:my_status`                                    |
+| **Playlist** | `playlist:get_my`                                                                                                                   | `playlist:my_list`                                                                                                                         |
+| **NTP**      | `ntp:ping`                                                                                                                          | `ntp:pong`                                                                                                                                 |
 
 ### 关键数据模型
 
 ```typescript
 // 音乐曲目
 interface Track {
-  id: string; title: string; artist: string[]; album: string
-  duration: number; cover: string
+  id: string
+  title: string
+  artist: string[]
+  album: string
+  duration: number
+  cover: string
   source: 'netease' | 'tencent' | 'kugou'
-  sourceId: string; urlId: string
-  lyricId?: string; picId?: string; streamUrl?: string
-  requestedBy?: string  // 点歌人昵称
-  vip?: boolean         // 是否为 VIP / 付费歌曲（可能无法播放或仅试听）
+  sourceId: string
+  urlId: string
+  lyricId?: string
+  picId?: string
+  streamUrl?: string
+  requestedBy?: string // 点歌人昵称
+  vip?: boolean // 是否为 VIP / 付费歌曲（可能无法播放或仅试听）
 }
 
 // 播放模式
@@ -322,37 +329,57 @@ type AudioQuality = 128 | 192 | 320 | 999
 
 // 客户端可见的房间状态
 interface RoomState {
-  id: string; name: string; hostId: string
-  hasPassword: boolean; audioQuality: AudioQuality
-  users: User[]; queue: Track[]
-  currentTrack: Track | null; playState: PlayState
+  id: string
+  name: string
+  hostId: string
+  hasPassword: boolean
+  audioQuality: AudioQuality
+  users: User[]
+  queue: Track[]
+  currentTrack: Track | null
+  playState: PlayState
   playMode: PlayMode
 }
 
 // 播放状态（含服务端时间戳用于同步校准）
 interface PlayState {
-  isPlaying: boolean; currentTime: number; serverTimestamp: number
+  isPlaying: boolean
+  currentTime: number
+  serverTimestamp: number
 }
 
 // 预定执行播放状态（play/pause/seek/resume 广播时使用）
 interface ScheduledPlayState extends PlayState {
-  serverTimeToExecute: number  // 客户端应在此服务器时间点执行动作
+  serverTimeToExecute: number // 客户端应在此服务器时间点执行动作
 }
 
 // 歌单元数据
 interface Playlist {
-  id: string; name: string; cover: string; trackCount: number
-  source: MusicSource; creator?: string; description?: string
+  id: string
+  name: string
+  cover: string
+  trackCount: number
+  source: MusicSource
+  creator?: string
+  description?: string
 }
 
 // 用户（RBAC: host > admin > member）
-interface User { id: string; nickname: string; role: UserRole }
+interface User {
+  id: string
+  nickname: string
+  role: UserRole
+}
 type UserRole = 'host' | 'admin' | 'member'
 
 // 聊天消息
 interface ChatMessage {
-  id: string; userId: string; nickname: string
-  content: string; timestamp: number; type: 'user' | 'system'
+  id: string
+  userId: string
+  nickname: string
+  content: string
+  timestamp: number
+  type: 'user' | 'system'
 }
 ```
 
@@ -361,6 +388,7 @@ interface ChatMessage {
 采用**事件驱动同步 + 周期性比例漂移校正**架构：NTP 时钟同步 + Scheduled Execution + 比例控制漂移校正（EMA 平滑 + proportional rate + hard seek）。
 
 **三层防护**：
+
 1. **NTP 时钟同步**：保证各客户端时钟与服务器对齐（时间衰减加权中位数）
 2. **Scheduled Execution**：离散事件（play/pause/seek/resume）通过预定执行消除网络延迟差异（P90 RTT 自适应调度）
 3. **周期性比例漂移校正**：客户端每 2 秒发起 `PLAYER_SYNC_REQUEST`，服务端返回当前预期位置；漂移经 EMA 低通滤波后进入比例控制器，rate 调整幅度与漂移成正比（自然收敛无振荡），>200ms 用 hard seek 跳转
@@ -393,6 +421,7 @@ interface ChatMessage {
 
 **仅 Member 客户端**每 `SYNC_REQUEST_INTERVAL_MS`（2s）向服务端发送 `PLAYER_SYNC_REQUEST`（Host 跳过，因为 Host 是权威播放源，不应被 server 估算值反向校正），服务端通过 `estimateCurrentTime()` 计算当前预期位置后回复 `PLAYER_SYNC_RESPONSE`。客户端利用 NTP 校准时钟补偿网络延迟，计算原始漂移量后经 **EMA 低通滤波**（alpha=0.3）得到 `smoothedDrift`，再进入比例控制器：
 
+- **新曲 Grace Period**：新曲加载后 `DRIFT_GRACE_PERIOD_MS`（3s）内**仅跳过 rate 微调**（EMA 产生的比例速率校正），但**保留 hard seek**（大偏差 >200ms 仍会跳转修正）。此窗口内 `estimateCurrentTime()` 基于 `scheduleTime` 锚点，尚未被 Host 上报修正，rate 微调可能基于不准确的估算。等待至少一次 Host 上报后再启用全面校正
 - **EMA 平滑**：`smoothed = alpha * rawDrift + (1 - alpha) * prevSmoothed`，消除测量噪声导致的正负跳动
 - **EMA 冷启动种子**：pause/resume/新曲/hard seek 后 EMA 重置，首次 sync response 直接用 rawDrift 种子初始化（而非从 0 开始混合），避免恢复播放后 6-8 秒的 EMA 收敛滞后
 - `|smoothedDrift|` > `DRIFT_SEEK_THRESHOLD_MS`（200ms）→ hard seek 到预期位置 + rate(1) + 重置 smoothedDrift
@@ -405,23 +434,26 @@ interface ChatMessage {
 
 #### Host 上报与服务端状态维护
 
-Host（房主）**自适应频率**上报当前播放位置到服务端：新曲开始后前 10 秒高频上报（每 2 秒，`HOST_REPORT_FAST_INTERVAL_MS`），之后回到正常频率（每 5 秒，`HOST_REPORT_INTERVAL_MS`），使用动态 `setTimeout` 链实现。仅用于维护 `room.playState` 的准确性（供 mid-song join、reconnect recovery 和漂移校正使用），**不会转发给其他客户端**。Host 标签页从后台恢复时（`visibilitychange` → visible），立即补偿上报一次当前位置，避免 `setTimeout` 被浏览器节流后 `playState` 过时。服务端通过 `playerService.validateHostReport()` 校验 Host 上报位置与 `estimateCurrentTime()` 预估值的偏差，超过 `HOST_REJECT_DRIFT_THRESHOLD_S`（3 秒）的报告视为过时数据（如手机息屏后恢复）被拒绝；但连续拒绝 `HOST_REJECT_FORCE_ACCEPT_COUNT`（2）次后强制接受以打破僵局。`hostRejectCount`、`lastNextTimestamp`、`playMutexes` 统一在 `playerService.cleanupRoom()` 中清理，避免内存泄漏。Host 切换时自动刷新 `playState.serverTimestamp` 和 `currentTime`，确保新 Host 的首个报告不会被误拒。
+Host（房主）**自适应频率**上报当前播放位置到服务端：新曲开始后前 10 秒高频上报（每 2 秒，`HOST_REPORT_FAST_INTERVAL_MS`），之后回到正常频率（每 5 秒，`HOST_REPORT_INTERVAL_MS`），使用动态 `setTimeout` 链实现。仅用于维护 `room.playState` 的准确性（供 mid-song join、reconnect recovery 和漂移校正使用），**不会转发给其他客户端**。Host 标签页从后台恢复时（`visibilitychange` → visible），立即补偿上报一次当前位置，避免 `setTimeout` 被浏览器节流后 `playState` 过时。
 
+- **NTP 校准时间戳**：Host 上报时附带 `hostServerTime`（通过 `getServerTime()` 获取的 NTP 校准后服务器时间），服务端优先使用此值作为 `playState.serverTimestamp`，替代 `Date.now()`。这消除了 Host→Server 单向网络延迟（≈RTT/2）导致的 `estimateCurrentTime()` 系统性落后偏差。服务端对 `hostServerTime` 做 10 秒容差校验（`Math.abs(hostServerTime - Date.now()) < 10_000`），超出范围回退到 `Date.now()`
+- 服务端通过 `playerService.validateHostReport()` 校验 Host 上报位置与 `estimateCurrentTime()` 预估值的偏差，超过 `HOST_REJECT_DRIFT_THRESHOLD_S`（3 秒）的报告视为过时数据（如手机息屏后恢复）被拒绝；但连续拒绝 `HOST_REJECT_FORCE_ACCEPT_COUNT`（2）次后强制接受以打破僵局。`hostRejectCount`、`lastNextTimestamp`、`playMutexes` 统一在 `playerService.cleanupRoom()` 中清理，避免内存泄漏。Host 切换时自动刷新 `playState.serverTimestamp` 和 `currentTime`，确保新 Host 的首个报告不会被误拒
 - `syncService.estimateCurrentTime()` 基于 Host 上报的位置 + 经过时间估算当前位置，对 `elapsed` 做 `Math.max(0, ...)` 防护（`serverTimestamp` 可能是未来的 `scheduleTime`），且 clamp 到曲目时长上界（`room.currentTrack.duration`），防止 Host 断线后估算值无限增长
 - 新用户加入时，通过 `ROOM_STATE` 获取 `playState` 并计算应跳转到的位置
 - 断线重连时，`usePlayer` 的 recovery 机制自动检测 desync 并重新加载音轨。Recovery 通过检查 `loadingRef` 避免与 `onPlayerPlay` 双重 `loadTrack`，且在加载前清理 `playTimerRef` 防止定时器重复触发
+- **加载补偿上限**：`useHowl` 加载音频后会根据 `loadStartTime` 计算 elapsed 补偿 seek，但 elapsed 被 `MAX_LOAD_COMPENSATION_S`（2s）上限 clamp，防止网络慢时跳过歌曲开头过多
 - 漂移校正时，`PLAYER_SYNC_RESPONSE` 基于此数据返回准确位置
 
 #### 播放模式
 
 房间支持 4 种播放模式（`PlayMode`），由 `room.playMode` 字段控制，默认 `loop-all`：
 
-| 模式 | 说明 |
-|------|------|
-| `sequential` | 顺序播放，末尾停止 |
-| `loop-all` | 列表循环，末尾回到第一首 |
-| `loop-one` | 单曲循环，重播当前曲目 |
-| `shuffle` | 随机播放，从队列随机选一首（排除当前） |
+| 模式         | 说明                                   |
+| ------------ | -------------------------------------- |
+| `sequential` | 顺序播放，末尾停止                     |
+| `loop-all`   | 列表循环，末尾回到第一首               |
+| `loop-one`   | 单曲循环，重播当前曲目                 |
+| `shuffle`    | 随机播放，从队列随机选一首（排除当前） |
 
 - **Host/Admin** 直接 emit `player:set_mode`，服务端更新 `room.playMode` 并广播 `ROOM_STATE`
 - **Member** 通过 `vote:start { action: 'set-mode', payload: { mode } }` 投票切换
@@ -434,11 +466,11 @@ Host（房主）**自适应频率**上报当前播放位置到服务端：新曲
 
 房间支持 4 档音质（`AudioQuality`），由 `room.audioQuality` 字段控制，默认 `320`（HQ）：
 
-| 档位 | bitrate | 说明 |
-|------|---------|------|
-| 标准 | 128 kbps | 流量节省 |
-| 较高 | 192 kbps | 平衡音质与流量 |
-| HQ | 320 kbps | 高品质（默认） |
+| 档位    | bitrate  | 说明                        |
+| ------- | -------- | --------------------------- |
+| 标准    | 128 kbps | 流量节省                    |
+| 较高    | 192 kbps | 平衡音质与流量              |
+| HQ      | 320 kbps | 高品质（默认）              |
 | 无损 SQ | 999 kbps | 无损音质，通常需要 VIP 账号 |
 
 - **仅房主**可在房间设置中切换音质
@@ -461,7 +493,7 @@ Host（房主）**自适应频率**上报当前播放位置到服务端：新曲
 3. **自动续播**：房主独自重新加入时，若有歌曲暂停/排队中，自动恢复播放
 4. **加入房间补偿**：中途加入的客户端使用 `getServerTime()` 计算当前应处的播放位置，采用 fade-in 淡入策略（400ms 等待 + 200ms fade）减少加入延迟
 5. **房间宽限期**：房间空置 60 秒 (`ROOM_GRACE_PERIOD_MS`) 后自动清理（重复调用 `scheduleDeletion` 不会创建重复 timer）
-6. **角色宽限期**：特权用户（host 或 admin）断线后不立即丢失角色，而是启动 30 秒宽限期 (`ROLE_GRACE_PERIOD_MS`)。数据结构 `roleGraceMap: Map<roomId, Map<userId, { role, timer }>>` 支持同时跟踪多个断线的特权用户（1 个 host + N 个 admin）。宽限期内原用户重连可自动恢复角色（host 恢复 hostId + host role；admin 恢复 admin role）；返回的特权用户免密码验证。Host 宽限期过期后，房主转移优先选在线的 admin，其次按加入顺序选 member；admin 宽限期过期后仅清理条目。宽限期即使房间因此变空也保持（与 `scheduleDeletion` 并行），其他用户在宽限期内加入空房间时以 `member` 身份进入（不夺取 host）
+6. **角色持久化**：房间记录 `creatorId`（创建者 ID，永久不变）和 `adminUserIds: Set<string>`（持久化 admin 用户集合）。Admin 角色**永久保留**，不受 grace period 影响——离开/回来自动恢复 admin。Host 仍使用 30 秒宽限期 (`ROLE_GRACE_PERIOD_MS`)：host 离开后 30s 内重连可恢复 host；过期后转移给在线 admin → member，被取代的 host 加入 `adminUserIds`（降为 admin 而非 member）。**创建者自动回收 host**：房间创建者（`creatorId`）回来时无条件回收 host，前任 host 降为 admin。`setUserRole` 同步维护 `adminUserIds`（提权加入、降权移除）。返回的创建者/持久化 admin 免密码验证
 7. **持久化用户身份**：客户端通过 `storage.getUserId()` 生成并持久化 `nanoid`，每次 `ROOM_CREATE` / `ROOM_JOIN` 携带 `userId`，使服务端可跨 socket 重连识别同一用户。服务端通过 `roomRepo.getSocketMapping(socket.id)` 获取 `{ roomId, userId }` 映射——`socket.id` 仅用于 Socket 映射查找，所有涉及用户身份的操作（host 判断、auth cookie 归属、权限检查等）统一使用 `mapping.userId`
 8. **`currentUser` 自动推导**：`roomStore` 中 `currentUser` 始终从 `room.users` 自动推导（`deriveCurrentUser`），`setRoom` / `addUser` / `removeUser` / `updateRoom` 等 action 内部自动同步，不暴露 `setCurrentUser` 以避免脱节风险
 9. **断线时钟重置**：`resetAllRoomState()` 除重置 Zustand stores 外，还调用 `resetClockSync()` 清空 NTP 采样，确保重连后使用全新的时钟校准数据
@@ -474,15 +506,15 @@ Host（房主）**自适应频率**上报当前播放位置到服务端：新曲
 
 ### REST API
 
-| 路径 | 方法 | 用途 |
-|------|------|------|
-| `/api/music/search` | GET | 搜索曲目（`source` + `keyword` + `page`） |
-| `/api/music/url` | GET | 解析流媒体 URL（`source` + `id`） |
-| `/api/music/lyric` | GET | 获取歌词 |
-| `/api/music/cover` | GET | 获取封面图 |
-| `/api/music/playlist` | GET | 获取歌单曲目列表（`source` + `id` + `limit` + `offset`），分页返回 `{ tracks, total, offset, hasMore }` |
-| `/api/rooms/:roomId/check` | GET | 房间预检（存在性 + 是否需要密码），用于分享链接直接访问时的前置校验 |
-| `/api/health` | GET | 健康检查 |
+| 路径                       | 方法 | 用途                                                                                                    |
+| -------------------------- | ---- | ------------------------------------------------------------------------------------------------------- |
+| `/api/music/search`        | GET  | 搜索曲目（`source` + `keyword` + `page`）                                                               |
+| `/api/music/url`           | GET  | 解析流媒体 URL（`source` + `id`）                                                                       |
+| `/api/music/lyric`         | GET  | 获取歌词                                                                                                |
+| `/api/music/cover`         | GET  | 获取封面图                                                                                              |
+| `/api/music/playlist`      | GET  | 获取歌单曲目列表（`source` + `id` + `limit` + `offset`），分页返回 `{ tracks, total, offset, hasMore }` |
+| `/api/rooms/:roomId/check` | GET  | 房间预检（存在性 + 是否需要密码），用于分享链接直接访问时的前置校验                                     |
+| `/api/health`              | GET  | 健康检查                                                                                                |
 
 ---
 
@@ -490,76 +522,77 @@ Host（房主）**自适应频率**上报当前播放位置到服务端：新曲
 
 ### Client 核心依赖
 
-| 分类 | 库 | 版本 | 用途 |
-|------|----|------|------|
-| **UI 框架** | react, react-dom | ^19.2.0 | UI 基础 |
-| | shadcn/ui (new-york) | — | 组件库（基于 Radix UI） |
-| | radix-ui | ^1.4.3 | 无障碍 UI 原语 |
-| | tailwindcss | ^4.1.18 | 原子化 CSS |
-| | class-variance-authority | ^0.7.1 | 组件变体样式 |
-| | tailwind-merge | ^3.4.0 | class 合并去重 |
-| | clsx | ^2.1.1 | 条件 class 拼接 |
-| **权限** | @casl/react | ^5.0.1 | RBAC 权限（配合 @casl/ability） |
-| **错误边界** | react-error-boundary | ^6.1.0 | React Error Boundary |
-| **状态管理** | zustand | ^5.0.11 | 轻量全局状态 |
-| **路由** | react-router-dom | ^7.13.0 | 客户端路由 |
-| **实时通信** | socket.io-client | ^4.8.3 | WebSocket 客户端 |
-| **音频** | howler | ^2.2.4 | 音频播放引擎 |
-| | @applemusic-like-lyrics/core | ^0.2.0 | 歌词解析核心 |
-| | @applemusic-like-lyrics/react | ^0.2.0 | 歌词 React 组件 |
-| **动画** | motion | ^12.34.0 | Framer Motion 动画 |
-| | tw-animate-css | ^1.4.0 | Tailwind 动画预设 |
-| **图形渲染** | @pixi/app, core, display, sprite | ^7.4.3 | PixiJS（歌词背景渲染） |
-| | @pixi/filter-blur, filter-bulge-pinch, filter-color-matrix | — | PixiJS 滤镜 |
-| **弹窗** | vaul | ^1.x | 移动端 Drawer（底部抽屉，支持拖拽关闭） |
-| **虚拟列表** | @tanstack/react-virtual | ^3.13.18 | 虚拟滚动（歌单详情大列表） |
-| **工具** | dayjs | ^1.11.19 | 日期格式化 |
-| | nanoid | ^5.1.6 | ID 生成 |
-| | sonner | ^2.0.7 | Toast 通知 |
-| | lucide-react | ^0.563.0 | 图标库 |
-| | jss, jss-preset-default | ^10.10.0 | CSS-in-JS（AMLL 依赖） |
+| 分类         | 库                                                         | 版本     | 用途                                    |
+| ------------ | ---------------------------------------------------------- | -------- | --------------------------------------- |
+| **UI 框架**  | react, react-dom                                           | ^19.2.0  | UI 基础                                 |
+|              | shadcn/ui (new-york)                                       | —        | 组件库（基于 Radix UI）                 |
+|              | radix-ui                                                   | ^1.4.3   | 无障碍 UI 原语                          |
+|              | tailwindcss                                                | ^4.1.18  | 原子化 CSS                              |
+|              | class-variance-authority                                   | ^0.7.1   | 组件变体样式                            |
+|              | tailwind-merge                                             | ^3.4.0   | class 合并去重                          |
+|              | clsx                                                       | ^2.1.1   | 条件 class 拼接                         |
+| **权限**     | @casl/react                                                | ^5.0.1   | RBAC 权限（配合 @casl/ability）         |
+| **错误边界** | react-error-boundary                                       | ^6.1.0   | React Error Boundary                    |
+| **状态管理** | zustand                                                    | ^5.0.11  | 轻量全局状态                            |
+| **路由**     | react-router-dom                                           | ^7.13.0  | 客户端路由                              |
+| **实时通信** | socket.io-client                                           | ^4.8.3   | WebSocket 客户端                        |
+| **音频**     | howler                                                     | ^2.2.4   | 音频播放引擎                            |
+|              | @applemusic-like-lyrics/core                               | ^0.2.0   | 歌词解析核心                            |
+|              | @applemusic-like-lyrics/react                              | ^0.2.0   | 歌词 React 组件                         |
+| **动画**     | motion                                                     | ^12.34.0 | Framer Motion 动画                      |
+|              | tw-animate-css                                             | ^1.4.0   | Tailwind 动画预设                       |
+| **图形渲染** | @pixi/app, core, display, sprite                           | ^7.4.3   | PixiJS（歌词背景渲染）                  |
+|              | @pixi/filter-blur, filter-bulge-pinch, filter-color-matrix | —        | PixiJS 滤镜                             |
+| **弹窗**     | vaul                                                       | ^1.x     | 移动端 Drawer（底部抽屉，支持拖拽关闭） |
+| **虚拟列表** | @tanstack/react-virtual                                    | ^3.13.18 | 虚拟滚动（歌单详情大列表）              |
+| **工具**     | dayjs                                                      | ^1.11.19 | 日期格式化                              |
+|              | nanoid                                                     | ^5.1.6   | ID 生成                                 |
+|              | sonner                                                     | ^2.0.7   | Toast 通知                              |
+|              | lucide-react                                               | ^0.563.0 | 图标库                                  |
+|              | jss, jss-preset-default                                    | ^10.10.0 | CSS-in-JS（AMLL 依赖）                  |
 
 ### Server 核心依赖
 
-| 库 | 版本 | 用途 |
-|----|------|------|
-| express | ^4.21.0 | HTTP 框架 |
-| socket.io | ^4.8.3 | WebSocket 服务端 |
-| @meting/core | ^1.6.0 | 多音源音乐数据聚合 |
-| nanoid | ^5.0.9 | 房间 ID 生成 |
-| cors | ^2.8.5 | 跨域 |
-| dotenv | ^16.4.5 | 环境变量 |
-| zod | ^4.3.6 | 请求数据验证（配合 shared schemas） |
-| pino | ^10.3.1 | 结构化日志 |
-| rate-limiter-flexible | ^9.1.1 | 聊天限流 |
-| @neteasecloudmusicapienhanced/api | ^4.30.1 | 网易云 QR 登录 / Cookie 验证 / 用户信息 |
-| qrcode | ^1.5.4 | QR 码生成（酷狗扫码登录，API 仅返回 URL 需服务端转 base64 DataURL） |
-| escape-html | ^1.0.3 | HTML 转义（防注入） |
-| p-limit | ^7.3.0 | 并发控制（封面批量解析） |
-| lru-cache | ^11.2.6 | LRU 缓存（musicProvider 外部 API 结果缓存） |
+| 库                                | 版本    | 用途                                                                |
+| --------------------------------- | ------- | ------------------------------------------------------------------- |
+| express                           | ^4.21.0 | HTTP 框架                                                           |
+| socket.io                         | ^4.8.3  | WebSocket 服务端                                                    |
+| @meting/core                      | ^1.6.0  | 多音源音乐数据聚合                                                  |
+| @s4p/kugou-lrc                    | ^0.2.0  | 酷狗 KRC 逐字歌词获取与解析                                         |
+| nanoid                            | ^5.0.9  | 房间 ID 生成                                                        |
+| cors                              | ^2.8.5  | 跨域                                                                |
+| dotenv                            | ^16.4.5 | 环境变量                                                            |
+| zod                               | ^4.3.6  | 请求数据验证（配合 shared schemas）                                 |
+| pino                              | ^10.3.1 | 结构化日志                                                          |
+| rate-limiter-flexible             | ^9.1.1  | 聊天限流                                                            |
+| @neteasecloudmusicapienhanced/api | ^4.30.1 | 网易云 QR 登录 / Cookie 验证 / 用户信息                             |
+| qrcode                            | ^1.5.4  | QR 码生成（酷狗扫码登录，API 仅返回 URL 需服务端转 base64 DataURL） |
+| escape-html                       | ^1.0.3  | HTML 转义（防注入）                                                 |
+| p-limit                           | ^7.3.0  | 并发控制（封面批量解析）                                            |
+| lru-cache                         | ^11.2.6 | LRU 缓存（musicProvider 外部 API 结果缓存）                         |
 
 ### Shared 核心依赖
 
-| 库 | 版本 | 用途 |
-|----|------|------|
+| 库            | 版本   | 用途                        |
+| ------------- | ------ | --------------------------- |
 | @casl/ability | ^6.8.0 | RBAC 权限定义（前后端共用） |
-| zod | ^4.3.6 | 数据验证 Schema |
+| zod           | ^4.3.6 | 数据验证 Schema             |
 
 ### 开发工具
 
-| 库 | 版本 | 包 | 用途 |
-|----|------|-----|------|
-| vite | ^7.3.1 | client | 前端构建 |
-| @vitejs/plugin-react | ^5.1.1 | client | Vite React 插件 |
-| @tailwindcss/vite | ^4.1.18 | client | Vite Tailwind 插件 |
-| typescript | ~5.9.3 | all | 类型系统 |
-| tsx | ^4.19.0 | server | 服务端 TS 运行/热重载 |
-| pino-pretty | ^13.1.3 | server | 开发环境日志美化 |
-| eslint | ^9.39.1 | client | 代码检查 |
-| eslint-plugin-react-hooks | ^7.0.1 | client | React Hooks 规则 |
+| 库                          | 版本    | 包     | 用途                    |
+| --------------------------- | ------- | ------ | ----------------------- |
+| vite                        | ^7.3.1  | client | 前端构建                |
+| @vitejs/plugin-react        | ^5.1.1  | client | Vite React 插件         |
+| @tailwindcss/vite           | ^4.1.18 | client | Vite Tailwind 插件      |
+| typescript                  | ~5.9.3  | all    | 类型系统                |
+| tsx                         | ^4.19.0 | server | 服务端 TS 运行/热重载   |
+| pino-pretty                 | ^13.1.3 | server | 开发环境日志美化        |
+| eslint                      | ^9.39.1 | client | 代码检查                |
+| eslint-plugin-react-hooks   | ^7.0.1  | client | React Hooks 规则        |
 | eslint-plugin-react-refresh | ^0.4.24 | client | React Fast Refresh 规则 |
-| concurrently | ^9.2.1 | root | 并行运行前后端 |
-| kill-port | ^2.0.1 | root | 端口清理 |
+| concurrently                | ^9.2.1  | root   | 并行运行前后端          |
+| kill-port                   | ^2.0.1  | root   | 端口清理                |
 
 ---
 
@@ -571,13 +604,13 @@ Host（房主）**自适应频率**上报当前播放位置到服务端：新曲
 
 5 个独立 store，各自管理一个领域的状态：
 
-| Store | 职责 | 持久化 |
-|-------|------|--------|
-| `playerStore` | 播放状态（曲目、进度、音量、歌词） | 音量持久化到 localStorage |
-| `roomStore` | 房间状态（room、currentUser 自动推导自 room.users） | 无 |
-| `chatStore` | 聊天（消息列表、未读数、开关状态） | 无 |
-| `lobbyStore` | 大厅（房间列表、加载状态） | 无 |
-| `settingsStore` | 设置（歌词对齐/动画/字体/翻译字体大小、背景参数） | 全部持久化到 localStorage |
+| Store           | 职责                                                | 持久化                    |
+| --------------- | --------------------------------------------------- | ------------------------- |
+| `playerStore`   | 播放状态（曲目、进度、音量、歌词）                  | 音量持久化到 localStorage |
+| `roomStore`     | 房间状态（room、currentUser 自动推导自 room.users） | 无                        |
+| `chatStore`     | 聊天（消息列表、未读数、开关状态）                  | 无                        |
+| `lobbyStore`    | 大厅（房间列表、加载状态）                          | 无                        |
+| `settingsStore` | 设置（歌词对齐/动画/字体/翻译字体大小、背景参数）   | 全部持久化到 localStorage |
 
 使用方式：通过选择器订阅特定字段，避免不必要的渲染：
 
@@ -660,10 +693,12 @@ const { socket, isConnected } = useSocketContext()
 - **歌词模式**（`lyricExpanded=true`）：点击封面后，封面缩小到顶部变为 compact 横排（48px 小封面 `rounded-md` + 标题 `text-base` / 艺术家 `text-sm`），歌词区域 fade+slide-up 入场占满中间空间，控制器固定底部
 
 布局策略：
+
 - 移动端外层 padding `px-5 py-7`（水平 20px，垂直 28px），所有子元素 `w-full`，不使用 `max-w` 约束，边距由外层 padding 统一控制
 - `NowPlaying` wrapper 使用 `flex-1 min-h-0`，默认模式下封面在剩余空间内居中缩放（`aspect-square max-h-full max-w-full`），避免封面过大挤压控件
 
 关键技术：
+
 - `NowPlaying` 组件支持 `compact` prop 切换大图/小图布局，`onCoverClick` 触发模式切换
 - `framer-motion` 的 `layoutId`（"cover-art" / "song-info"）实现封面和文字在两种布局间的共享布局动画（0.45s Apple 风格贝塞尔缓动）
 - `LayoutGroup` 包裹移动端内容区，确保跨组件 `layoutId` 动画生效
@@ -745,24 +780,24 @@ logger.error('Failed to resolve stream URL', err, { roomId, trackId })
 `LIMITS` 和 `TIMING` 在 shared 包中统一定义，前后端共用：
 
 ```typescript
-LIMITS.QUEUE_MAX_SIZE       // 100
+LIMITS.QUEUE_MAX_SIZE // 100
 LIMITS.QUEUE_BATCH_MAX_SIZE // 100
-LIMITS.CHAT_HISTORY_MAX     // 200
-TIMING.ROOM_GRACE_PERIOD_MS        // 60_000
-TIMING.ROLE_GRACE_PERIOD_MS        // 30_000
-TIMING.PLAYER_NEXT_DEBOUNCE_MS     // 500
-TIMING.VOTE_TIMEOUT_MS             // 30_000
-NTP.INITIAL_INTERVAL_MS            // 50
-NTP.STEADY_STATE_INTERVAL_MS       // 5_000
-NTP.MAX_INITIAL_SAMPLES            // 20
-NTP.MIN_SCHEDULE_DELAY_MS          // 300
-NTP.MAX_SCHEDULE_DELAY_MS          // 3_000
-QR_STATUS.EXPIRED                  // 800
-QR_STATUS.WAITING_SCAN             // 801
-QR_STATUS.SCANNED                  // 802
-QR_STATUS.SUCCESS                  // 803
-QR_TIMING.POLL_INTERVAL_MS         // 2_000
-QR_TIMING.SUCCESS_CLOSE_DELAY_MS   // 1_000
+LIMITS.CHAT_HISTORY_MAX // 200
+TIMING.ROOM_GRACE_PERIOD_MS // 60_000
+TIMING.ROLE_GRACE_PERIOD_MS // 30_000
+TIMING.PLAYER_NEXT_DEBOUNCE_MS // 500
+TIMING.VOTE_TIMEOUT_MS // 30_000
+NTP.INITIAL_INTERVAL_MS // 50
+NTP.STEADY_STATE_INTERVAL_MS // 5_000
+NTP.MAX_INITIAL_SAMPLES // 20
+NTP.MIN_SCHEDULE_DELAY_MS // 300
+NTP.MAX_SCHEDULE_DELAY_MS // 3_000
+QR_STATUS.EXPIRED // 800
+QR_STATUS.WAITING_SCAN // 801
+QR_STATUS.SCANNED // 802
+QR_STATUS.SUCCESS // 803
+QR_TIMING.POLL_INTERVAL_MS // 2_000
+QR_TIMING.SUCCESS_CLOSE_DELAY_MS // 1_000
 ```
 
 ---
@@ -778,15 +813,15 @@ QR_TIMING.SUCCESS_CLOSE_DELAY_MS   // 1_000
 
 ### 命名规范
 
-| 类型 | 规范 | 示例 |
-|------|------|------|
-| 组件文件/组件名 | PascalCase | `ChatPanel.tsx`, `AudioPlayer` |
-| Hook 文件/函数名 | camelCase + `use` 前缀 | `usePlayer.ts`, `useHowl` |
-| Store 文件 | camelCase + `Store` 后缀 | `playerStore.ts` |
-| 工具函数/文件 | camelCase | `format.ts`, `formatDuration()` |
-| 类型/接口 | PascalCase | `Track`, `RoomState`, `HandlerContext` |
-| 常量 | UPPER_SNAKE_CASE | `EVENTS`, `LIMITS`, `TIMING` |
-| 事件名 | 命名空间:动作 | `room:create`, `player:sync_response` |
+| 类型             | 规范                     | 示例                                   |
+| ---------------- | ------------------------ | -------------------------------------- |
+| 组件文件/组件名  | PascalCase               | `ChatPanel.tsx`, `AudioPlayer`         |
+| Hook 文件/函数名 | camelCase + `use` 前缀   | `usePlayer.ts`, `useHowl`              |
+| Store 文件       | camelCase + `Store` 后缀 | `playerStore.ts`                       |
+| 工具函数/文件    | camelCase                | `format.ts`, `formatDuration()`        |
+| 类型/接口        | PascalCase               | `Track`, `RoomState`, `HandlerContext` |
+| 常量             | UPPER_SNAKE_CASE         | `EVENTS`, `LIMITS`, `TIMING`           |
+| 事件名           | 命名空间:动作            | `room:create`, `player:sync_response`  |
 
 ### 路径别名
 
@@ -862,10 +897,10 @@ import { usePlayerStore } from '@/stores/playerStore'
 ```css
 :root {
   --background: oklch(0.178 0.005 265); /* 深蓝灰 */
-  --foreground: oklch(0.985 0 0);       /* 近白 */
-  --primary: oklch(0.922 0 0);          /* 亮色主色 */
-  --card: oklch(0.235 0.008 265);       /* 微蓝灰卡片 */
-  --accent: oklch(0.35 0.008 265);      /* 强调色 */
+  --foreground: oklch(0.985 0 0); /* 近白 */
+  --primary: oklch(0.922 0 0); /* 亮色主色 */
+  --card: oklch(0.235 0.008 265); /* 微蓝灰卡片 */
+  --accent: oklch(0.35 0.008 265); /* 强调色 */
   /* ... */
 }
 ```
@@ -880,10 +915,10 @@ import { usePlayerStore } from '@/stores/playerStore'
 基准值 `--radius: 0.625rem`，其他圆角通过计算派生：
 
 ```css
---radius-sm: calc(var(--radius) - 4px);   /* 小 */
---radius-md: calc(var(--radius) - 2px);   /* 中 */
---radius-lg: var(--radius);               /* 标准 */
---radius-xl: calc(var(--radius) + 4px);   /* 大 */
+--radius-sm: calc(var(--radius) - 4px); /* 小 */
+--radius-md: calc(var(--radius) - 2px); /* 中 */
+--radius-lg: var(--radius); /* 标准 */
+--radius-xl: calc(var(--radius) + 4px); /* 大 */
 ```
 
 ### 图标
@@ -902,14 +937,28 @@ import { Play, Pause, SkipForward, Volume2 } from 'lucide-react'
 
 ```css
 @keyframes float {
-  0%, 100% { transform: translateY(0); }
-  50% { transform: translateY(-6px); }
+  0%,
+  100% {
+    transform: translateY(0);
+  }
+  50% {
+    transform: translateY(-6px);
+  }
 }
 
 @keyframes marquee {
-  0%, 15%   { transform: translateX(0); }
-  45%, 55%  { transform: translateX(var(--marquee-distance)); }
-  85%, 100% { transform: translateX(0); }
+  0%,
+  15% {
+    transform: translateX(0);
+  }
+  45%,
+  55% {
+    transform: translateX(var(--marquee-distance));
+  }
+  85%,
+  100% {
+    transform: translateX(0);
+  }
 }
 ```
 
@@ -930,6 +979,7 @@ import { Play, Pause, SkipForward, Volume2 } from 'lucide-react'
 ### 歌词渲染
 
 - **AMLL** (`@applemusic-like-lyrics/react`)：Apple Music 风格逐行歌词动画
+- **逐词来源**：TTML 在线库（网易云/QQ）、平台原生 YRC（网易云）、平台原生 KRC（酷狗，服务端解析后以 `wordByWord` 返回）
 - **PixiJS 背景**：`BackgroundRender` 组件使用 PixiJS 渲染动态专辑封面背景
 - 歌词设置可调：对齐锚点、弹簧动画、模糊效果、缩放效果、字重、字体大小、翻译字体大小
 
@@ -954,10 +1004,10 @@ import { cn } from '@/lib/utils'
 
 项目将**布局**和**交互**解耦为两个正交维度：
 
-| Hook | 维度 | 媒体查询 | 控制内容 |
-|------|------|----------|---------|
-| `useIsMobile()` | 布局 | `(orientation: portrait)` | Drawer 方向、面板高度、Dialog vs Drawer |
-| `useHasHover()` | 交互 | `(hover: hover)` | hover 工具栏 vs tap 展开、Slider thumb 可见性 |
+| Hook            | 维度 | 媒体查询                  | 控制内容                                      |
+| --------------- | ---- | ------------------------- | --------------------------------------------- |
+| `useIsMobile()` | 布局 | `(orientation: portrait)` | Drawer 方向、面板高度、Dialog vs Drawer       |
+| `useHasHover()` | 交互 | `(hover: hover)`          | hover 工具栏 vs tap 展开、Slider thumb 可见性 |
 
 横屏手机 = `isMobile: false`（使用桌面布局）+ `hasHover: false`（使用触控交互）。
 
@@ -973,6 +1023,7 @@ import { cn } from '@/lib/utils'
 ### 音频加载失败重试
 
 `useHowl` 的 `onloaderror` 处理：
+
 - 首次失败自动重试一次（`retryRef` flag + `howl.load()`）
 - 重试仍失败则 toast 显示歌曲名（`trackTitleRef`）并跳到下一首
 - `onloaderror` 开头有 stale guard（`howlRef.current !== howl`），防止旧 Howl 实例的重试回调影响新曲
@@ -1002,25 +1053,25 @@ pnpm dev:server
 
 ### 端口
 
-| 服务 | 默认端口 |
-|------|---------|
-| 前端 (Vite) | 5173 |
-| 后端 (Express + Socket.IO) | 3001 |
+| 服务                       | 默认端口 |
+| -------------------------- | -------- |
+| 前端 (Vite)                | 5173     |
+| 后端 (Express + Socket.IO) | 3001     |
 
 ### 环境变量
 
 #### 服务端 (`packages/server/.env`)
 
-| 变量 | 说明 | 默认值 |
-|------|------|--------|
-| `PORT` | 服务端口 | `3001` |
-| `CLIENT_URL` | 客户端地址（CORS） | `http://localhost:5173` |
-| `CORS_ORIGINS` | 额外 CORS 源（逗号分隔） | 空 |
+| 变量           | 说明                     | 默认值                  |
+| -------------- | ------------------------ | ----------------------- |
+| `PORT`         | 服务端口                 | `3001`                  |
+| `CLIENT_URL`   | 客户端地址（CORS）       | `http://localhost:5173` |
+| `CORS_ORIGINS` | 额外 CORS 源（逗号分隔） | 空                      |
 
 #### 客户端 (Vite 环境变量)
 
-| 变量 | 说明 | 默认值 |
-|------|------|--------|
+| 变量              | 说明     | 默认值                  |
+| ----------------- | -------- | ----------------------- |
 | `VITE_SERVER_URL` | 后端地址 | `http://localhost:3001` |
 
 ### 构建
@@ -1092,6 +1143,7 @@ Docker 容器 (:3001)
 ### 静态文件托管
 
 `packages/server/src/index.ts` 在启动时检测 `client/dist/index.html` 是否存在：
+
 - **存在**（生产环境）：挂载 `express.static` + SPA fallback
 - **不存在**（本地开发）：跳过，零影响
 
@@ -1109,3 +1161,17 @@ docker run -d --name watchtower --restart unless-stopped \
 ```
 
 如使用 1Panel，创建反向代理网站指向 `127.0.0.1:3001`，启用 WebSocket 和 HTTPS。
+
+---
+
+## 10. 已知问题与限制
+
+### QQ 音乐（Tencent）用户歌单获取
+
+由于腾讯实施了严格的服务端反爬策略（IP 库封锁、TLS 指纹监测、500003 错误/空响应），在非浏览器环境（Node.js 服务器）中获取用户私人歌单极其困难。
+
+- **现状**：已暂时禁用“获取 QQ 用户歌单”功能（后端返回空列表）。
+- **影响**：用户无法在“我的音乐”中看到 QQ 歌单。
+- **可用**：搜索、播放 VIP 歌曲、QR 扫码登录（获取 VIP 状态）均正常工作。
+- **UI 处理**：设置面板中的 QQ 音乐标签页已禁用交互（显示但不可点击）。
+- **未来展望**：需等待更高级的无头浏览器方案或协议逆向突破。

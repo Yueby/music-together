@@ -26,11 +26,7 @@ function getQualityLabel(quality: AudioQuality): string {
 }
 
 interface RoomSettingsSectionProps {
-  onUpdateSettings: (settings: {
-    name?: string
-    password?: string | null
-    audioQuality?: AudioQuality
-  }) => void
+  onUpdateSettings: (settings: { name?: string; password?: string | null; audioQuality?: AudioQuality }) => void
 }
 
 export function RoomSettingsSection({ onUpdateSettings }: RoomSettingsSectionProps) {
@@ -46,9 +42,7 @@ export function RoomSettingsSection({ onUpdateSettings }: RoomSettingsSectionPro
     return { label, isHigh }
   }, [syncDrift])
   const [passwordInput, setPasswordInput] = useState('')
-  const [passwordEnabled, setPasswordEnabled] = useState(
-    room?.hasPassword ?? false,
-  )
+  const [passwordEnabled, setPasswordEnabled] = useState(room?.hasPassword ?? false)
 
   // Room name editing state
   const [editingName, setEditingName] = useState(false)
@@ -141,7 +135,13 @@ export function RoomSettingsSection({ onUpdateSettings }: RoomSettingsSectionPro
             <div className="flex items-center gap-1.5">
               <span className="text-sm">{room?.name}</span>
               {isHost && (
-                <Button variant="ghost" size="icon" className="h-7 w-7" onClick={handleStartEditName} aria-label="编辑房间名">
+                <Button
+                  variant="ghost"
+                  size="icon"
+                  className="h-7 w-7"
+                  onClick={handleStartEditName}
+                  aria-label="编辑房间名"
+                >
                   <Pencil className="h-3 w-3" />
                 </Button>
               )}
@@ -151,9 +151,7 @@ export function RoomSettingsSection({ onUpdateSettings }: RoomSettingsSectionPro
 
         <SettingRow label="房间号">
           <div className="flex items-center gap-2">
-            <code className="rounded bg-muted px-2 py-0.5 text-sm">
-              {room?.id}
-            </code>
+            <code className="rounded bg-muted px-2 py-0.5 text-sm">{room?.id}</code>
             <Tooltip>
               <TooltipTrigger asChild>
                 <Button
@@ -204,9 +202,7 @@ export function RoomSettingsSection({ onUpdateSettings }: RoomSettingsSectionPro
               </SelectContent>
             </Select>
           ) : (
-            <span className="text-sm text-muted-foreground">
-              {getQualityLabel(room?.audioQuality ?? 320)}
-            </span>
+            <span className="text-sm text-muted-foreground">{getQualityLabel(room?.audioQuality ?? 320)}</span>
           )}
         </SettingRow>
 
@@ -229,10 +225,7 @@ export function RoomSettingsSection({ onUpdateSettings }: RoomSettingsSectionPro
           <Separator className="mt-2 mb-4" />
 
           <SettingRow label="房间密码" description="开启后需输入密码才能进入">
-            <Switch
-              checked={passwordEnabled}
-              onCheckedChange={handlePasswordToggle}
-            />
+            <Switch checked={passwordEnabled} onCheckedChange={handlePasswordToggle} />
           </SettingRow>
 
           {passwordEnabled && (

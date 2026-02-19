@@ -106,11 +106,7 @@ export function castVote(roomId: string, userId: string, approve: boolean): Cast
  *
  * Returns true if the vote state was modified (caller should broadcast updated state).
  */
-export function updateVoteThreshold(
-  roomId: string,
-  currentUserCount: number,
-  departedUserId?: string,
-): boolean {
+export function updateVoteThreshold(roomId: string, currentUserCount: number, departedUserId?: string): boolean {
   const vote = activeVotes.get(roomId)
   if (!vote) return false
 

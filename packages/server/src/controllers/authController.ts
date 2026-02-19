@@ -3,6 +3,7 @@ import type { MusicSource } from '@music-together/shared'
 import * as authService from '../services/authService.js'
 import * as neteaseAuth from '../services/neteaseAuthService.js'
 import * as kugouAuth from '../services/kugouAuthService.js'
+import * as tencentAuth from '../services/tencentAuthService.js'
 import { roomRepo } from '../repositories/roomRepository.js'
 import { logger } from '../utils/logger.js'
 import type { TypedServer, TypedSocket } from '../middleware/types.js'
@@ -20,7 +21,7 @@ export function registerAuthController(io: TypedServer, socket: TypedSocket) {
   // QR Code Login (Netease + Kugou)
   // -------------------------------------------------------------------------
 
-  const QR_PLATFORMS = new Set<MusicSource>(['netease', 'kugou'])
+  const QR_PLATFORMS = new Set<MusicSource>(['netease', 'kugou', 'tencent'])
 
   socket.on(EVENTS.AUTH_REQUEST_QR, async (data) => {
     qrSuccessHandled = false
@@ -31,9 +32,12 @@ export function registerAuthController(io: TypedServer, socket: TypedSocket) {
         return
       }
 
-      const result = platform === 'netease'
-        ? await neteaseAuth.generateQrCode()
-        : await kugouAuth.generateQrCode()
+      const result =
+        platform === 'netease'
+          ? await neteaseAuth.generateQrCode()
+          : platform === 'kugou'
+            ? await kugouAuth.generateQrCode()
+            : await tencentAuth.generateQrCode()
 
       if (!result) {
         socket.emit(EVENTS.AUTH_QR_STATUS, { status: QR_STATUS.EXPIRED, message: '生成二维码失败，请重试' })
@@ -55,14 +59,17 @@ export function registerAuthController(io: TypedServer, socket: TypedSocket) {
       }
 
       const platform = data.platform
-      if (!platform || !(['netease', 'kugou'] as const).includes(platform as 'netease' | 'kugou')) {
+      if (!platform || !QR_PLATFORMS.has(platform)) {
         logger.warn('AUTH_CHECK_QR: invalid or missing platform', { platform })
         return
       }
 
-      const result = platform === 'kugou'
-        ? await kugouAuth.checkQrStatus(data.key)
-        : await neteaseAuth.checkQrStatus(data.key)
+      const result =
+        platform === 'kugou'
+          ? await kugouAuth.checkQrStatus(data.key)
+          : platform === 'tencent'
+            ? await tencentAuth.checkQrStatus(data.key)
+            : await neteaseAuth.checkQrStatus(data.key)
 
       socket.emit(EVENTS.AUTH_QR_STATUS, { status: result.status, message: result.message })
 
@@ -70,15 +77,25 @@ export function registerAuthController(io: TypedServer, socket: TypedSocket) {
       if (result.status === QR_STATUS.SUCCESS && result.cookie && !qrSuccessHandled) {
         qrSuccessHandled = true
 
-        const infoResult = platform === 'kugou'
-          ? await kugouAuth.getUserInfo(result.cookie)
-          : await neteaseAuth.getUserInfo(result.cookie)
+        const infoResult =
+          platform === 'kugou'
+            ? await kugouAuth.getUserInfo(result.cookie)
+            : platform === 'tencent'
+              ? await tencentAuth.getUserInfo(result.cookie)
+              : await neteaseAuth.getUserInfo(result.cookie)
 
         if (infoResult.ok) {
           const userInfo = infoResult.data
           const mapping = getSocketMapping(socket.id)
           if (mapping) {
-            authService.addCookie(mapping.roomId, platform, mapping.userId, result.cookie, userInfo.nickname, userInfo.vipType)
+            authService.addCookie(
+              mapping.roomId,
+              platform,
+              mapping.userId,
+              result.cookie,
+              userInfo.nickname,
+              userInfo.vipType,
+            )
             broadcastAuthStatus(io, socket, mapping)
           }
           socket.emit(EVENTS.AUTH_SET_COOKIE_RESULT, {
@@ -111,7 +128,13 @@ export function registerAuthController(io: TypedServer, socket: TypedSocket) {
 
   socket.on(EVENTS.AUTH_SET_COOKIE, async (data) => {
     try {
-      if (!data?.platform || !VALID_PLATFORMS.has(data.platform) || !data?.cookie || typeof data.cookie !== 'string' || data.cookie.length > 8000) {
+      if (
+        !data?.platform ||
+        !VALID_PLATFORMS.has(data.platform) ||
+        !data?.cookie ||
+        typeof data.cookie !== 'string' ||
+        data.cookie.length > 8000
+      ) {
         socket.emit(EVENTS.AUTH_SET_COOKIE_RESULT, {
           success: false,
           message: '参数不完整',
@@ -150,9 +173,10 @@ export function registerAuthController(io: TypedServer, socket: TypedSocket) {
         if (!infoResult.ok) {
           socket.emit(EVENTS.AUTH_SET_COOKIE_RESULT, {
             success: false,
-            message: infoResult.reason === 'expired'
-              ? 'Cookie 已过期，请重新登录'
-              : '验证登录状态失败，将在下次进入房间时重试',
+            message:
+              infoResult.reason === 'expired'
+                ? 'Cookie 已过期，请重新登录'
+                : '验证登录状态失败，将在下次进入房间时重试',
             platform,
             reason: infoResult.reason,
           })
@@ -201,8 +225,40 @@ export function registerAuthController(io: TypedServer, socket: TypedSocket) {
             cookie,
           })
         }
+      } else if (platform === 'tencent') {
+        // 验证 QQ 音乐 cookie
+        let infoResult = await tencentAuth.getUserInfo(cookie)
+        if (!infoResult.ok) {
+          logger.info(`Tencent getUserInfo failed (${infoResult.reason}), retrying once...`)
+          await new Promise((r) => setTimeout(r, 1500))
+          infoResult = await tencentAuth.getUserInfo(cookie)
+        }
+
+        if (infoResult.ok) {
+          const userInfo = infoResult.data
+          if (mapping && mapping.roomId) {
+            authService.addCookie(mapping.roomId, platform, mapping.userId, cookie, userInfo.nickname, userInfo.vipType)
+          }
+          socket.emit(EVENTS.AUTH_SET_COOKIE_RESULT, {
+            success: true,
+            message: `已登录为 ${userInfo.nickname}`,
+            platform,
+            cookie,
+          })
+        } else {
+          // 验证失败也保存（可能是 API 变动）
+          if (mapping && mapping.roomId) {
+            authService.addCookie(mapping.roomId, platform, mapping.userId, cookie, '手动登录', 0)
+          }
+          socket.emit(EVENTS.AUTH_SET_COOKIE_RESULT, {
+            success: true,
+            message: 'Cookie 已保存（验证失败，播放时生效）',
+            platform,
+            cookie,
+          })
+        }
       } else {
-        // For QQ we can't easily validate — just store it
+        // 其他平台：无法验证，直接保存
         if (mapping && mapping.roomId) {
           authService.addCookie(mapping.roomId, platform, mapping.userId, cookie, '手动登录', 0)
         }

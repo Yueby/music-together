@@ -13,12 +13,7 @@ interface ResizeHandleProps {
   onDoubleClick?: () => void
 }
 
-export function ResizeHandle({
-  onResize,
-  onResizeEnd,
-  collapsed = false,
-  onDoubleClick,
-}: ResizeHandleProps) {
+export function ResizeHandle({ onResize, onResizeEnd, collapsed = false, onDoubleClick }: ResizeHandleProps) {
   const isDragging = useRef(false)
   const lastX = useRef(0)
   const moveHandlerRef = useRef<((e: PointerEvent) => void) | null>(null)

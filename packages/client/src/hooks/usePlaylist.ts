@@ -102,8 +102,8 @@ export function usePlaylist() {
 
   useEffect(() => {
     const onMyList = (data: { platform: MusicSource; playlists: Playlist[] }) => {
-      setMyPlaylists(prev => ({ ...prev, [data.platform]: data.playlists }))
-      setPlaylistsLoading(prev => ({ ...prev, [data.platform]: false }))
+      setMyPlaylists((prev) => ({ ...prev, [data.platform]: data.playlists }))
+      setPlaylistsLoading((prev) => ({ ...prev, [data.platform]: false }))
     }
 
     socket.on(EVENTS.PLAYLIST_MY_LIST, onMyList)
@@ -114,7 +114,7 @@ export function usePlaylist() {
 
   const fetchMyPlaylists = useCallback(
     (platform: MusicSource) => {
-      setPlaylistsLoading(prev => ({ ...prev, [platform]: true }))
+      setPlaylistsLoading((prev) => ({ ...prev, [platform]: true }))
       socket.emit(EVENTS.PLAYLIST_GET_MY, { platform })
     },
     [socket],
@@ -204,7 +204,7 @@ export function usePlaylist() {
       const data = await res.json()
       const newTracks: Track[] = data.tracks ?? []
 
-      setPlaylistTracks(prev => [...prev, ...newTracks])
+      setPlaylistTracks((prev) => [...prev, ...newTracks])
       setHasMoreTracks(data.hasMore ?? false)
       offsetRef.current = offset + newTracks.length
     } catch {

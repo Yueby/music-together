@@ -70,16 +70,10 @@ export function ChatPanel() {
         >
           <div className="py-3">
             {messages.length === 0 ? (
-              <p className="text-center text-sm text-muted-foreground/30 py-8">
-                还没有消息，开始聊天吧~
-              </p>
+              <p className="text-center text-sm text-muted-foreground/30 py-8">还没有消息，开始聊天吧~</p>
             ) : (
               messages.map((msg) => (
-                <ChatMessage
-                  key={msg.id}
-                  message={msg}
-                  isOwnMessage={msg.userId === currentUser?.id}
-                />
+                <ChatMessage key={msg.id} message={msg} isOwnMessage={msg.userId === currentUser?.id} />
               ))
             )}
             <div ref={messagesEndRef} />
@@ -112,13 +106,7 @@ export function ChatPanel() {
         />
         <Tooltip>
           <TooltipTrigger asChild>
-            <Button
-              size="icon"
-              variant="secondary"
-              onClick={handleSend}
-              disabled={!input.trim()}
-              aria-label="发送消息"
-            >
+            <Button size="icon" variant="secondary" onClick={handleSend} disabled={!input.trim()} aria-label="发送消息">
               <Send className="h-4 w-4" />
             </Button>
           </TooltipTrigger>

@@ -1,11 +1,5 @@
 import { Button } from '@/components/ui/button'
-import {
-  Dialog,
-  DialogContent,
-  DialogDescription,
-  DialogHeader,
-  DialogTitle,
-} from '@/components/ui/dialog'
+import { Dialog, DialogContent, DialogDescription, DialogHeader, DialogTitle } from '@/components/ui/dialog'
 import { PLATFORM_LABELS } from '@/lib/platform'
 import type { MusicSource } from '@music-together/shared'
 import { QR_STATUS, QR_TIMING } from '@music-together/shared'
@@ -80,17 +74,13 @@ export function QrLoginDialog({
       <DialogContent className="sm:max-w-sm">
         <DialogHeader>
           <DialogTitle>{label}扫码登录</DialogTitle>
-          <DialogDescription>
-            使用{label} App 扫描二维码登录
-          </DialogDescription>
+          <DialogDescription>使用{label} App 扫描二维码登录</DialogDescription>
         </DialogHeader>
 
         <div className="flex flex-col items-center gap-4 py-4">
           {/* QR Code */}
           <div className="relative flex h-52 w-52 items-center justify-center rounded-lg border bg-white">
-            {isLoading && (
-              <Loader2 className="text-muted-foreground h-8 w-8 animate-spin" />
-            )}
+            {isLoading && <Loader2 className="text-muted-foreground h-8 w-8 animate-spin" />}
             {!isLoading && qrData?.qrimg && (
               <>
                 <img
@@ -113,9 +103,7 @@ export function QrLoginDialog({
                 )}
               </>
             )}
-            {!isLoading && !qrData && (
-              <p className="text-muted-foreground text-sm">生成二维码失败</p>
-            )}
+            {!isLoading && !qrData && <p className="text-muted-foreground text-sm">生成二维码失败</p>}
           </div>
 
           {/* Status message */}

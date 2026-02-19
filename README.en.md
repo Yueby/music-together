@@ -1,9 +1,5 @@
 <p align="center">
-  <picture>
-    <source media="(prefers-color-scheme: dark)" srcset="public/logo-light.svg">
-    <source media="(prefers-color-scheme: light)" srcset="public/logo-dark.svg">
-    <img alt="Music Together" src="public/logo-dark.svg" width="80">
-  </picture>
+  <img alt="Music Together" src="public/logo.svg" width="80">
 </p>
 
 <h1 align="center">Music Together</h1>
@@ -45,6 +41,12 @@
 | Home | Search | Player | Chat |
 |:---:|:---:|:---:|:---:|
 | ![Home](screenshots/1_m.png) | ![Search](screenshots/2_m.png) | ![Player](screenshots/3_m.png) | ![Chat](screenshots/4_m.png) |
+
+### Lyrics Display Comparison
+
+| Desktop Lyrics | Portrait Default (Cover) | Portrait Lyrics Mode |
+|:---:|:---:|:---:|
+| ![Desktop Lyrics](screenshots/3.png) | ![Portrait Default](screenshots/3_m.png) | ![Portrait Lyrics](screenshots/3_m1.png) |
 
 ## Features
 

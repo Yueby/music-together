@@ -1,10 +1,5 @@
-import {
-  Select,
-  SelectContent,
-  SelectItem,
-  SelectTrigger,
-  SelectValue,
-} from '@/components/ui/select'
+import { Input } from '@/components/ui/input'
+import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@/components/ui/select'
 import { Separator } from '@/components/ui/separator'
 import { Slider } from '@/components/ui/slider'
 import { Switch } from '@/components/ui/switch'
@@ -13,6 +8,8 @@ import { SettingRow } from './SettingRow'
 
 export function AppearanceSection() {
   // Lyrics settings
+  const ttmlEnabled = useSettingsStore((s) => s.ttmlEnabled)
+  const ttmlDbUrl = useSettingsStore((s) => s.ttmlDbUrl)
   const lyricAlignAnchor = useSettingsStore((s) => s.lyricAlignAnchor)
   const lyricAlignPosition = useSettingsStore((s) => s.lyricAlignPosition)
   const lyricEnableSpring = useSettingsStore((s) => s.lyricEnableSpring)
@@ -21,6 +18,8 @@ export function AppearanceSection() {
   const lyricFontWeight = useSettingsStore((s) => s.lyricFontWeight)
   const lyricFontSize = useSettingsStore((s) => s.lyricFontSize)
   const lyricTranslationFontSize = useSettingsStore((s) => s.lyricTranslationFontSize)
+  const setTtmlEnabled = useSettingsStore((s) => s.setTtmlEnabled)
+  const setTtmlDbUrl = useSettingsStore((s) => s.setTtmlDbUrl)
   const setLyricAlignAnchor = useSettingsStore((s) => s.setLyricAlignAnchor)
   const setLyricAlignPosition = useSettingsStore((s) => s.setLyricAlignPosition)
   const setLyricEnableSpring = useSettingsStore((s) => s.setLyricEnableSpring)
@@ -46,10 +45,7 @@ export function AppearanceSection() {
         <Separator className="mt-2 mb-4" />
 
         <SettingRow label="帧率" description="更高帧率更流畅，但消耗更多性能">
-          <Select
-            value={String(bgFps)}
-            onValueChange={(v) => setBgFps(parseInt(v, 10))}
-          >
+          <Select value={String(bgFps)} onValueChange={(v) => setBgFps(parseInt(v, 10))}>
             <SelectTrigger className="w-24">
               <SelectValue />
             </SelectTrigger>
@@ -61,10 +57,7 @@ export function AppearanceSection() {
           </Select>
         </SettingRow>
 
-        <SettingRow
-          label="流动速度"
-          description={`当前: ${bgFlowSpeed.toFixed(1)}`}
-        >
+        <SettingRow label="流动速度" description={`当前: ${bgFlowSpeed.toFixed(1)}`}>
           <Slider
             value={[bgFlowSpeed * 10]}
             min={5}
@@ -76,10 +69,7 @@ export function AppearanceSection() {
         </SettingRow>
 
         <SettingRow label="渲染精度" description="更低精度更省性能">
-          <Select
-            value={String(bgRenderScale)}
-            onValueChange={(v) => setBgRenderScale(parseFloat(v))}
-          >
+          <Select value={String(bgRenderScale)} onValueChange={(v) => setBgRenderScale(parseFloat(v))}>
             <SelectTrigger className="w-24">
               <SelectValue />
             </SelectTrigger>
@@ -93,18 +83,37 @@ export function AppearanceSection() {
         </SettingRow>
       </div>
 
+      {/* ---- Lyrics: Source ---- */}
+      <div>
+        <h3 className="text-base font-semibold">歌词源</h3>
+        <Separator className="mt-2 mb-4" />
+
+        <SettingRow label="TTML 在线逐词歌词" description="启用 AMLL 逐词歌词库（仅网易云/QQ音乐）">
+          <Switch checked={ttmlEnabled} onCheckedChange={setTtmlEnabled} />
+        </SettingRow>
+
+        {ttmlEnabled && (
+          <SettingRow
+            label="TTML 歌词库地址"
+            description="URL 模板，%s 会被替换为歌曲 ID，QQ 音乐自动替换 ncm-lyrics 为 qq-lyrics"
+          >
+            <Input
+              value={ttmlDbUrl}
+              onChange={(e) => setTtmlDbUrl(e.target.value)}
+              placeholder="https://amlldb.bikonoo.com/ncm-lyrics/%s.ttml"
+              className="w-64 text-xs"
+            />
+          </SettingRow>
+        )}
+      </div>
+
       {/* ---- Lyrics: Layout ---- */}
       <div>
         <h3 className="text-base font-semibold">歌词布局</h3>
         <Separator className="mt-2 mb-4" />
 
         <SettingRow label="对齐锚点" description="当前歌词行在视口中的锚定方式">
-          <Select
-            value={lyricAlignAnchor}
-            onValueChange={(v) =>
-              setLyricAlignAnchor(v as 'top' | 'center' | 'bottom')
-            }
-          >
+          <Select value={lyricAlignAnchor} onValueChange={(v) => setLyricAlignAnchor(v as 'top' | 'center' | 'bottom')}>
             <SelectTrigger className="w-28">
               <SelectValue />
             </SelectTrigger>
@@ -116,10 +125,7 @@ export function AppearanceSection() {
           </Select>
         </SettingRow>
 
-        <SettingRow
-          label="对齐位置"
-          description={`当前: ${Math.round(lyricAlignPosition * 100)}%`}
-        >
+        <SettingRow label="对齐位置" description={`当前: ${Math.round(lyricAlignPosition * 100)}%`}>
           <Slider
             value={[lyricAlignPosition * 100]}
             min={0}
@@ -137,24 +143,15 @@ export function AppearanceSection() {
         <Separator className="mt-2 mb-4" />
 
         <SettingRow label="弹簧动画" description="歌词行切换时的弹簧物理效果">
-          <Switch
-            checked={lyricEnableSpring}
-            onCheckedChange={setLyricEnableSpring}
-          />
+          <Switch checked={lyricEnableSpring} onCheckedChange={setLyricEnableSpring} />
         </SettingRow>
 
         <SettingRow label="模糊效果" description="非当前行歌词模糊">
-          <Switch
-            checked={lyricEnableBlur}
-            onCheckedChange={setLyricEnableBlur}
-          />
+          <Switch checked={lyricEnableBlur} onCheckedChange={setLyricEnableBlur} />
         </SettingRow>
 
         <SettingRow label="缩放效果" description="当前行歌词放大突出显示">
-          <Switch
-            checked={lyricEnableScale}
-            onCheckedChange={setLyricEnableScale}
-          />
+          <Switch checked={lyricEnableScale} onCheckedChange={setLyricEnableScale} />
         </SettingRow>
       </div>
 
@@ -164,10 +161,7 @@ export function AppearanceSection() {
         <Separator className="mt-2 mb-4" />
 
         <SettingRow label="字体粗细">
-          <Select
-            value={String(lyricFontWeight)}
-            onValueChange={(v) => setLyricFontWeight(parseInt(v, 10))}
-          >
+          <Select value={String(lyricFontWeight)} onValueChange={(v) => setLyricFontWeight(parseInt(v, 10))}>
             <SelectTrigger className="w-28">
               <SelectValue />
             </SelectTrigger>
@@ -181,10 +175,7 @@ export function AppearanceSection() {
         </SettingRow>
 
         <SettingRow label="字体大小">
-          <Select
-            value={String(lyricFontSize)}
-            onValueChange={(v) => setLyricFontSize(parseInt(v, 10))}
-          >
+          <Select value={String(lyricFontSize)} onValueChange={(v) => setLyricFontSize(parseInt(v, 10))}>
             <SelectTrigger className="w-28">
               <SelectValue />
             </SelectTrigger>

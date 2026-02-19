@@ -13,9 +13,5 @@ export function AbilityProvider({ children }: { children: ReactNode }) {
   const role = useRoomStore((s) => s.currentUser?.role ?? 'member')
   const ability = useMemo(() => defineAbilityFor(role), [role])
 
-  return (
-    <AbilityContext.Provider value={ability}>
-      {children}
-    </AbilityContext.Provider>
-  )
+  return <AbilityContext.Provider value={ability}>{children}</AbilityContext.Provider>
 }

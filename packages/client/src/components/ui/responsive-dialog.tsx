@@ -74,7 +74,7 @@ function ResponsiveDialogContent({
   const isMobile = useIsResponsiveMobile()
 
   if (isMobile) {
-    return <DrawerContent>{children}</DrawerContent>
+    return <DrawerContent className={className}>{children}</DrawerContent>
   }
 
   return (
@@ -88,10 +88,7 @@ function ResponsiveDialogContent({
 // Header
 // ---------------------------------------------------------------------------
 
-function ResponsiveDialogHeader({
-  className,
-  ...props
-}: React.ComponentProps<'div'>) {
+function ResponsiveDialogHeader({ className, ...props }: React.ComponentProps<'div'>) {
   const isMobile = useIsResponsiveMobile()
   return isMobile ? (
     <DrawerHeader className={cn('text-left', className)} {...props} />
@@ -104,26 +101,16 @@ function ResponsiveDialogHeader({
 // Title
 // ---------------------------------------------------------------------------
 
-function ResponsiveDialogTitle({
-  className,
-  ...props
-}: React.ComponentProps<typeof DialogTitle>) {
+function ResponsiveDialogTitle({ className, ...props }: React.ComponentProps<typeof DialogTitle>) {
   const isMobile = useIsResponsiveMobile()
-  return isMobile ? (
-    <DrawerTitle className={className} {...props} />
-  ) : (
-    <DialogTitle className={className} {...props} />
-  )
+  return isMobile ? <DrawerTitle className={className} {...props} /> : <DialogTitle className={className} {...props} />
 }
 
 // ---------------------------------------------------------------------------
 // Description
 // ---------------------------------------------------------------------------
 
-function ResponsiveDialogDescription({
-  className,
-  ...props
-}: React.ComponentProps<typeof DialogDescription>) {
+function ResponsiveDialogDescription({ className, ...props }: React.ComponentProps<typeof DialogDescription>) {
   const isMobile = useIsResponsiveMobile()
   return isMobile ? (
     <DrawerDescription className={className} {...props} />
@@ -136,10 +123,7 @@ function ResponsiveDialogDescription({
 // Footer
 // ---------------------------------------------------------------------------
 
-function ResponsiveDialogFooter({
-  className,
-  ...props
-}: React.ComponentProps<'div'>) {
+function ResponsiveDialogFooter({ className, ...props }: React.ComponentProps<'div'>) {
   const isMobile = useIsResponsiveMobile()
   return isMobile ? (
     <DrawerFooter className={className} {...props} />
@@ -152,9 +136,7 @@ function ResponsiveDialogFooter({
 // Close
 // ---------------------------------------------------------------------------
 
-function ResponsiveDialogClose(
-  props: React.ComponentProps<typeof DialogClose>,
-) {
+function ResponsiveDialogClose(props: React.ComponentProps<typeof DialogClose>) {
   const isMobile = useIsResponsiveMobile()
   return isMobile ? <DrawerClose {...props} /> : <DialogClose {...props} />
 }
@@ -165,10 +147,7 @@ function ResponsiveDialogClose(
 // DialogContent already supplies p-6.
 // ---------------------------------------------------------------------------
 
-function ResponsiveDialogBody({
-  className,
-  ...props
-}: React.ComponentProps<'div'>) {
+function ResponsiveDialogBody({ className, ...props }: React.ComponentProps<'div'>) {
   const isMobile = useIsResponsiveMobile()
   return <div className={cn(isMobile && 'overflow-y-auto px-4 pb-4', className)} {...props} />
 }

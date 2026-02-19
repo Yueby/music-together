@@ -29,9 +29,7 @@ export const RoomCard = memo(function RoomCard({ room, index, onClick }: RoomCar
       {/* Room name row */}
       <div className="flex items-start justify-between">
         <div className="min-w-0 flex-1">
-          <h3 className="truncate text-base font-semibold text-foreground">
-            {room.name}
-          </h3>
+          <h3 className="truncate text-base font-semibold text-foreground">{room.name}</h3>
           {room.currentTrackTitle && (
             <p className="mt-1 flex items-center gap-1.5 truncate text-xs text-muted-foreground">
               <Music className="h-3 w-3 shrink-0 text-primary" />
@@ -53,12 +51,16 @@ export const RoomCard = memo(function RoomCard({ room, index, onClick }: RoomCar
                   key={i}
                   className="w-0.5 rounded-full bg-primary/40"
                   animate={prefersReducedMotion ? { height: 8 } : { height: [4, 12, 6, 10, 4] }}
-                  transition={prefersReducedMotion ? {} : {
-                    duration: 1.2,
-                    repeat: Infinity,
-                    delay: i * 0.15,
-                    ease: 'easeInOut',
-                  }}
+                  transition={
+                    prefersReducedMotion
+                      ? {}
+                      : {
+                          duration: 1.2,
+                          repeat: Infinity,
+                          delay: i * 0.15,
+                          ease: 'easeInOut',
+                        }
+                  }
                 />
               ))}
             </div>
@@ -77,9 +79,7 @@ export const RoomCard = memo(function RoomCard({ room, index, onClick }: RoomCar
           <Users className="h-3 w-3" />
           {room.userCount}
         </span>
-        <span className="text-xs text-muted-foreground/50">
-          {room.id}
-        </span>
+        <span className="text-xs text-muted-foreground/50">{room.id}</span>
       </div>
     </motion.button>
   )

@@ -28,9 +28,7 @@ export default function NotFoundPage() {
         </motion.div>
         <h1 className="text-4xl font-bold text-muted-foreground/30 sm:text-6xl">404</h1>
         <p className="text-lg text-muted-foreground/60">页面不存在</p>
-        <Button
-          onClick={() => navigate('/', { replace: true })}
-        >
+        <Button onClick={() => navigate('/', { replace: true })}>
           <Home className="mr-2 h-4 w-4" />
           返回首页
         </Button>

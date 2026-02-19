@@ -1,10 +1,4 @@
-import {
-  Select,
-  SelectContent,
-  SelectItem,
-  SelectTrigger,
-  SelectValue,
-} from '@/components/ui/select'
+import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@/components/ui/select'
 import { Separator } from '@/components/ui/separator'
 import { Slider } from '@/components/ui/slider'
 import { useSettingsStore } from '@/stores/settingsStore'
@@ -25,10 +19,7 @@ export function OtherSettingsSection() {
         <Separator className="mt-2 mb-4" />
 
         <SettingRow label="帧率" description="更高帧率更流畅，但消耗更多性能">
-          <Select
-            value={String(bgFps)}
-            onValueChange={(v) => setBgFps(parseInt(v, 10))}
-          >
+          <Select value={String(bgFps)} onValueChange={(v) => setBgFps(parseInt(v, 10))}>
             <SelectTrigger className="w-24">
               <SelectValue />
             </SelectTrigger>
@@ -40,10 +31,7 @@ export function OtherSettingsSection() {
           </Select>
         </SettingRow>
 
-        <SettingRow
-          label="流动速度"
-          description={`当前: ${bgFlowSpeed.toFixed(1)}`}
-        >
+        <SettingRow label="流动速度" description={`当前: ${bgFlowSpeed.toFixed(1)}`}>
           <Slider
             value={[bgFlowSpeed * 10]}
             min={5}
@@ -55,10 +43,7 @@ export function OtherSettingsSection() {
         </SettingRow>
 
         <SettingRow label="渲染精度" description="更低精度更省性能">
-          <Select
-            value={String(bgRenderScale)}
-            onValueChange={(v) => setBgRenderScale(parseFloat(v))}
-          >
+          <Select value={String(bgRenderScale)} onValueChange={(v) => setBgRenderScale(parseFloat(v))}>
             <SelectTrigger className="w-24">
               <SelectValue />
             </SelectTrigger>

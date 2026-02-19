@@ -86,7 +86,7 @@ export const storage = {
 
   // Lyric settings
   getLyricAlignAnchor: () => safeEnum('lyricAlignAnchor', LYRIC_ANCHORS, 'center'),
-  setLyricAlignAnchor: (v: typeof LYRIC_ANCHORS[number]) => safeSet('lyricAlignAnchor', v),
+  setLyricAlignAnchor: (v: (typeof LYRIC_ANCHORS)[number]) => safeSet('lyricAlignAnchor', v),
 
   getLyricAlignPosition: () => {
     const pos = safeFloat('lyricAlignPosition', 0.4)
@@ -121,6 +121,13 @@ export const storage = {
   },
   setLyricTranslationFontSize: (v: number) => safeSet('lyricTranslationFontSize', String(v)),
 
+  // TTML 在线逐词歌词
+  getTtmlEnabled: () => safeGet('ttmlEnabled') !== 'false', // 默认开启
+  setTtmlEnabled: (v: boolean) => safeSet('ttmlEnabled', String(v)),
+
+  getTtmlDbUrl: () => safeGet('ttmlDbUrl') || 'https://amlldb.bikonoo.com/ncm-lyrics/%s.ttml',
+  setTtmlDbUrl: (v: string) => safeSet('ttmlDbUrl', v),
+
   // Background settings
   getBgFps: () => {
     const fps = safeInt('bgFps', 30)
@@ -145,17 +152,13 @@ export const storage = {
   setAuthCookies: (cookies: StoredCookie[]) => safeSetJSON('auth-cookies', cookies),
 
   upsertAuthCookie: (platform: MusicSource, cookie: string) => {
-    const list = (safeGetJSON<StoredCookie[]>('auth-cookies') ?? []).filter(
-      (c) => c.platform !== platform,
-    )
+    const list = (safeGetJSON<StoredCookie[]>('auth-cookies') ?? []).filter((c) => c.platform !== platform)
     list.push({ platform, cookie })
     safeSetJSON('auth-cookies', list)
   },
 
   removeAuthCookie: (platform: MusicSource) => {
-    const list = (safeGetJSON<StoredCookie[]>('auth-cookies') ?? []).filter(
-      (c) => c.platform !== platform,
-    )
+    const list = (safeGetJSON<StoredCookie[]>('auth-cookies') ?? []).filter((c) => c.platform !== platform)
     safeSetJSON('auth-cookies', list)
   },
 

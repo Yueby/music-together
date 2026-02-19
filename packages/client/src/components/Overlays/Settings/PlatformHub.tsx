@@ -12,9 +12,7 @@ import { QrLoginDialog } from './QrLoginDialog'
 import { PlaylistDetail } from './PlaylistDetail'
 import { PlaylistSection } from './PlaylistSection'
 
-type ViewState =
-  | { type: 'list' }
-  | { type: 'detail'; playlist: Playlist; source: MusicSource }
+type ViewState = { type: 'list' } | { type: 'detail'; playlist: Playlist; source: MusicSource }
 
 export function PlatformHub() {
   const auth = useAuth()
@@ -26,7 +24,7 @@ export function PlatformHub() {
   const [cookieDialogPlatform, setCookieDialogPlatform] = useState<MusicSource>('netease')
   const [viewState, setViewState] = useState<ViewState>({ type: 'list' })
 
-  const platforms: MusicSource[] = ['netease', 'tencent', 'kugou']
+  const platforms: MusicSource[] = ['netease', 'kugou', 'tencent']
 
   // Show "verifying…" only while waiting for the first AUTH_MY_STATUS response.
   // Once the server responds, use the actual status — no more guessing from localStorage.
@@ -45,13 +43,10 @@ export function PlatformHub() {
     setQrDialogOpen(true)
   }, [auth, activePlatform])
 
-  const handleCookieLogin = useCallback(
-    (platform: MusicSource) => {
-      setCookieDialogPlatform(platform)
-      setCookieDialogOpen(true)
-    },
-    [],
-  )
+  const handleCookieLogin = useCallback((platform: MusicSource) => {
+    setCookieDialogPlatform(platform)
+    setCookieDialogOpen(true)
+  }, [])
 
   const handleCookieSubmit = useCallback(
     (cookie: string) => {
@@ -115,9 +110,7 @@ export function PlatformHub() {
     <div className="flex h-full min-h-0 min-w-0 flex-col overflow-hidden">
       <div className="shrink-0">
         <h3 className="pr-8 text-base font-semibold">平台账号 & 歌单</h3>
-        <p className="text-muted-foreground mb-3 text-xs">
-          登录后可浏览个人歌单，或直接输入歌单链接/ID 导入歌曲
-        </p>
+        <p className="text-muted-foreground mb-3 text-xs">登录后可浏览个人歌单，或直接输入歌单链接/ID 导入歌曲</p>
       </div>
 
       <div className="min-h-0 min-w-0 flex-1 overflow-y-auto overflow-x-hidden">
@@ -128,7 +121,12 @@ export function PlatformHub() {
         >
           <TabsList className="grid w-full grid-cols-3">
             {platforms.map((p) => (
-              <TabsTrigger key={p} value={p} className={PLATFORM_COLORS[p]}>
+              <TabsTrigger
+                key={p}
+                value={p}
+                className={PLATFORM_COLORS[p]}
+                disabled={p === 'tencent'}
+              >
                 {PLATFORM_SHORT_LABELS[p]}
               </TabsTrigger>
             ))}

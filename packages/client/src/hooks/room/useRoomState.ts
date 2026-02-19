@@ -58,9 +58,7 @@ export function useRoomState() {
       const store = useRoomStore.getState()
       const room = store.room
       if (!room) return
-      const updatedUsers = room.users.map((u) =>
-        u.id === data.userId ? { ...u, role: data.role } : u,
-      )
+      const updatedUsers = room.users.map((u) => (u.id === data.userId ? { ...u, role: data.role } : u))
       // updateRoom with users automatically re-derives currentUser
       store.updateRoom({ users: updatedUsers })
     }

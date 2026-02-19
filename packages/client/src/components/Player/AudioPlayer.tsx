@@ -1,12 +1,13 @@
 import { useContainerPortrait } from '@/hooks/useContainerPortrait'
 import { useCoverWidth } from '@/hooks/useCoverWidth'
 import { useVote } from '@/hooks/useVote'
+import { SERVER_URL } from '@/lib/config'
 import { cn } from '@/lib/utils'
 import { usePlayerStore } from '@/stores/playerStore'
 import { useSettingsStore } from '@/stores/settingsStore'
 import { BackgroundRender } from '@applemusic-like-lyrics/react'
 import { AnimatePresence, LayoutGroup, motion } from 'motion/react'
-import { useCallback, useState } from 'react'
+import { useCallback, useMemo, useState } from 'react'
 import { VoteBanner } from '../Vote/VoteBanner'
 import { LyricDisplay } from './LyricDisplay'
 import { NowPlaying } from './NowPlaying'
@@ -20,6 +21,30 @@ const LYRIC_MASK_STYLE = {
   WebkitMaskImage: 'linear-gradient(to bottom, transparent 0%, black 8%, black 92%, transparent 100%)',
 } as const
 
+/**
+ * 需要通过服务端代理的封面域名列表
+ * 这些 CDN 不允许跨域请求，AMLL 的 WebGL 纹理加载会被 CORS 拦截
+ */
+const PROXY_COVER_HOSTS = [
+  'y.gtimg.cn',        // QQ 音乐
+  'imgessl.kugou.com', // 酷狗
+]
+
+/**
+ * 如果封面 URL 属于需要代理的域名，则返回服务端代理 URL；否则原样返回
+ */
+function getProxiedCoverUrl(coverUrl: string): string {
+  try {
+    const { hostname } = new URL(coverUrl)
+    if (PROXY_COVER_HOSTS.includes(hostname)) {
+      return `${SERVER_URL}/api/music/cover-proxy?url=${encodeURIComponent(coverUrl)}`
+    }
+  } catch {
+    // URL 解析失败，原样返回
+  }
+  return coverUrl
+}
+
 interface AudioPlayerProps {
   onPlay: () => void
   onPause: () => void
@@ -31,13 +56,28 @@ interface AudioPlayerProps {
   chatUnreadCount: number
 }
 
-export function AudioPlayer({ onPlay, onPause, onSeek, onNext, onPrev, onOpenChat, onOpenQueue, chatUnreadCount }: AudioPlayerProps) {
+export function AudioPlayer({
+  onPlay,
+  onPause,
+  onSeek,
+  onNext,
+  onPrev,
+  onOpenChat,
+  onOpenQueue,
+  chatUnreadCount,
+}: AudioPlayerProps) {
   const currentTrack = usePlayerStore((s) => s.currentTrack)
   const { activeVote, castVote, startVote } = useVote()
   const bgFps = useSettingsStore((s) => s.bgFps)
   const bgFlowSpeed = useSettingsStore((s) => s.bgFlowSpeed)
   const bgRenderScale = useSettingsStore((s) => s.bgRenderScale)
   const { ref: playerRef, isPortrait } = useContainerPortrait()
+
+  // 封面 URL 代理：解决 QQ 音乐 / 酷狗等 CDN 的 CORS 限制
+  const proxiedCover = useMemo(
+    () => (currentTrack?.cover ? getProxiedCoverUrl(currentTrack.cover) : undefined),
+    [currentTrack?.cover],
+  )
 
   // Mobile: toggle between cover view and lyric view
   const [lyricExpanded, setLyricExpanded] = useState(false)
@@ -51,7 +91,11 @@ export function AudioPlayer({ onPlay, onPause, onSeek, onNext, onPrev, onOpenCha
   const coverMaxStyleUnlessExpanded = lyricExpanded ? undefined : coverMaxStyle
 
   const playerControlsProps = {
-    onPlay, onPause, onSeek, onNext, onPrev,
+    onPlay,
+    onPause,
+    onSeek,
+    onNext,
+    onPrev,
     onOpenQueue,
     onStartVote: startVote,
   } as const
@@ -64,10 +108,10 @@ export function AudioPlayer({ onPlay, onPause, onSeek, onNext, onPrev, onOpenCha
   return (
     <div className="relative flex h-full flex-col overflow-hidden">
       {/* AMLL fluid dynamic background powered by pixi.js */}
-      {currentTrack?.cover && (
+      {proxiedCover && (
         <div className="pointer-events-none absolute inset-0 z-0 opacity-80 saturate-[1.3]">
           <BackgroundRender
-            album={currentTrack.cover}
+            album={proxiedCover}
             playing
             fps={bgFps}
             flowSpeed={bgFlowSpeed}
@@ -79,8 +123,10 @@ export function AudioPlayer({ onPlay, onPause, onSeek, onNext, onPrev, onOpenCha
 
       {/* Content with padding */}
       <div className="relative z-10 h-full p-5 md:p-[5%] lg:p-[5%]">
-        <div ref={playerRef} className={cn('flex h-full', isPortrait ? 'flex-col' : 'flex-row gap-[clamp(24px,3vw,48px)]')}>
-
+        <div
+          ref={playerRef}
+          className={cn('flex h-full', isPortrait ? 'flex-col' : 'flex-row gap-[clamp(24px,3vw,48px)]')}
+        >
           {/* ----------------------------------------------------------------- */}
           {/* Mobile layout: dual-mode (cover view / lyric view)                */}
           {/* ----------------------------------------------------------------- */}
@@ -91,7 +137,7 @@ export function AudioPlayer({ onPlay, onPause, onSeek, onNext, onPrev, onOpenCha
                 <div
                   ref={coverAreaRef}
                   className={cn('w-full', !lyricExpanded && 'flex-1 min-h-0 flex items-center justify-center')}
-                  style={!lyricExpanded ? { containerType: 'size' } as React.CSSProperties : undefined}
+                  style={!lyricExpanded ? ({ containerType: 'size' } as React.CSSProperties) : undefined}
                 >
                   <NowPlaying compact={lyricExpanded} onCoverClick={toggleLyricView} />
                 </div>
@@ -138,9 +184,9 @@ export function AudioPlayer({ onPlay, onPause, onSeek, onNext, onPrev, onOpenCha
             // Desktop layout: left panel (cover + info + controls) + right lyrics
             // ---------------------------------------------------------------
             <>
-              <div className="relative flex w-[36%] flex-col items-center gap-[clamp(16px,3vh,40px)] lg:w-[33%]">
+              <div className="relative flex w-[36%] flex-col items-center gap-[clamp(12px,3vh,32px)] lg:w-[33%]">
                 {/* 1. Cover — flex-1 fills remaining space, centered */}
-                <div ref={coverAreaRef} className="min-h-0 w-full flex-1" style={{ containerType: 'size' }}>
+                <div ref={coverAreaRef} className="min-h-0 w-full flex-1 flex items-center justify-center" style={{ containerType: 'size' }}>
                   <NowPlaying />
                 </div>
                 {/* 2. Song info + action buttons */}
@@ -159,15 +205,11 @@ export function AudioPlayer({ onPlay, onPause, onSeek, onNext, onPrev, onOpenCha
                   </div>
                 )}
               </div>
-              <div
-                className="min-h-0 w-full flex-1 overflow-hidden"
-                style={LYRIC_MASK_STYLE}
-              >
+              <div className="min-h-0 w-full flex-1 overflow-hidden" style={LYRIC_MASK_STYLE}>
                 <LyricDisplay />
               </div>
             </>
           )}
-
         </div>
       </div>
     </div>

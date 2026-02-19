@@ -19,12 +19,7 @@ export const roomJoinSchema = z.object({
   userId: z.string().min(1).max(50).optional(),
 })
 
-export const audioQualitySchema = z.union([
-  z.literal(128),
-  z.literal(192),
-  z.literal(320),
-  z.literal(999),
-])
+export const audioQualitySchema = z.union([z.literal(128), z.literal(192), z.literal(320), z.literal(999)])
 
 export const roomSettingsSchema = z.object({
   name: z.string().min(1).max(LIMITS.ROOM_NAME_MAX_LENGTH).optional(),
@@ -47,6 +42,7 @@ export const playerSeekSchema = z.object({
 
 export const playerSyncSchema = z.object({
   currentTime: z.number().finite().nonnegative(),
+  hostServerTime: z.number().finite().positive().optional(),
 })
 
 export const playerSetModeSchema = z.object({

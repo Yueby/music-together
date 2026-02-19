@@ -31,7 +31,10 @@ export function RoomHeader({ onOpenSearch, onOpenSettings, onOpenMembers, onLeav
   // Poll RTT from clockSync module every 3s
   const [rtt, setRtt] = useState(0)
   useEffect(() => {
-    if (!isConnected) { setRtt(0); return }
+    if (!isConnected) {
+      setRtt(0)
+      return
+    }
     setRtt(getMedianRTT())
     const timer = setInterval(() => setRtt(getMedianRTT()), 3000)
     return () => clearInterval(timer)
@@ -98,17 +101,18 @@ export function RoomHeader({ onOpenSearch, onOpenSettings, onOpenMembers, onLeav
         {/* Connection status + RTT indicator */}
         <Tooltip>
           <TooltipTrigger asChild>
-            <span className="flex items-center gap-1" role="status" aria-live="polite" aria-label={isConnected ? `已连接 · 延迟 ${Math.round(rtt)}ms` : '连接断开，正在重连'}>
+            <span
+              className="flex items-center gap-1"
+              role="status"
+              aria-live="polite"
+              aria-label={isConnected ? `已连接 · 延迟 ${Math.round(rtt)}ms` : '连接断开，正在重连'}
+            >
               {isConnected ? (
                 <Wifi className={`h-4 w-4 ${rttColor}`} />
               ) : (
                 <WifiOff className="h-4 w-4 animate-pulse text-destructive" />
               )}
-              {isConnected && (
-                <span className={`font-mono text-xs tabular-nums ${rttColor}`}>
-                  {Math.round(rtt)}ms
-                </span>
-              )}
+              {isConnected && <span className={`font-mono text-xs tabular-nums ${rttColor}`}>{Math.round(rtt)}ms</span>}
             </span>
           </TooltipTrigger>
           <TooltipContent>
@@ -120,7 +124,13 @@ export function RoomHeader({ onOpenSearch, onOpenSettings, onOpenMembers, onLeav
       <div className="flex items-center gap-0.5 sm:gap-1">
         <Tooltip>
           <TooltipTrigger asChild>
-            <Button variant="ghost" size="icon" className="h-8 w-8 min-h-11 min-w-11 sm:min-h-0 sm:min-w-0" onClick={onOpenSearch} aria-label="搜索点歌">
+            <Button
+              variant="ghost"
+              size="icon"
+              className="h-8 w-8 min-h-11 min-w-11 sm:min-h-0 sm:min-w-0"
+              onClick={onOpenSearch}
+              aria-label="搜索点歌"
+            >
               <Search className="h-4 w-4" />
             </Button>
           </TooltipTrigger>
@@ -130,7 +140,13 @@ export function RoomHeader({ onOpenSearch, onOpenSettings, onOpenMembers, onLeav
         {/* Desktop: inline settings & leave buttons */}
         <Tooltip>
           <TooltipTrigger asChild>
-            <Button variant="ghost" size="icon" className="hidden h-8 w-8 min-h-11 min-w-11 sm:flex sm:min-h-0 sm:min-w-0" onClick={onOpenSettings} aria-label="设置">
+            <Button
+              variant="ghost"
+              size="icon"
+              className="hidden h-8 w-8 min-h-11 min-w-11 sm:flex sm:min-h-0 sm:min-w-0"
+              onClick={onOpenSettings}
+              aria-label="设置"
+            >
               <Settings className="h-4 w-4" />
             </Button>
           </TooltipTrigger>
@@ -139,7 +155,13 @@ export function RoomHeader({ onOpenSearch, onOpenSettings, onOpenMembers, onLeav
 
         <Tooltip>
           <TooltipTrigger asChild>
-            <Button variant="ghost" size="icon" className="hidden h-8 w-8 min-h-11 min-w-11 sm:flex sm:min-h-0 sm:min-w-0" onClick={onLeaveRoom} aria-label="离开房间">
+            <Button
+              variant="ghost"
+              size="icon"
+              className="hidden h-8 w-8 min-h-11 min-w-11 sm:flex sm:min-h-0 sm:min-w-0"
+              onClick={onLeaveRoom}
+              aria-label="离开房间"
+            >
               <LogOut className="h-4 w-4" />
             </Button>
           </TooltipTrigger>
@@ -149,7 +171,12 @@ export function RoomHeader({ onOpenSearch, onOpenSettings, onOpenMembers, onLeav
         {/* Mobile: dropdown menu */}
         <DropdownMenu>
           <DropdownMenuTrigger asChild>
-            <Button variant="ghost" size="icon" className="h-8 w-8 min-h-11 min-w-11 sm:hidden sm:min-h-0 sm:min-w-0" aria-label="更多操作">
+            <Button
+              variant="ghost"
+              size="icon"
+              className="h-8 w-8 min-h-11 min-w-11 sm:hidden sm:min-h-0 sm:min-w-0"
+              aria-label="更多操作"
+            >
               <Ellipsis className="h-4 w-4" />
             </Button>
           </DropdownMenuTrigger>
@@ -163,10 +190,7 @@ export function RoomHeader({ onOpenSearch, onOpenSettings, onOpenMembers, onLeav
               <Copy className="mr-2 h-4 w-4" />
               复制房间号
             </DropdownMenuItem>
-            <DropdownMenuItem
-              className="text-destructive focus:text-destructive"
-              onClick={onLeaveRoom}
-            >
+            <DropdownMenuItem className="text-destructive focus:text-destructive" onClick={onLeaveRoom}>
               <LogOut className="mr-2 h-4 w-4" />
               离开房间
             </DropdownMenuItem>

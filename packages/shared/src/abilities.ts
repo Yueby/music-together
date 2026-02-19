@@ -2,9 +2,18 @@ import { PureAbility, AbilityBuilder } from '@casl/ability'
 import type { UserRole } from './types.js'
 
 export type Actions =
-  | 'play' | 'pause' | 'seek' | 'next' | 'prev' | 'set-mode'
-  | 'add' | 'remove' | 'reorder'
-  | 'manage' | 'vote' | 'set-role'
+  | 'play'
+  | 'pause'
+  | 'seek'
+  | 'next'
+  | 'prev'
+  | 'set-mode'
+  | 'add'
+  | 'remove'
+  | 'reorder'
+  | 'manage'
+  | 'vote'
+  | 'set-role'
 
 export type Subjects = 'Player' | 'Queue' | 'Room' | 'all'
 

@@ -3,6 +3,8 @@ import { storage } from '@/lib/storage'
 
 interface SettingsStore {
   // AMLL Lyrics
+  ttmlEnabled: boolean
+  ttmlDbUrl: string
   lyricAlignAnchor: 'top' | 'center' | 'bottom'
   lyricAlignPosition: number
   lyricEnableSpring: boolean
@@ -18,6 +20,8 @@ interface SettingsStore {
   bgRenderScale: number
 
   // Setters
+  setTtmlEnabled: (v: boolean) => void
+  setTtmlDbUrl: (v: string) => void
   setLyricAlignAnchor: (v: 'top' | 'center' | 'bottom') => void
   setLyricAlignPosition: (v: number) => void
   setLyricEnableSpring: (v: boolean) => void
@@ -33,6 +37,8 @@ interface SettingsStore {
 
 export const useSettingsStore = create<SettingsStore>((set) => ({
   // Defaults from localStorage
+  ttmlEnabled: storage.getTtmlEnabled(),
+  ttmlDbUrl: storage.getTtmlDbUrl(),
   lyricAlignAnchor: storage.getLyricAlignAnchor(),
   lyricAlignPosition: storage.getLyricAlignPosition(),
   lyricEnableSpring: storage.getLyricEnableSpring(),
@@ -47,6 +53,14 @@ export const useSettingsStore = create<SettingsStore>((set) => ({
   bgRenderScale: storage.getBgRenderScale(),
 
   // Setters (persist + update state)
+  setTtmlEnabled: (v) => {
+    storage.setTtmlEnabled(v)
+    set({ ttmlEnabled: v })
+  },
+  setTtmlDbUrl: (v) => {
+    storage.setTtmlDbUrl(v)
+    set({ ttmlDbUrl: v })
+  },
   setLyricAlignAnchor: (v) => {
     storage.setLyricAlignAnchor(v)
     set({ lyricAlignAnchor: v })

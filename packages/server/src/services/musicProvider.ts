@@ -1,4 +1,6 @@
 import Meting from '@meting/core'
+import { get as kugouLrcGet, Format } from '@s4p/kugou-lrc'
+import type { KrcInfo } from '@s4p/kugou-lrc'
 import type { MusicSource, Track } from '@music-together/shared'
 import { LRUCache } from 'lru-cache'
 import { nanoid } from 'nanoid'
@@ -6,6 +8,53 @@ import pLimit from 'p-limit'
 import { ncmApi } from './neteaseAuthService.js'
 import * as kugouAuth from './kugouAuthService.js'
 import { logger } from '../utils/logger.js'
+
+/** AMLL LyricLine 格式（与 @applemusic-like-lyrics/core 一致，避免引入 client 依赖） */
+interface AmllLyricLine {
+  words: Array<{ word: string; startTime: number; endTime: number; romanWord: string; obscene: boolean }>
+  translatedLyric: string
+  romanLyric: string
+  startTime: number
+  endTime: number
+  isBG: boolean
+  isDuet: boolean
+}
+
+/** 将 KRC 解析结果转为 AMLL LyricLine 格式 */
+function krcToAmllLines(krcInfo: KrcInfo): AmllLyricLine[] {
+  if (!krcInfo.items?.length) return []
+  return krcInfo.items.map((line) => {
+    if (!line.length) {
+      return {
+        words: [],
+        translatedLyric: '',
+        romanLyric: '',
+        startTime: 0,
+        endTime: 0,
+        isBG: false,
+        isDuet: false,
+      }
+    }
+    const words = line.map((w) => ({
+      word: w.word,
+      startTime: Math.round(w.offset * 1000),
+      endTime: Math.round((w.offset + w.duration) * 1000),
+      romanWord: '',
+      obscene: false,
+    }))
+    const first = words[0]!
+    const last = words[words.length - 1]!
+    return {
+      words,
+      translatedLyric: '',
+      romanLyric: '',
+      startTime: first.startTime,
+      endTime: last.endTime,
+      isBG: false,
+      isDuet: false,
+    }
+  })
+}
 
 // ---------------------------------------------------------------------------
 // Meting instance type (library has no TS declarations)
@@ -98,7 +147,13 @@ class MusicProvider {
   // Layer 3: Resource Caches — scalar values for stream URLs, covers, lyrics.
   private streamUrlCache = new LRUCache<string, string>({ max: 500, ttl: 1 * HOUR })
   private coverCache = new LRUCache<string, string>({ max: 1000, ttl: 24 * HOUR })
-  private lyricCache = new LRUCache<string, { lyric: string; tlyric: string }>({ max: 500, ttl: 24 * HOUR })
+  private lyricCache = new LRUCache<
+    string,
+    { lyric: string; tlyric: string; yrc: string; wordByWord?: AmllLyricLine[] }
+  >({
+    max: 500,
+    ttl: 24 * HOUR,
+  })
 
   private getInstance(source: MusicSource): MetingInstance {
     let m = this.instances.get(source)
@@ -269,7 +324,11 @@ class MusicProvider {
         return null
       }
       let data: MetingJson
-      try { data = JSON.parse(raw as string) as MetingJson } catch { return null }
+      try {
+        data = JSON.parse(raw as string) as MetingJson
+      } catch {
+        return null
+      }
       const url = (data.url as string) || null
 
       // Only cache non-cookie & successful results (null = transient failure, retry next time)
@@ -284,7 +343,10 @@ class MusicProvider {
     }
   }
 
-  async getLyric(source: MusicSource, lyricId: string): Promise<{ lyric: string; tlyric: string }> {
+  async getLyric(
+    source: MusicSource,
+    lyricId: string,
+  ): Promise<{ lyric: string; tlyric: string; yrc: string; wordByWord?: AmllLyricLine[] }> {
     const cacheKey = `${source}:${lyricId}`
     const cached = this.lyricCache.get(cacheKey)
     if (cached) {
@@ -292,25 +354,80 @@ class MusicProvider {
       return cached
     }
 
+    const empty = { lyric: '', tlyric: '', yrc: '' as string }
+
     try {
-      const meting = this.getInstance(source)
-      const raw = await withTimeout(meting.lyric(lyricId))
-      if (raw === null || raw === undefined) {
-        logger.warn(`Lyric fetch timeout for ${source}: ${lyricId}`)
-        return { lyric: '', tlyric: '' }
+      let result: { lyric: string; tlyric: string; yrc: string; wordByWord?: AmllLyricLine[] } = {
+        ...empty,
       }
-      let data: MetingJson
-      try { data = JSON.parse(raw as string) as MetingJson } catch { return { lyric: '', tlyric: '' } }
-      const result = {
-        lyric: (data.lyric as string) || '',
-        tlyric: (data.tlyric as string) || '',
+
+      if (source === 'netease') {
+        // 使用 ncmApi.lyric_new 获取包含逐词歌词 (YRC) 的完整响应
+        const res = await withTimeout(ncmApi.lyric_new({ id: lyricId }) as Promise<NcmApiResponse>)
+        if (!res?.body) {
+          logger.warn(`Lyric fetch timeout for ${source}: ${lyricId}`)
+          return empty
+        }
+        const body = res.body as Record<string, Record<string, unknown> | undefined>
+        result = {
+          lyric: (body.lrc?.lyric as string) || '',
+          tlyric: (body.tlyric?.lyric as string) || '',
+          yrc: (body.yrc?.lyric as string) || '',
+        }
+        if (result.yrc) {
+          logger.info(`YRC lyric found for netease:${lyricId}`)
+        }
+      } else if (source === 'kugou') {
+        // 酷狗：Meting 获取 LRC + kugou-lrc 获取 KRC 逐字歌词
+        const meting = this.getInstance(source)
+        const raw = await withTimeout(meting.lyric(lyricId))
+        if (raw === null || raw === undefined) {
+          logger.warn(`Lyric fetch timeout for ${source}: ${lyricId}`)
+          return empty
+        }
+        try {
+          const data = JSON.parse(raw as string) as MetingJson
+          result = {
+            lyric: (data.lyric as string) || '',
+            tlyric: (data.tlyric as string) || '',
+            yrc: '',
+          }
+        } catch {
+          return empty
+        }
+        // 尝试获取 KRC 逐字歌词
+        try {
+          const krcInfo = await withTimeout(kugouLrcGet({ hash: lyricId, fmt: Format.krc }))
+          if (krcInfo?.items?.length) {
+            result.wordByWord = krcToAmllLines(krcInfo)
+            logger.info(`KRC lyric found for kugou:${lyricId}`)
+          }
+        } catch { /* 静默回退到 LRC */ }
+      } else {
+        // QQ 音乐：使用 Meting 默认流程
+        const meting = this.getInstance(source)
+        const raw = await withTimeout(meting.lyric(lyricId))
+        if (raw === null || raw === undefined) {
+          logger.warn(`Lyric fetch timeout for ${source}: ${lyricId}`)
+          return empty
+        }
+        try {
+          const data = JSON.parse(raw as string) as MetingJson
+          result = {
+            lyric: (data.lyric as string) || '',
+            tlyric: (data.tlyric as string) || '',
+            yrc: '',
+          }
+        } catch {
+          return empty
+        }
       }
 
       this.lyricCache.set(cacheKey, result)
       return result
     } catch (err) {
       logger.error(`Get lyric failed for ${source}:`, err)
-      return { lyric: '', tlyric: '' }
+      return empty
     }
   }
 
@@ -329,7 +446,11 @@ class MusicProvider {
         return ''
       }
       let data: MetingJson
-      try { data = JSON.parse(raw as string) as MetingJson } catch { return '' }
+      try {
+        data = JSON.parse(raw as string) as MetingJson
+      } catch {
+        return ''
+      }
       const url = (data.url as string) || ''
 
       this.coverCache.set(cacheKey, url)
@@ -349,15 +470,18 @@ class MusicProvider {
    * Does NOT resolve covers (that's deferred to getPlaylistPage).
    * Returns the full sourceId list and total count.
    */
-  async fetchFullPlaylist(source: MusicSource, playlistId: string, playlistTotal?: number, cookie?: string | null): Promise<{ ids: string[]; total: number }> {
+  async fetchFullPlaylist(
+    source: MusicSource,
+    playlistId: string,
+    playlistTotal?: number,
+    cookie?: string | null,
+  ): Promise<{ ids: string[]; total: number }> {
     const cacheKey = `${source}:${playlistId}`
 
     // Check reference index — verify registry still has all tracks
     const indexed = this.playlistIndex.get(cacheKey)
     if (indexed) {
-      const allPresent = indexed.ids.every(
-        (id) => this.trackRegistry.get(`${indexed.source}:${id}`) !== undefined,
-      )
+      const allPresent = indexed.ids.every((id) => this.trackRegistry.get(`${indexed.source}:${id}`) !== undefined)
       if (allPresent) {
         logger.info(`Playlist index hit: ${source}/${playlistId} (${indexed.ids.length} tracks)`)
         return { ids: indexed.ids, total: indexed.ids.length }
@@ -387,7 +511,12 @@ class MusicProvider {
    * Fetch full Netease playlist via ncmApi.playlist_track_all.
    * No 1000-track limit; returns full song data including duration/album/artist.
    */
-  private async fetchNeteasePlaylist(playlistId: string, cacheKey: string, playlistTotal?: number, cookie?: string | null): Promise<{ ids: string[]; total: number }> {
+  private async fetchNeteasePlaylist(
+    playlistId: string,
+    cacheKey: string,
+    playlistTotal?: number,
+    cookie?: string | null,
+  ): Promise<{ ids: string[]; total: number }> {
     // Netease /api/v3/song/detail can't handle more than ~1000 IDs per request,
     // so we paginate through playlist_track_all in chunks of 1000.
     const CHUNK_SIZE = 1000
@@ -399,10 +528,10 @@ class MusicProvider {
       let offset = 0
 
       while (offset < totalToFetch) {
-        const res = await withTimeout(
+        const res = (await withTimeout(
           ncmApi.playlist_track_all({ ...baseParams, limit: CHUNK_SIZE, offset } as Record<string, unknown>),
           60_000,
-        ) as NcmApiResponse | null
+        )) as NcmApiResponse | null
 
         if (res === null) {
           logger.warn(`Netease playlist_track_all timeout: ${playlistId} (offset=${offset})`)
@@ -434,7 +563,9 @@ class MusicProvider {
       const ids = allTracks.map((t) => t.sourceId)
       this.playlistIndex.set(cacheKey, { source: 'netease', ids })
 
-      logger.info(`Netease playlist ${playlistId}: ${ids.length} tracks (via ncmApi, ${Math.ceil(ids.length / CHUNK_SIZE)} chunks)`)
+      logger.info(
+        `Netease playlist ${playlistId}: ${ids.length} tracks (via ncmApi, ${Math.ceil(ids.length / CHUNK_SIZE)} chunks)`,
+      )
       return { ids, total: ids.length }
     } catch (err) {
       logger.error(`Netease playlist_track_all failed: ${playlistId}`, err)
@@ -446,7 +577,11 @@ class MusicProvider {
    * Fetch kugou playlist via native kugou API (global_collection_id).
    * Supports user playlists that Meting cannot access.
    */
-  private async fetchKugouPlaylist(playlistId: string, cacheKey: string, cookie?: string | null): Promise<{ ids: string[]; total: number }> {
+  private async fetchKugouPlaylist(
+    playlistId: string,
+    cacheKey: string,
+    cookie?: string | null,
+  ): Promise<{ ids: string[]; total: number }> {
     try {
       const PAGE_SIZE = 300
       const allTracks: Track[] = []
@@ -497,7 +632,12 @@ class MusicProvider {
     const filename = String(song_.filename || song_.name || '')
     const parts = filename.split(' - ')
     const artistStr = parts.length > 1 ? parts[0].trim() : ''
-    const artists = artistStr ? artistStr.split(/[、,，&]/).map((a: string) => a.trim()).filter(Boolean) : []
+    const artists = artistStr
+      ? artistStr
+          .split(/[、,，&]/)
+          .map((a: string) => a.trim())
+          .filter(Boolean)
+      : []
     const title = parts.length > 1 ? parts.slice(1).join(' - ').trim() : filename
 
     // Duration: Kugou's native API returns seconds (e.g. 240), but some endpoints
@@ -530,7 +670,11 @@ class MusicProvider {
    * Fetch playlist via Meting raw mode — used for Tencent/Kugou.
    * Raw mode preserves VIP/pay fields and duration (format mode strips them).
    */
-  private async fetchMetingPlaylist(source: MusicSource, playlistId: string, cacheKey: string): Promise<{ ids: string[]; total: number }> {
+  private async fetchMetingPlaylist(
+    source: MusicSource,
+    playlistId: string,
+    cacheKey: string,
+  ): Promise<{ ids: string[]; total: number }> {
     try {
       const meting = new Meting(source)
       const raw = await withTimeout(meting.playlist(playlistId), 30_000)
@@ -677,7 +821,10 @@ class MusicProvider {
         let trackName = filename
         let artists: string[] = []
         if (parts.length >= 2) {
-          artists = parts[0].split(/[、,，&]/).map((a: string) => a.trim()).filter(Boolean)
+          artists = parts[0]
+            .split(/[、,，&]/)
+            .map((a: string) => a.trim())
+            .filter(Boolean)
           trackName = parts.slice(1).join(' - ')
         }
         return {
@@ -704,8 +851,6 @@ class MusicProvider {
       }
     }
   }
-
-
 
   /**
    * Batch-resolve cover URLs for tracks that don't have one.

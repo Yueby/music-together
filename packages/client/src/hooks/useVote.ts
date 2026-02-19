@@ -41,28 +41,34 @@ export function useVote() {
   const { socket } = useSocketContext()
   const [activeVote, setActiveVote] = useState<VoteState | null>(null)
 
-  useSocketEvent(EVENTS.VOTE_STARTED, useCallback((vote: VoteState) => {
-    setActiveVote(vote)
-  }, []))
+  useSocketEvent(
+    EVENTS.VOTE_STARTED,
+    useCallback((vote: VoteState) => {
+      setActiveVote(vote)
+    }, []),
+  )
 
-  useSocketEvent(EVENTS.VOTE_RESULT, useCallback((data: { passed: boolean; action: VoteAction; reason?: string }) => {
-    setActiveVote(null)
-    const label = ACTION_LABELS[data.action]
-    if (data.passed) {
-      toast.success(`投票通过：${label}`)
-    } else {
-      const reasonText = data.reason === 'host_veto' ? '（房主否决）'
-        : data.reason === 'timeout' ? '（超时）'
-        : ''
-      toast.error(`投票未通过：${label}${reasonText}`)
-    }
-  }, []))
+  useSocketEvent(
+    EVENTS.VOTE_RESULT,
+    useCallback((data: { passed: boolean; action: VoteAction; reason?: string }) => {
+      setActiveVote(null)
+      const label = ACTION_LABELS[data.action]
+      if (data.passed) {
+        toast.success(`投票通过：${label}`)
+      } else {
+        const reasonText = data.reason === 'host_veto' ? '（房主否决）' : data.reason === 'timeout' ? '（超时）' : ''
+        toast.error(`投票未通过：${label}${reasonText}`)
+      }
+    }, []),
+  )
 
   // Clear active vote on disconnect
   useEffect(() => {
     const onDisconnect = () => setActiveVote(null)
     socket.on('disconnect', onDisconnect)
-    return () => { socket.off('disconnect', onDisconnect) }
+    return () => {
+      socket.off('disconnect', onDisconnect)
+    }
   }, [socket])
 
   const startVote = useCallback(

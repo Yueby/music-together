@@ -34,7 +34,15 @@ interface PlayerControlsProps {
   onStartVote: (action: VoteAction, payload?: Record<string, unknown>) => void
 }
 
-export const PlayerControls = memo(function PlayerControls({ onPlay, onPause, onSeek, onNext, onPrev, onOpenQueue, onStartVote }: PlayerControlsProps) {
+export const PlayerControls = memo(function PlayerControls({
+  onPlay,
+  onPause,
+  onSeek,
+  onNext,
+  onPrev,
+  onOpenQueue,
+  onStartVote,
+}: PlayerControlsProps) {
   const { socket } = useSocketContext()
   const isPlaying = usePlayerStore((s) => s.isPlaying)
   const currentTime = usePlayerStore((s) => s.currentTime)
@@ -89,10 +97,7 @@ export const PlayerControls = memo(function PlayerControls({ onPlay, onPause, on
     }
     setSkipCooldown(true)
     if (cooldownTimer.current) clearTimeout(cooldownTimer.current)
-    cooldownTimer.current = setTimeout(
-      () => setSkipCooldown(false),
-      TIMING.PLAYER_NEXT_DEBOUNCE_MS,
-    )
+    cooldownTimer.current = setTimeout(() => setSkipCooldown(false), TIMING.PLAYER_NEXT_DEBOUNCE_MS)
   }
 
   const handlePlayPause = () => {
@@ -104,10 +109,7 @@ export const PlayerControls = memo(function PlayerControls({ onPlay, onPause, on
     }
     setPlayCooldown(true)
     if (playCooldownTimer.current) clearTimeout(playCooldownTimer.current)
-    playCooldownTimer.current = setTimeout(
-      () => setPlayCooldown(false),
-      TIMING.PLAYER_NEXT_DEBOUNCE_MS,
-    )
+    playCooldownTimer.current = setTimeout(() => setPlayCooldown(false), TIMING.PLAYER_NEXT_DEBOUNCE_MS)
   }
 
   const handlePlayModeToggle = () => {
@@ -125,7 +127,7 @@ export const PlayerControls = memo(function PlayerControls({ onPlay, onPause, on
 
   return (
     <div ref={wrapperRef} className="w-full">
-        <div ref={innerRef} className="flex flex-col gap-6" style={{ width: DESIGN_WIDTH }}>
+      <div ref={innerRef} className="flex flex-col gap-6" style={{ width: DESIGN_WIDTH }}>
         {/* 1. Progress bar */}
         <div className="flex w-full flex-col gap-1">
           <Slider
@@ -148,12 +150,8 @@ export const PlayerControls = memo(function PlayerControls({ onPlay, onPause, on
             className="w-full"
           />
           <div className="flex w-full justify-between">
-            <span className="text-xs text-white/50 tabular-nums">
-              {formatTime(isSeeking ? seekTime : currentTime)}
-            </span>
-            <span className="text-xs text-white/50 tabular-nums">
-              {formatTime(duration)}
-            </span>
+            <span className="text-xs text-white/50 tabular-nums">{formatTime(isSeeking ? seekTime : currentTime)}</span>
+            <span className="text-xs text-white/50 tabular-nums">{formatTime(duration)}</span>
           </div>
         </div>
 

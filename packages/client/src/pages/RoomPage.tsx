@@ -225,23 +225,29 @@ export default function RoomPage() {
   // - On join/create another room: server auto-leaves old room
   // - On explicit leave: user clicks the leave button below
 
-  const handlePasswordSubmit = useCallback((password: string) => {
-    if (!roomId) return
-    const nickname = storage.getNickname()
-    if (!nickname) return
-    setPasswordLoading(true)
-    setPasswordError(null)
-    socket.emit(EVENTS.ROOM_JOIN, { roomId, nickname, password, userId: storage.getUserId() })
-  }, [socket, roomId])
+  const handlePasswordSubmit = useCallback(
+    (password: string) => {
+      if (!roomId) return
+      const nickname = storage.getNickname()
+      if (!nickname) return
+      setPasswordLoading(true)
+      setPasswordError(null)
+      socket.emit(EVENTS.ROOM_JOIN, { roomId, nickname, password, userId: storage.getUserId() })
+    },
+    [socket, roomId],
+  )
 
   // If password dialog is dismissed without submitting, navigate home
-  const handlePasswordOpenChange = useCallback((open: boolean) => {
-    if (!open) {
-      setPasswordNeeded(false)
-      setPasswordError(null)
-      navigate('/', { replace: true })
-    }
-  }, [navigate])
+  const handlePasswordOpenChange = useCallback(
+    (open: boolean) => {
+      if (!open) {
+        setPasswordNeeded(false)
+        setPasswordError(null)
+        navigate('/', { replace: true })
+      }
+    },
+    [navigate],
+  )
 
   const handleOpenMembers = useCallback(() => {
     setSettingsInitialTab('members')
@@ -258,11 +264,7 @@ export default function RoomPage() {
   if (checking) {
     return (
       <div className="fixed inset-0 z-50 flex items-center justify-center bg-background">
-        <motion.div
-          initial={{ opacity: 0 }}
-          animate={{ opacity: 1 }}
-          className="flex flex-col items-center gap-4"
-        >
+        <motion.div initial={{ opacity: 0 }} animate={{ opacity: 1 }} className="flex flex-col items-center gap-4">
           <Loader2 className="h-8 w-8 animate-spin text-muted-foreground" />
           <p className="text-sm text-muted-foreground">正在检查房间...</p>
         </motion.div>
@@ -327,9 +329,7 @@ export default function RoomPage() {
                 chatOpen ? 'w-[380px] pl-3' : 'w-0',
               )}
             >
-              <div className="flex h-full w-[380px] flex-col">
-                {chatOpen && <ChatPanel />}
-              </div>
+              <div className="flex h-full w-[380px] flex-col">{chatOpen && <ChatPanel />}</div>
             </div>
           </div>
 
@@ -345,11 +345,7 @@ export default function RoomPage() {
             </Drawer>
           )}
 
-          <SearchDialog
-            open={searchOpen}
-            onOpenChange={setSearchOpen}
-            onAddToQueue={addTrack}
-          />
+          <SearchDialog open={searchOpen} onOpenChange={setSearchOpen} onAddToQueue={addTrack} />
           <QueueDrawer
             open={queueOpen}
             onOpenChange={setQueueOpen}
@@ -357,16 +353,16 @@ export default function RoomPage() {
             onReorderQueue={reorderTracks}
             onClearQueue={clearQueue}
           />
-        <SettingsDialog
-          open={settingsOpen}
-          onOpenChange={(open) => {
-            setSettingsOpen(open)
-            if (!open) setSettingsInitialTab(undefined)
-          }}
-          onUpdateSettings={updateSettings}
-          onSetUserRole={setUserRole}
-          initialTab={settingsInitialTab}
-        />
+          <SettingsDialog
+            open={settingsOpen}
+            onOpenChange={(open) => {
+              setSettingsOpen(open)
+              if (!open) setSettingsInitialTab(undefined)
+            }}
+            onUpdateSettings={updateSettings}
+            onSetUserRole={setUserRole}
+            initialTab={settingsInitialTab}
+          />
         </div>
 
         {/* Fallback password dialog for edge cases (password changed after pre-check) */}

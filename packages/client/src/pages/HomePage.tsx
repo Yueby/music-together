@@ -99,7 +99,14 @@ export default function HomePage() {
           if (targetRoomId) {
             setPasswordDialog({
               open: true,
-              room: { id: targetRoomId, name: targetRoomId, hasPassword: true, userCount: 0, currentTrackTitle: null, currentTrackArtist: null },
+              room: {
+                id: targetRoomId,
+                name: targetRoomId,
+                hasPassword: true,
+                userCount: 0,
+                currentTrackTitle: null,
+                currentTrackArtist: null,
+              },
             })
             setPasswordError(null)
           } else {
@@ -174,29 +181,32 @@ export default function HomePage() {
   }
 
   /** Called after the user sets their nickname in NicknameDialog */
-  const handleNicknameConfirm = useCallback(async (nickname: string) => {
-    setNicknameDialogOpen(false)
-    const pending = pendingJoinRef.current
-    pendingJoinRef.current = null
-    if (!pending) return
+  const handleNicknameConfirm = useCallback(
+    async (nickname: string) => {
+      setNicknameDialogOpen(false)
+      const pending = pendingJoinRef.current
+      pendingJoinRef.current = null
+      if (!pending) return
 
-    await unlockAudio()
+      await unlockAudio()
 
-    if (pending.type === 'room') {
-      const room = pending.room
-      if (room.hasPassword) {
-        setPasswordDialog({ open: true, room })
-        setPasswordError(null)
+      if (pending.type === 'room') {
+        const room = pending.room
+        if (room.hasPassword) {
+          setPasswordDialog({ open: true, room })
+          setPasswordError(null)
+        } else {
+          setActionLoading(true)
+          joinRoom(room.id, nickname)
+        }
       } else {
+        lastJoinedRoomIdRef.current = pending.roomId
         setActionLoading(true)
-        joinRoom(room.id, nickname)
+        joinRoom(pending.roomId, nickname)
       }
-    } else {
-      lastJoinedRoomIdRef.current = pending.roomId
-      setActionLoading(true)
-      joinRoom(pending.roomId, nickname)
-    }
-  }, [joinRoom])
+    },
+    [joinRoom],
+  )
 
   return (
     <motion.div
@@ -211,9 +221,7 @@ export default function HomePage() {
         <div className="mx-auto flex max-w-5xl items-center justify-between px-4 py-3">
           <div className="flex items-center gap-2.5">
             <Headphones className="h-5 w-5 text-primary" />
-            <span className="text-base font-semibold tracking-tight text-foreground">
-              Music Together
-            </span>
+            <span className="text-base font-semibold tracking-tight text-foreground">Music Together</span>
           </div>
           <UserPopover />
         </div>
@@ -234,20 +242,14 @@ export default function HomePage() {
 
           <Separator className="mb-8" />
 
-          <RoomListSection
-            rooms={rooms}
-            isLoading={isLoading}
-            onRoomClick={handleRoomClick}
-          />
+          <RoomListSection rooms={rooms} isLoading={isLoading} onRoomClick={handleRoomClick} />
         </div>
       </main>
 
       {/* Footer */}
       <footer className="border-t border-border/50">
         <div className="mx-auto flex max-w-5xl flex-wrap items-center justify-between gap-2 px-4 py-4">
-          <span className="text-xs text-muted-foreground">
-            Music Together · Made by Yueby
-          </span>
+          <span className="text-xs text-muted-foreground">Music Together · Made by Yueby</span>
           <a
             href="https://github.com/Yueby/music-together"
             target="_blank"

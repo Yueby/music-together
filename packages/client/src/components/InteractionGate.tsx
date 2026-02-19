@@ -14,12 +14,7 @@ interface InteractionGateProps {
   passwordError?: string | null
 }
 
-export function InteractionGate({
-  onStart,
-  roomName,
-  hasPassword,
-  passwordError,
-}: InteractionGateProps) {
+export function InteractionGate({ onStart, roomName, hasPassword, passwordError }: InteractionGateProps) {
   const prefersReducedMotion = useReducedMotion()
   const [password, setPassword] = useState('')
 
@@ -27,9 +22,7 @@ export function InteractionGate({
   const needsNickname = !savedNickname
   const [nickname, setNickname] = useState(savedNickname)
 
-  const canStart =
-    (!needsNickname || nickname.trim().length > 0) &&
-    (!hasPassword || password.trim().length > 0)
+  const canStart = (!needsNickname || nickname.trim().length > 0) && (!hasPassword || password.trim().length > 0)
 
   const handleSubmit = (e: React.FormEvent) => {
     e.preventDefault()
@@ -58,9 +51,7 @@ export function InteractionGate({
         <div className="flex flex-col items-center gap-1.5">
           <h2 className="text-xl font-semibold">准备就绪</h2>
           {roomName ? (
-            <p className="text-sm text-muted-foreground">
-              即将加入「{roomName}」
-            </p>
+            <p className="text-sm text-muted-foreground">即将加入「{roomName}」</p>
           ) : (
             <p className="text-sm text-muted-foreground">点击开始，与房间好友一起听歌</p>
           )}
@@ -90,10 +81,7 @@ export function InteractionGate({
                 <Lock className="h-3.5 w-3.5" />
                 <span>该房间需要密码</span>
               </div>
-              <motion.div
-                animate={passwordError ? { x: [-8, 8, -6, 6, -3, 3, 0] } : {}}
-                transition={{ duration: 0.5 }}
-              >
+              <motion.div animate={passwordError ? { x: [-8, 8, -6, 6, -3, 3, 0] } : {}} transition={{ duration: 0.5 }}>
                 <Input
                   type="password"
                   placeholder="输入房间密码..."
@@ -115,13 +103,7 @@ export function InteractionGate({
             </div>
           )}
 
-          <Button
-            type="submit"
-            size="lg"
-            className="w-full"
-            disabled={!canStart}
-            aria-label="开始收听"
-          >
+          <Button type="submit" size="lg" className="w-full" disabled={!canStart} aria-label="开始收听">
             开始收听
           </Button>
         </form>
