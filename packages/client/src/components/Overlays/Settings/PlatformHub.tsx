@@ -24,7 +24,7 @@ export function PlatformHub() {
   const [cookieDialogPlatform, setCookieDialogPlatform] = useState<MusicSource>('netease')
   const [viewState, setViewState] = useState<ViewState>({ type: 'list' })
 
-  const platforms: MusicSource[] = ['netease', 'kugou', 'tencent']
+  const platforms: MusicSource[] = ['netease', 'tencent', 'kugou']
 
   // Show "verifying…" only while waiting for the first AUTH_MY_STATUS response.
   // Once the server responds, use the actual status — no more guessing from localStorage.
@@ -64,21 +64,6 @@ export function PlatformHub() {
     [activePlatform, playlist],
   )
 
-  const handleLoadByInput = useCallback(
-    (playlistId: string) => {
-      const fakePl: Playlist = {
-        id: playlistId,
-        name: `歌单 #${playlistId}`,
-        cover: '',
-        trackCount: 0,
-        source: activePlatform,
-      }
-      setViewState({ type: 'detail', playlist: fakePl, source: activePlatform })
-      playlist.fetchPlaylistTracks(activePlatform, playlistId)
-    },
-    [activePlatform, playlist],
-  )
-
   const handleBack = useCallback(() => {
     setViewState({ type: 'list' })
   }, [])
@@ -110,7 +95,7 @@ export function PlatformHub() {
     <div className="flex h-full min-h-0 min-w-0 flex-col overflow-hidden">
       <div className="shrink-0">
         <h3 className="pr-8 text-base font-semibold">平台账号 & 歌单</h3>
-        <p className="text-muted-foreground mb-3 text-xs">登录后可浏览个人歌单，或直接输入歌单链接/ID 导入歌曲</p>
+        <p className="text-muted-foreground mb-3 text-xs">登录后可浏览和管理您的所有平台个人歌单。</p>
       </div>
 
       <div className="min-h-0 min-w-0 flex-1 overflow-y-auto overflow-x-hidden">
@@ -125,7 +110,6 @@ export function PlatformHub() {
                 key={p}
                 value={p}
                 className={PLATFORM_COLORS[p]}
-                disabled={p === 'tencent'}
               >
                 {PLATFORM_SHORT_LABELS[p]}
               </TabsTrigger>
@@ -155,7 +139,6 @@ export function PlatformHub() {
                 loading={playlist.playlistsLoading[p]}
                 onFetchMyPlaylists={() => playlist.fetchMyPlaylists(p)}
                 onSelectPlaylist={handleSelectPlaylist}
-                onLoadByInput={handleLoadByInput}
               />
             </TabsContent>
           ))}

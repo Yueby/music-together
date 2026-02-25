@@ -19,7 +19,15 @@ export function useCoverWidth(paused: boolean) {
     if (!node) return
 
     const update = (w: number, h: number) => {
-      if (!pausedRef.current) setWidth(Math.floor(Math.min(w, h)))
+      if (pausedRef.current) return
+      const newDimension = Math.floor(Math.min(w, h))
+
+      setWidth((prev) => {
+        // Hysteresis dead-zone: Ignore sub 3px changes to prevent ResizeObserver infinite loops
+        // when the zoom scaling below changes the actual pixel height of the controls.
+        if (Math.abs(prev - newDimension) <= 3) return prev
+        return newDimension
+      })
     }
 
     const rect = node.getBoundingClientRect()

@@ -32,20 +32,20 @@
 
 ### 桌面端
 
-| 首页 | 搜索 | 播放 | 聊天 |
-|:---:|:---:|:---:|:---:|
+|            首页            |            搜索            |            播放            |            聊天            |
+| :------------------------: | :------------------------: | :------------------------: | :------------------------: |
 | ![首页](screenshots/1.png) | ![搜索](screenshots/2.png) | ![播放](screenshots/3.png) | ![聊天](screenshots/4.png) |
 
 ### 移动端
 
-| 首页 | 搜索 | 播放 | 聊天 |
-|:---:|:---:|:---:|:---:|
+|             首页             |             搜索             |             播放             |             聊天             |
+| :--------------------------: | :--------------------------: | :--------------------------: | :--------------------------: |
 | ![首页](screenshots/1_m.png) | ![搜索](screenshots/2_m.png) | ![播放](screenshots/3_m.png) | ![聊天](screenshots/4_m.png) |
 
 ### 歌词展示对比
 
-| 桌面端歌词 | 竖屏默认（封面） | 竖屏歌词模式 |
-|:---:|:---:|:---:|
+|            桌面端歌词            |         竖屏默认（封面）         |           竖屏歌词模式            |
+| :------------------------------: | :------------------------------: | :-------------------------------: |
 | ![桌面端歌词](screenshots/3.png) | ![竖屏默认](screenshots/3_m.png) | ![竖屏歌词](screenshots/3_m1.png) |
 
 ## 功能特性
@@ -101,16 +101,17 @@ packages/
 
 ## 致谢
 
-| 库 | 说明 |
-|---|---|
-| [Howler.js](https://github.com/goldfire/howler.js) | Web 音频播放 |
-| [Apple Music-like Lyrics](https://github.com/Steve-xmh/applemusic-like-lyrics) | 歌词组件 (GPL-3.0) |
-| [Meting](https://github.com/metowolf/Meting) | 多平台音乐 API |
-| [NeteaseCloudMusicApi Enhanced](https://github.com/NeteaseCloudMusicApiEnhanced/api-enhanced) | 网易云音乐 API |
-| [CASL](https://github.com/stalniy/casl) | 权限管理 |
-| [Zustand](https://github.com/pmndrs/zustand) | 状态管理 |
-| [shadcn/ui](https://github.com/shadcn-ui/ui) | UI 组件库 |
-| [Motion](https://github.com/motiondivision/motion) | 动画库 |
+| 库                                                                                            | 说明               |
+| --------------------------------------------------------------------------------------------- | ------------------ |
+| [Howler.js](https://github.com/goldfire/howler.js)                                            | Web 音频播放       |
+| [Apple Music-like Lyrics](https://github.com/Steve-xmh/applemusic-like-lyrics)                | 歌词组件 (GPL-3.0) |
+| [Meting](https://github.com/metowolf/Meting)                                                  | 多平台音乐 API     |
+| [NeteaseCloudMusicApi Enhanced](https://github.com/NeteaseCloudMusicApiEnhanced/api-enhanced) | 网易云音乐 API     |
+| [CASL](https://github.com/stalniy/casl)                                                       | 权限管理           |
+| [Zustand](https://github.com/pmndrs/zustand)                                                  | 状态管理           |
+| [shadcn/ui](https://github.com/shadcn-ui/ui)                                                  | UI 组件库          |
+| [Motion](https://github.com/motiondivision/motion)                                            | 动画库             |
+| [qq-music-download](https://github.com/tooplick/qq-music-download)                            | QQ 音乐登录参考    |
 
 ## 协议
 

@@ -14,10 +14,12 @@ interface ChatStore {
   reset: () => void
 }
 
+const getInitialChatOpen = () => typeof window !== 'undefined' && !window.matchMedia('(orientation: portrait)').matches
+
 export const useChatStore = create<ChatStore>((set) => ({
   messages: [],
   unreadCount: 0,
-  isChatOpen: false,
+  isChatOpen: getInitialChatOpen(),
 
   addMessage: (message) =>
     set((state) => {
@@ -35,5 +37,5 @@ export const useChatStore = create<ChatStore>((set) => ({
       unreadCount: open && !state.isChatOpen ? 0 : state.unreadCount,
     })),
   clearUnread: () => set({ unreadCount: 0 }),
-  reset: () => set({ messages: [], unreadCount: 0, isChatOpen: false }),
+  reset: () => set({ messages: [], unreadCount: 0, isChatOpen: getInitialChatOpen() }),
 }))

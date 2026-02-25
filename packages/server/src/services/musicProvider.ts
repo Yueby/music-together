@@ -5,8 +5,9 @@ import type { MusicSource, Track } from '@music-together/shared'
 import { LRUCache } from 'lru-cache'
 import { nanoid } from 'nanoid'
 import pLimit from 'p-limit'
-import { ncmApi } from './neteaseAuthService.js'
+import ncmApi from '@neteasecloudmusicapienhanced/api'
 import * as kugouAuth from './kugouAuthService.js'
+import * as tencentAuth from './tencentAuthService.js'
 import { logger } from '../utils/logger.js'
 
 /** AMLL LyricLine 格式（与 @applemusic-like-lyrics/core 一致，避免引入 client 依赖） */
@@ -367,12 +368,12 @@ class MusicProvider {
 
       if (source === 'netease') {
         // 使用 ncmApi.lyric_new 获取包含逐词歌词 (YRC) 的完整响应
-        const res = await withTimeout(ncmApi.lyric_new({ id: lyricId }) as Promise<NcmApiResponse>)
+        const res = await withTimeout(ncmApi.lyric_new({ id: lyricId }))
         if (!res?.body) {
           logger.warn(`Lyric fetch timeout for ${source}: ${lyricId}`)
           return empty
         }
-        const body = res.body as Record<string, Record<string, unknown> | undefined>
+        const body = res.body
         result = {
           lyric: (body.lrc?.lyric as string) || '',
           tlyric: (body.tlyric?.lyric as string) || '',
@@ -406,7 +407,9 @@ class MusicProvider {
             result.wordByWord = krcToAmllLines(krcInfo)
             logger.info(`KRC lyric found for kugou:${lyricId}`)
           }
-        } catch { /* 静默回退到 LRC */ }
+        } catch {
+          /* 静默回退到 LRC */
+        }
       } else {
         // QQ 音乐：使用 Meting 默认流程
         const meting = this.getInstance(source)
@@ -507,7 +510,14 @@ class MusicProvider {
       logger.info(`Kugou native API returned empty for ${playlistId}, falling back to Meting`)
     }
 
-    // Tencent (and Kugou fallback): use Meting raw mode
+    // Tencent: use new native API (supports fav & custom lists)
+    if (source === 'tencent') {
+      const result = await this.fetchTencentPlaylist(playlistId, cacheKey, cookie)
+      if (result.total > 0) return result
+      logger.info(`Tencent native API returned empty for ${playlistId}, falling back to Meting`)
+    }
+
+    // Fallback: use Meting raw mode
     return this.fetchMetingPlaylist(source, playlistId, cacheKey)
   }
 
@@ -532,10 +542,7 @@ class MusicProvider {
       let offset = 0
 
       while (offset < totalToFetch) {
-        const res = (await withTimeout(
-          ncmApi.playlist_track_all({ ...baseParams, limit: CHUNK_SIZE, offset } as Record<string, unknown>),
-          60_000,
-        )) as NcmApiResponse | null
+        const res = await withTimeout(ncmApi.playlist_track_all({ ...baseParams, limit: CHUNK_SIZE, offset }), 60_000)
 
         if (res === null) {
           logger.warn(`Netease playlist_track_all timeout: ${playlistId} (offset=${offset})`)
@@ -620,6 +627,52 @@ class MusicProvider {
       return { ids, total: ids.length }
     } catch (err) {
       logger.error(`Kugou playlist fetch failed: ${playlistId}`, err)
+      return { ids: [], total: 0 }
+    }
+  }
+
+  /**
+   * Fetch Tencent playlist via native API.
+   * Leverages the new encrypted-uin based getPlaylistTracks implementation.
+   */
+  private async fetchTencentPlaylist(
+    playlistId: string,
+    cacheKey: string,
+    cookie?: string | null,
+  ): Promise<{ ids: string[]; total: number }> {
+    try {
+      const PAGE_SIZE = 100
+      const allTracks: Track[] = []
+      let page = 1
+      let totalFromApi = 0
+
+      while (true) {
+        const { songs, total } = await tencentAuth.getPlaylistTracks(playlistId, page, PAGE_SIZE, cookie)
+        if (page === 1) totalFromApi = total
+
+        if (songs.length === 0) break
+
+        for (const song of songs) {
+          const track = this.rawToTrack(song, 'tencent')
+          if (track) allTracks.push(track)
+        }
+
+        if (allTracks.length >= totalFromApi || songs.length < PAGE_SIZE) break
+        page++
+      }
+
+      if (allTracks.length === 0) return { ids: [], total: 0 }
+
+      for (const t of allTracks) this.enrichFromRegistry(t)
+      this.registerTracks(allTracks)
+
+      const ids = allTracks.map((t) => t.sourceId)
+      this.playlistIndex.set(cacheKey, { source: 'tencent', ids })
+
+      logger.info(`Tencent playlist ${playlistId}: ${ids.length} tracks (via native API, ${page} pages)`)
+      return { ids, total: ids.length }
+    } catch (err) {
+      logger.error(`Tencent playlist fetch failed: ${playlistId}`, err)
       return { ids: [], total: 0 }
     }
   }

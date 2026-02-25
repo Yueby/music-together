@@ -1,10 +1,8 @@
 import { Button } from '@/components/ui/button'
-import { Input } from '@/components/ui/input'
 import { Skeleton } from '@/components/ui/skeleton'
 import type { MusicSource, MyPlatformAuth, Playlist } from '@music-together/shared'
-import { ListMusic, RefreshCw, Search } from 'lucide-react'
-import { useCallback, useEffect, useState } from 'react'
-import { parsePlaylistInput } from '@/hooks/usePlaylist'
+import { ListMusic, RefreshCw } from 'lucide-react'
+import { useEffect } from 'react'
 
 interface PlaylistSectionProps {
   platform: MusicSource
@@ -13,7 +11,6 @@ interface PlaylistSectionProps {
   loading: boolean
   onFetchMyPlaylists: () => void
   onSelectPlaylist: (playlist: Playlist) => void
-  onLoadByInput: (playlistId: string) => void
 }
 
 function PlaylistSkeleton() {
@@ -29,15 +26,12 @@ function PlaylistSkeleton() {
 }
 
 export function PlaylistSection({
-  platform,
   myStatus,
   playlists,
   loading,
   onFetchMyPlaylists,
   onSelectPlaylist,
-  onLoadByInput,
 }: PlaylistSectionProps) {
-  const [inputValue, setInputValue] = useState('')
   const isLoggedIn = myStatus?.loggedIn ?? false
 
   // Auto-fetch playlists when logged in and no playlists loaded
@@ -47,43 +41,8 @@ export function PlaylistSection({
     }
   }, [isLoggedIn, playlists.length, loading, onFetchMyPlaylists])
 
-  const handleManualLoad = useCallback(() => {
-    const parsed = parsePlaylistInput(inputValue, platform)
-    if (parsed) {
-      onLoadByInput(parsed)
-      setInputValue('')
-    }
-  }, [inputValue, platform, onLoadByInput])
-
-  const handleKeyDown = useCallback(
-    (e: React.KeyboardEvent) => {
-      if (e.key === 'Enter') {
-        e.preventDefault()
-        handleManualLoad()
-      }
-    },
-    [handleManualLoad],
-  )
-
   return (
     <div className="min-w-0 space-y-4 overflow-hidden">
-      {/* Manual input */}
-      <div className="space-y-2">
-        <p className="text-muted-foreground text-xs">输入歌单链接或 ID 来加载歌单</p>
-        <div className="flex gap-2">
-          <Input
-            placeholder="歌单 URL 或 ID..."
-            value={inputValue}
-            onChange={(e) => setInputValue(e.target.value)}
-            onKeyDown={handleKeyDown}
-            className="flex-1"
-          />
-          <Button variant="outline" size="icon" onClick={handleManualLoad} disabled={!inputValue.trim()}>
-            <Search className="h-4 w-4" />
-          </Button>
-        </div>
-      </div>
-
       {/* My playlists */}
       {isLoggedIn && (
         <div className="space-y-2">

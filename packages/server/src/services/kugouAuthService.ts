@@ -1,7 +1,9 @@
 import crypto from 'node:crypto'
 import QRCode from 'qrcode'
 import type { Playlist } from '@music-together/shared'
+import type { GetUserInfoResult, UserInfoData } from './authProvider.js'
 import { logger } from '../utils/logger.js'
+import { parseCookieString } from '../utils/cookieUtils.js'
 
 /**
  * Kugou Music authentication service.
@@ -328,18 +330,13 @@ async function fetchUserDetail(cookie: Record<string, string>): Promise<string |
 // User Info & VIP
 // ---------------------------------------------------------------------------
 
-export interface KugouUserInfoData {
-  nickname: string
-  vipType: number
-  userId: number
-}
-
-export type GetUserInfoResult = { ok: true; data: KugouUserInfoData } | { ok: false; reason: 'expired' | 'error' }
+// UserInfoData 和 GetUserInfoResult 从 authProvider.ts 统一导入
 
 /**
  * Validate a Kugou cookie (token+userid) and get VIP info + nickname.
  */
 export async function getUserInfo(cookie: string): Promise<GetUserInfoResult> {
+  // 使用共享的 parseCookieString（已从 cookieUtils 导入）
   try {
     const cookieObj = parseCookieString(cookie)
     const token = cookieObj['token']
@@ -510,18 +507,4 @@ export async function getPlaylistTracks(
   }
 }
 
-// ---------------------------------------------------------------------------
-// Helpers
-// ---------------------------------------------------------------------------
-
-function parseCookieString(cookie: string): Record<string, string> {
-  const result: Record<string, string> = {}
-  for (const pair of cookie.split(';')) {
-    const eqIdx = pair.indexOf('=')
-    if (eqIdx < 1) continue
-    const key = pair.substring(0, eqIdx).trim()
-    const value = pair.substring(eqIdx + 1).trim()
-    result[key] = value
-  }
-  return result
-}
+// parseCookieString 已移至 utils/cookieUtils.ts 统一管理

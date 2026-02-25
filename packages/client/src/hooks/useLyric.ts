@@ -99,13 +99,13 @@ export function useLyric() {
           // URL 模板：%s 替换为歌曲 ID，ncm-lyrics 适配平台
           const ttmlUrl = ttmlDbUrl.replace('ncm-lyrics', folder).replace('%s', track.sourceId)
           // 绑定主 controller：切歌/卸载时取消 TTML，避免过时响应写回 store；同时 8s 超时
-          const timeoutSignal =
-            typeof AbortSignal?.timeout === 'function'
-              ? AbortSignal.timeout(TTML_TIMEOUT_MS)
-              : null
+          const timeoutSignal = typeof AbortSignal?.timeout === 'function' ? AbortSignal.timeout(TTML_TIMEOUT_MS) : null
+          const SignalFactory = AbortSignal as typeof AbortSignal & {
+            any?: (signals: AbortSignal[]) => AbortSignal
+          }
           const ttmlSignal =
-            timeoutSignal && typeof AbortSignal?.any === 'function'
-              ? AbortSignal.any([controller.signal, timeoutSignal])
+            timeoutSignal && typeof SignalFactory.any === 'function'
+              ? SignalFactory.any([controller.signal, timeoutSignal])
               : controller.signal
 
           const ttmlRes = await fetch(ttmlUrl, { signal: ttmlSignal })

@@ -29,6 +29,7 @@ export function QrLoginDialog({
 }: QrLoginDialogProps) {
   const pollRef = useRef<ReturnType<typeof setInterval> | null>(null)
   const label = PLATFORM_LABELS[platform] ?? platform
+  const scanApp = platform === 'tencent' ? '手机QQ' : `${label} App`
 
   // Auto-poll QR status every 2 seconds when dialog is open and QR is generated
   useEffect(() => {
@@ -74,7 +75,7 @@ export function QrLoginDialog({
       <DialogContent className="sm:max-w-sm">
         <DialogHeader>
           <DialogTitle>{label}扫码登录</DialogTitle>
-          <DialogDescription>使用{label} App 扫描二维码登录</DialogDescription>
+          <DialogDescription>使用{scanApp}扫描二维码登录</DialogDescription>
         </DialogHeader>
 
         <div className="flex flex-col items-center gap-4 py-4">
@@ -111,7 +112,7 @@ export function QrLoginDialog({
             {statusCode === QR_STATUS.WAITING_SCAN && (
               <>
                 <Smartphone className="text-muted-foreground h-4 w-4" />
-                <span className="text-muted-foreground">打开{label} App 扫码</span>
+                <span className="text-muted-foreground">打开{scanApp}扫码</span>
               </>
             )}
             {statusCode === QR_STATUS.SCANNED && (

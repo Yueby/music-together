@@ -10,6 +10,7 @@ import { Input } from '@/components/ui/input'
 import { Tabs, TabsList, TabsTrigger } from '@/components/ui/tabs'
 import { VirtualTrackList, type VirtualTrackListRef } from '@/components/VirtualTrackList'
 import { SERVER_URL } from '@/lib/config'
+import { PLATFORM_COLORS } from '@/lib/platform'
 import { trackKey } from '@/lib/utils'
 import { useRoomStore } from '@/stores/roomStore'
 import type { MusicSource, Track } from '@music-together/shared'
@@ -21,8 +22,8 @@ const EMPTY_QUEUE: Track[] = []
 
 const SOURCES: { id: MusicSource; label: string }[] = [
   { id: 'netease', label: '网易云' },
-  { id: 'kugou', label: '酷狗' },
   { id: 'tencent', label: 'QQ音乐' },
+  { id: 'kugou', label: '酷狗' },
 ]
 
 const PAGE_SIZE = 20
@@ -188,7 +189,7 @@ export function SearchDialog({ open, onOpenChange, onAddToQueue }: SearchDialogP
           >
             <TabsList className="w-full">
               {SOURCES.map((s) => (
-                <TabsTrigger key={s.id} value={s.id} className="flex-1 text-xs sm:text-sm">
+                <TabsTrigger key={s.id} value={s.id} className={`flex-1 text-xs sm:text-sm ${PLATFORM_COLORS[s.id]}`}>
                   {s.label}
                 </TabsTrigger>
               ))}

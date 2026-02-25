@@ -8,16 +8,16 @@
 
 ### 核心功能
 
-| 功能       | 说明                                                                                                                                            |
-| ---------- | ----------------------------------------------------------------------------------------------------------------------------------------------- |
-| 房间系统   | 创建/加入房间，房间号邀请，可选密码保护                                                                                                         |
-| 多音源搜索 | 网易云、QQ音乐、酷狗                                                                                                                            |
-| 同步播放   | 房间内播放进度实时同步                                                                                                                          |
-| 实时聊天   | 房间内文字聊天                                                                                                                                  |
-| 权限控制   | RBAC 三级权限（host > admin > member）基于 @casl/ability，支持 creatorId 房主回收                                                               |
-| 播放模式   | 顺序播放、列表循环、单曲循环、随机播放（Host/Admin 直接切换，Member 投票切换）                                                                  |
-| 投票系统   | 普通成员通过投票控制播放（暂停/恢复/切歌/切换播放模式/指定播放/移除歌曲）                                                                       |
-| VIP 认证   | 平台账号登录（网易云/QQ/酷狗），房间级 Cookie 池（VIP 播放共享）+ 用户级歌单（私有）                                                            |
+| 功能       | 说明                                                                                                                                 |
+| ---------- | ------------------------------------------------------------------------------------------------------------------------------------ |
+| 房间系统   | 创建/加入房间，房间号邀请，可选密码保护                                                                                              |
+| 多音源搜索 | 网易云、QQ音乐、酷狗                                                                                                                 |
+| 同步播放   | 房间内播放进度实时同步                                                                                                               |
+| 实时聊天   | 房间内文字聊天                                                                                                                       |
+| 权限控制   | RBAC 三级权限（host > admin > member）基于 @casl/ability，支持 creatorId 房主回收                                                    |
+| 播放模式   | 顺序播放、列表循环、单曲循环、随机播放（Host/Admin 直接切换，Member 投票切换）                                                       |
+| 投票系统   | 普通成员通过投票控制播放（暂停/恢复/切歌/切换播放模式/指定播放/移除歌曲）                                                            |
+| VIP 认证   | 平台账号登录（网易云/QQ/酷狗），房间级 Cookie 池（VIP 播放共享）+ 用户级歌单（私有）                                                 |
 | 歌词展示   | Apple Music 风格歌词动画 (AMLL)，四级优先级：TTML 在线逐词（网易云/QQ，可配置）> 平台原生逐词（网易云 YRC / 酷狗 KRC）> LRC 行级歌词 |
 
 ### 技术栈
@@ -39,15 +39,11 @@ music-together/
 │   ├── server/          # Node.js 后端
 │   └── shared/          # 共享类型与常量
 ├── docs/                # 项目文档（含本文件 PROJECT_ARCHITECTURE.md）
-├── .cursor/skills/      # Cursor IDE 技能配置
-├── .agents/             # AI Agent 配置
 ├── package.json         # 根 package（工作区编排）
 ├── pnpm-workspace.yaml  # pnpm 工作区定义
 ├── pnpm-lock.yaml
 ├── README.md
-├── .env.example         # 环境变量示例
-├── .gitignore
-└── .gitattributes
+└── .gitignore
 ```
 
 ### packages/client/src/ — 前端源码
@@ -93,8 +89,9 @@ src/
 │   │       ├── PlaylistDetail.tsx         # 歌单详情（header + VirtualTrackList + queueKeys/addedIds 去重 + 动态全部添加过滤重复）
 │   │       ├── ProfileSettingsSection.tsx  # 个人设置（昵称）
 │   │       ├── AppearanceSection.tsx       # 外观设置（歌词 + 背景 + 布局）
+│   │       ├── OtherSettingsSection.tsx    # 其他设置
 │   │       ├── ManualCookieDialog.tsx      # 手动输入 Cookie 弹窗
-│   │       └── QrLoginDialog.tsx           # 通用 QR 扫码登录弹窗（网易云 + 酷狗）
+│   │       └── QrLoginDialog.tsx           # 通用 QR 扫码登录弹窗（网易云 + 酷狗 + QQ 音乐）
 │   ├── Player/
 │   │   ├── constants.ts        #     共享动画常量（SPRING / LAYOUT_TRANSITION），NowPlaying 和 SongInfoBar 统一导入
 │   │   ├── AudioPlayer.tsx     #     主播放器布局（桌面：左右分栏；移动：双模式封面/歌词切换）
@@ -194,7 +191,7 @@ src/
 │   ├── queueController.ts      #   队列管理（add/remove/reorder/clear）
 │   ├── chatController.ts       #   聊天消息（含限流反馈）
 │   ├── voteController.ts       #   投票系统（发起/投票/超时/执行，支持 set-mode / play-track / remove-track 投票）
-│   ├── authController.ts       #   平台认证（QR 登录/Cookie 管理/状态查询；fast path: 内存池命中跳过 API；slow path: getUserInfo + 任意失败重试 1 次）
+│   ├── authController.ts       #   平台认证（QR 登录/Cookie 管理/状态查询；支持网易云/酷狗/QQ 音乐三平台；策略模式——通过 AUTH_PROVIDERS 映射表统一处理；fast path: 内存池命中跳过 API；slow path: getUserInfo + 任意失败重试 1 次）
 │   └── playlistController.ts   #   歌单管理（获取用户歌单列表 via Socket，使用 getUserCookie 取请求者自己的 cookie，歌单私有）
 │
 ├── services/                   # 服务层：业务逻辑
@@ -206,8 +203,10 @@ src/
 │   ├── syncService.ts          #   播放位置估算工具（estimateCurrentTime）
 │   ├── musicProvider.ts        #   音乐数据聚合（3 层引用式 LRU 缓存 + 外部 API 超时保护 + 歌单分页获取；Netease 歌单使用 ncmApi.playlist_track_all 分块请求突破 1000 首限制，Kugou 用户歌单使用原生 API (get_other_list_file_nofilt) + Meting fallback，Tencent 使用 Meting 原始模式保留 VIP/时长字段）
 │   ├── authService.ts          #   Cookie 池管理（房间级作用域；getAnyCookie 用于 VIP 播放共享，getUserCookie 用于歌单等用户私有操作）
+│   ├── authProvider.ts         #   统一认证接口（AuthProvider 接口定义 + GetUserInfoResult/UserInfoData 共享类型 + AUTH_PROVIDERS 策略映射表）
 │   ├── neteaseAuthService.ts   #   网易云 API 认证（QR / Cookie 验证 / 用户信息 / 用户歌单列表；getUserInfo 返回 { ok, data? } | { ok: false, reason: 'expired' | 'error' } 区分过期与临时故障）
 │   ├── kugouAuthService.ts    #   酷狗 API 认证（QR 扫码登录 + VIP 检查 + 用户昵称(RSA) + 用户歌单列表 + 歌单歌曲获取；kugouRequest 含 HTTP 状态检查与 JSON 安全解析；自包含签名实现，状态码归一化为 800-803 与网易云统一）
+│   ├── tencentAuthService.ts  #   QQ 音乐认证（5 步 OAuth QR 扫码登录：ptqrshow/ptqrlogin/check_sig/authorize/QQLogin 换取 musickey；zzc 签名防风控；getUserInfo 获取昵称 + VIP 状态；getUserPlaylists 获取自建 + 收藏歌单；getPlaylistTracks 分页获取歌单歌曲）
 │   └── voteService.ts          #   投票状态管理
 │
 ├── repositories/               # 数据仓库：内存存储
@@ -1161,17 +1160,3 @@ docker run -d --name watchtower --restart unless-stopped \
 ```
 
 如使用 1Panel，创建反向代理网站指向 `127.0.0.1:3001`，启用 WebSocket 和 HTTPS。
-
----
-
-## 10. 已知问题与限制
-
-### QQ 音乐（Tencent）用户歌单获取
-
-由于腾讯实施了严格的服务端反爬策略（IP 库封锁、TLS 指纹监测、500003 错误/空响应），在非浏览器环境（Node.js 服务器）中获取用户私人歌单极其困难。
-
-- **现状**：已暂时禁用“获取 QQ 用户歌单”功能（后端返回空列表）。
-- **影响**：用户无法在“我的音乐”中看到 QQ 歌单。
-- **可用**：搜索、播放 VIP 歌曲、QR 扫码登录（获取 VIP 状态）均正常工作。
-- **UI 处理**：设置面板中的 QQ 音乐标签页已禁用交互（显示但不可点击）。
-- **未来展望**：需等待更高级的无头浏览器方案或协议逆向突破。

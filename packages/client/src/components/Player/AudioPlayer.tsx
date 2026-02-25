@@ -5,6 +5,7 @@ import { SERVER_URL } from '@/lib/config'
 import { cn } from '@/lib/utils'
 import { usePlayerStore } from '@/stores/playerStore'
 import { useSettingsStore } from '@/stores/settingsStore'
+import { useChatStore } from '@/stores/chatStore'
 import { BackgroundRender } from '@applemusic-like-lyrics/react'
 import { AnimatePresence, LayoutGroup, motion } from 'motion/react'
 import { useCallback, useMemo, useState } from 'react'
@@ -72,6 +73,8 @@ export function AudioPlayer({
   const bgFlowSpeed = useSettingsStore((s) => s.bgFlowSpeed)
   const bgRenderScale = useSettingsStore((s) => s.bgRenderScale)
   const { ref: playerRef, isPortrait } = useContainerPortrait()
+
+  const isChatOpen = useChatStore((s) => s.isChatOpen)
 
   // 封面 URL 代理：解决 QQ 音乐 / 酷狗等 CDN 的 CORS 限制
   const proxiedCover = useMemo(
@@ -184,7 +187,14 @@ export function AudioPlayer({
             // Desktop layout: left panel (cover + info + controls) + right lyrics
             // ---------------------------------------------------------------
             <>
-              <div className="relative flex w-[36%] flex-col items-center gap-[clamp(12px,3vh,32px)] lg:w-[33%]">
+              <div
+                className={cn(
+                  'relative flex flex-col items-center gap-[clamp(12px,3vh,32px)] transition-all duration-300',
+                  isChatOpen
+                    ? 'w-[36%] lg:w-[33%]' // 当聊天打开时：由于此时整体宽度缩小，左侧保持原有数值刚好和谐
+                    : 'w-[45%] max-w-[540px] lg:w-[50%] lg:max-w-[600px]', // 聊天关闭时：扩大占比至一半，并通过最大宽度限制防撑爆
+                )}
+              >
                 {/* 1. Cover — flex-1 fills remaining space, centered */}
                 <div ref={coverAreaRef} className="min-h-0 w-full flex-1 flex items-center justify-center" style={{ containerType: 'size' }}>
                   <NowPlaying />

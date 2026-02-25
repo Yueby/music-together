@@ -48,10 +48,10 @@ export function RoomHeader({ onOpenSearch, onOpenSettings, onOpenMembers, onLeav
         ? 'text-yellow-500/60'
         : 'text-destructive/60'
 
-  const copyRoomId = () => {
+  const copyRoomLink = () => {
     if (roomId) {
-      navigator.clipboard.writeText(roomId)
-      toast.success('房间号已复制')
+      navigator.clipboard.writeText(window.location.href)
+      toast.success('房间链接已复制')
     }
   }
 
@@ -62,7 +62,7 @@ export function RoomHeader({ onOpenSearch, onOpenSettings, onOpenMembers, onLeav
           <>
             <span
               className="max-w-[120px] cursor-pointer truncate text-sm font-semibold text-foreground active:opacity-70 sm:max-w-[200px] sm:cursor-default"
-              onClick={copyRoomId}
+              onClick={copyRoomLink}
             >
               {roomName}
             </span>
@@ -72,14 +72,14 @@ export function RoomHeader({ onOpenSearch, onOpenSettings, onOpenMembers, onLeav
                   variant="outline"
                   size="sm"
                   className="hidden h-7 gap-1 border-border/50 px-2 font-mono text-xs sm:flex"
-                  onClick={copyRoomId}
-                  aria-label="复制房间号"
+                  onClick={copyRoomLink}
+                  aria-label="复制房间链接"
                 >
                   {roomId}
                   <Copy className="h-3 w-3" />
                 </Button>
               </TooltipTrigger>
-              <TooltipContent>复制房间号</TooltipContent>
+              <TooltipContent>复制房间链接</TooltipContent>
             </Tooltip>
             <Tooltip>
               <TooltipTrigger asChild>
@@ -186,9 +186,9 @@ export function RoomHeader({ onOpenSearch, onOpenSettings, onOpenMembers, onLeav
               设置
             </DropdownMenuItem>
             <DropdownMenuSeparator />
-            <DropdownMenuItem onClick={copyRoomId}>
+            <DropdownMenuItem onClick={copyRoomLink}>
               <Copy className="mr-2 h-4 w-4" />
-              复制房间号
+              复制房间链接
             </DropdownMenuItem>
             <DropdownMenuItem className="text-destructive focus:text-destructive" onClick={onLeaveRoom}>
               <LogOut className="mr-2 h-4 w-4" />
