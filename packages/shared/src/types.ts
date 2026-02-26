@@ -7,7 +7,7 @@ export const ERROR_CODE = {
   WRONG_PASSWORD: 'WRONG_PASSWORD',
   JOIN_FAILED: 'JOIN_FAILED',
   NOT_IN_ROOM: 'NOT_IN_ROOM',
-  NOT_HOST: 'NOT_HOST',
+  NOT_OWNER: 'NOT_OWNER',
   NO_PERMISSION: 'NO_PERMISSION',
   SET_ROLE_FAILED: 'SET_ROLE_FAILED',
   QUEUE_FULL: 'QUEUE_FULL',
@@ -22,7 +22,7 @@ export type ErrorCode = (typeof ERROR_CODE)[keyof typeof ERROR_CODE]
 
 export type MusicSource = 'netease' | 'tencent' | 'kugou'
 
-export type UserRole = 'host' | 'admin' | 'member'
+export type UserRole = 'owner' | 'admin' | 'member'
 
 export type PlayMode = 'sequential' | 'loop-all' | 'loop-one' | 'shuffle'
 
@@ -48,13 +48,15 @@ export interface Track {
   requestedBy?: string
 }
 
-/** 客户端可见的房间状态（不含密码明文，只含 hasPassword 标记） */
+/** 客户端可见的房间状态 */
 export interface RoomState {
   id: string
   name: string
   creatorId: string
   hostId: string
   hasPassword: boolean
+  /** 密码明文（仅房间内成员可见） */
+  password?: string | null
   audioQuality: AudioQuality
   users: User[]
   queue: Track[]

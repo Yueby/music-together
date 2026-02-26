@@ -1,6 +1,6 @@
-@import "tailwindcss";
-@import "tw-animate-css";
-@import "shadcn/tailwind.css";
+@import 'tailwindcss';
+@import 'tw-animate-css';
+@import 'shadcn/tailwind.css';
 
 /* Fonts are loaded via <link> in index.html */
 
@@ -90,7 +90,11 @@
   }
   body {
     @apply bg-background text-foreground antialiased;
-    font-family: 'Plus Jakarta Sans', system-ui, -apple-system, sans-serif;
+    font-family:
+      'Plus Jakarta Sans',
+      system-ui,
+      -apple-system,
+      sans-serif;
   }
 }
 
@@ -127,9 +131,18 @@
 
 /* ===== Marquee text overflow animation ===== */
 @keyframes marquee {
-  0%, 15%   { transform: translateX(0); }
-  45%, 55%  { transform: translateX(var(--marquee-distance)); }
-  85%, 100% { transform: translateX(0); }
+  0%,
+  15% {
+    transform: translateX(0);
+  }
+  45%,
+  55% {
+    transform: translateX(var(--marquee-distance));
+  }
+  85%,
+  100% {
+    transform: translateX(0);
+  }
 }
 
 /* ===== Reduced motion ===== */
@@ -150,6 +163,17 @@
   opacity: 0.9;
 }
 
-.amll-container [class*='lyricSubLine'] {
+/* 翻译歌词子行（lyricSubLine 中第一个） */
+.amll-container [class*='lyricSubLine']:first-of-type {
   font-size: max(var(--amll-translated-font-size, 0.65em), 10px) !important;
+}
+
+/* 罗马音歌词子行（lyricSubLine 中第二个；仅在同时有翻译+罗马音时生效） */
+.amll-container [class*='lyricSubLine'] + [class*='lyricSubLine'] {
+  font-size: max(var(--amll-roman-font-size, 0.5em), 10px) !important;
+}
+
+/* 逐词罗马音注音（word 级别的 ruby 文本） */
+.amll-container [class*='romanWord'] {
+  font-size: max(var(--amll-roman-font-size, 0.5em), 8px) !important;
 }

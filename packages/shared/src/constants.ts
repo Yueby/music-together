@@ -15,7 +15,6 @@ export const LIMITS = {
 
 export const TIMING = {
   ROOM_GRACE_PERIOD_MS: 60_000,
-  ROLE_GRACE_PERIOD_MS: 30_000,
   PLAYER_NEXT_DEBOUNCE_MS: 500,
   VOTE_TIMEOUT_MS: 30_000,
 } as const

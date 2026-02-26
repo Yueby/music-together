@@ -9,13 +9,13 @@ import {
 import { Input } from '@/components/ui/input'
 import { Tabs, TabsList, TabsTrigger } from '@/components/ui/tabs'
 import { VirtualTrackList, type VirtualTrackListRef } from '@/components/VirtualTrackList'
-import { SERVER_URL } from '@/lib/config'
 import { PLATFORM_COLORS } from '@/lib/platform'
 import { trackKey } from '@/lib/utils'
 import { useRoomStore } from '@/stores/roomStore'
+import { useSearch } from '@/hooks/useSearch'
 import type { MusicSource, Track } from '@music-together/shared'
 import { Loader2, Music2, Search } from 'lucide-react'
-import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
+import { useCallback, useMemo, useRef, useState } from 'react'
 import { toast } from 'sonner'
 
 const EMPTY_QUEUE: Track[] = []
@@ -26,8 +26,6 @@ const SOURCES: { id: MusicSource; label: string }[] = [
   { id: 'kugou', label: '酷狗' },
 ]
 
-const PAGE_SIZE = 20
-
 interface SearchDialogProps {
   open: boolean
   onOpenChange: (open: boolean) => void
@@ -37,110 +35,21 @@ interface SearchDialogProps {
 export function SearchDialog({ open, onOpenChange, onAddToQueue }: SearchDialogProps) {
   const [source, setSource] = useState<MusicSource>('netease')
   const [keyword, setKeyword] = useState('')
-  const [results, setResults] = useState<Track[]>([])
-  const [loading, setLoading] = useState(false)
-  const [loadingMore, setLoadingMore] = useState(false)
   const [addedIds, setAddedIds] = useState<Set<string>>(new Set())
-  const [page, setPage] = useState(1)
-  const [hasMore, setHasMore] = useState(false)
-  const [hasSearched, setHasSearched] = useState(false)
-  const abortRef = useRef<AbortController | null>(null)
-  const loadMoreAbortRef = useRef<AbortController | null>(null)
-  const searchIdRef = useRef(0)
   const listRef = useRef<VirtualTrackListRef>(null)
   const queue = useRoomStore((s) => s.room?.queue ?? EMPTY_QUEUE)
   const queueKeys = useMemo(() => new Set(queue.map(trackKey)), [queue])
 
-  // Cancel any in-flight requests on unmount
-  useEffect(() => {
-    return () => {
-      abortRef.current?.abort()
-      loadMoreAbortRef.current?.abort()
-    }
-  }, [])
+  const { results, loading, loadingMore, hasMore, hasSearched, search, loadMore, resetState } = useSearch(source)
 
-  const fetchPage = useCallback(
-    async (
-      searchSource: MusicSource,
-      searchKeyword: string,
-      searchPage: number,
-      signal: AbortSignal,
-    ): Promise<{ tracks: Track[]; hasMore: boolean }> => {
-      const res = await fetch(
-        `${SERVER_URL}/api/music/search?source=${searchSource}&keyword=${encodeURIComponent(searchKeyword)}&limit=${PAGE_SIZE}&page=${searchPage}`,
-        { signal },
-      )
-      if (!res.ok) throw new Error('Search failed')
-      const data = await res.json()
-      const tracks: Track[] = data.tracks || []
-      return { tracks, hasMore: data.hasMore ?? tracks.length >= PAGE_SIZE }
-    },
-    [],
-  )
-
-  const handleSearch = async (overrideKeyword?: string) => {
+  const handleSearch = (overrideKeyword?: string) => {
     const searchKeyword = (overrideKeyword ?? keyword).trim()
     if (!searchKeyword) return
-    if (overrideKeyword !== undefined) {
-      setKeyword(overrideKeyword)
-    }
-
-    abortRef.current?.abort()
-    const controller = new AbortController()
-    abortRef.current = controller
-    const currentSearchId = ++searchIdRef.current
-
-    setLoading(true)
-    setHasSearched(true)
+    if (overrideKeyword !== undefined) setKeyword(overrideKeyword)
     setAddedIds(new Set())
-    try {
-      const data = await fetchPage(source, searchKeyword, 1, controller.signal)
-      if (searchIdRef.current !== currentSearchId) return
-      setResults(data.tracks)
-      setPage(1)
-      setHasMore(data.hasMore)
-      listRef.current?.scrollToTop()
-    } catch (err) {
-      if (err instanceof DOMException && err.name === 'AbortError') return
-      if (searchIdRef.current !== currentSearchId) return
-      toast.error('搜索失败，请重试')
-      setResults([])
-      setHasMore(false)
-    } finally {
-      if (searchIdRef.current === currentSearchId) {
-        setLoading(false)
-      }
-    }
+    search(searchKeyword)
+    listRef.current?.scrollToTop()
   }
-
-  const handleLoadMore = useCallback(() => {
-    if (loadingMore) return
-    loadMoreAbortRef.current?.abort()
-    const controller = new AbortController()
-    loadMoreAbortRef.current = controller
-    const currentSearchId = searchIdRef.current
-
-    setLoadingMore(true)
-    const nextPage = page + 1
-
-    fetchPage(source, keyword.trim(), nextPage, controller.signal)
-      .then((data) => {
-        if (searchIdRef.current !== currentSearchId) return
-        setResults((prev) => [...prev, ...data.tracks])
-        setPage(nextPage)
-        setHasMore(data.hasMore)
-      })
-      .catch((err) => {
-        if (err instanceof DOMException && err.name === 'AbortError') return
-        if (searchIdRef.current !== currentSearchId) return
-        toast.error('加载失败，请重试')
-      })
-      .finally(() => {
-        if (searchIdRef.current === currentSearchId) {
-          setLoadingMore(false)
-        }
-      })
-  }, [loadingMore, page, source, keyword, fetchPage])
 
   const handleAdd = useCallback(
     (track: Track) => {
@@ -158,18 +67,11 @@ export function SearchDialog({ open, onOpenChange, onAddToQueue }: SearchDialogP
 
   const isTrackAdded = useCallback(
     (track: Track) => {
-      return addedIds.has(trackKey(track)) || queueKeys.has(trackKey(track))
+      const key = trackKey(track)
+      return addedIds.has(key) || queueKeys.has(key)
     },
     [addedIds, queueKeys],
   )
-
-  const resetState = () => {
-    setResults([])
-    setAddedIds(new Set())
-    setPage(1)
-    setHasMore(false)
-    setHasSearched(false)
-  }
 
   return (
     <ResponsiveDialog open={open} onOpenChange={onOpenChange}>
@@ -185,6 +87,7 @@ export function SearchDialog({ open, onOpenChange, onAddToQueue }: SearchDialogP
             onValueChange={(v) => {
               setSource(v as MusicSource)
               resetState()
+              setAddedIds(new Set())
             }}
           >
             <TabsList className="w-full">
@@ -220,7 +123,7 @@ export function SearchDialog({ open, onOpenChange, onAddToQueue }: SearchDialogP
               loading={loading}
               hasMore={hasMore}
               loadingMore={loadingMore}
-              onLoadMore={handleLoadMore}
+              onLoadMore={loadMore}
               isTrackAdded={isTrackAdded}
               onAddTrack={handleAdd}
               onArtistClick={handleSearch}

@@ -37,6 +37,8 @@ export function useRoomState() {
     const onRoomState = (roomState: RoomState) => {
       // setRoom automatically derives currentUser from room.users
       useRoomStore.getState().setRoom(roomState)
+      // 初始化密码（ROOM_STATE 携带密码明文）
+      useRoomStore.getState().setRoomPassword(roomState.password ?? null)
 
       // Auto-resend persisted auth cookies so the room's cookie pool is populated
       resendCookies()
@@ -50,8 +52,17 @@ export function useRoomState() {
       useRoomStore.getState().removeUser(user.id)
     }
 
-    const onSettings = (settings: { name: string; hasPassword: boolean; audioQuality: AudioQuality }) => {
+    const onSettings = (settings: {
+      name: string
+      hasPassword: boolean
+      password?: string | null
+      audioQuality: AudioQuality
+    }) => {
       useRoomStore.getState().updateRoom(settings)
+      // 存储密码明文（服务端广播）
+      if ('password' in settings) {
+        useRoomStore.getState().setRoomPassword(settings.password ?? null)
+      }
     }
 
     const onRoleChanged = (data: { userId: string; role: UserRole }) => {

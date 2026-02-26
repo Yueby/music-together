@@ -24,7 +24,12 @@ export interface ServerToClientEvents {
   [EVENTS.ROOM_ERROR]: (error: { code: string; message: string }) => void
   [EVENTS.ROOM_USER_JOINED]: (user: User) => void
   [EVENTS.ROOM_USER_LEFT]: (user: User) => void
-  [EVENTS.ROOM_SETTINGS]: (settings: { name: string; hasPassword: boolean; audioQuality: AudioQuality }) => void
+  [EVENTS.ROOM_SETTINGS]: (settings: {
+    name: string
+    hasPassword: boolean
+    password?: string | null
+    audioQuality: AudioQuality
+  }) => void
   [EVENTS.ROOM_LIST_UPDATE]: (rooms: RoomListItem[]) => void
   [EVENTS.ROOM_ROLE_CHANGED]: (data: { userId: string; role: UserRole }) => void
 

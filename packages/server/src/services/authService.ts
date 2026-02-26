@@ -109,9 +109,12 @@ export function getAnyCookie(platform: MusicSource, roomId: string): string | nu
   const entries = pool.get(platform)
   if (!entries || entries.length === 0) return null
 
-  // Sort by vipType descending so highest VIP is first
-  const sorted = [...entries].sort((a, b) => b.vipType - a.vipType)
-  return sorted[0].cookie
+  // 单次遍历取最高 vipType 的 cookie（O(n) 替代排序 O(n log n)）
+  let best = entries[0]
+  for (let i = 1; i < entries.length; i++) {
+    if (entries[i].vipType > best.vipType) best = entries[i]
+  }
+  return best.cookie
 }
 
 /**

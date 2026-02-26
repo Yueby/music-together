@@ -5,6 +5,7 @@ import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@
 import { Tooltip, TooltipContent, TooltipTrigger } from '@/components/ui/tooltip'
 import { Separator } from '@/components/ui/separator'
 import { Switch } from '@/components/ui/switch'
+import { storage } from '@/lib/storage'
 import { usePlayerStore } from '@/stores/playerStore'
 import { useRoomStore } from '@/stores/roomStore'
 import type { AudioQuality } from '@music-together/shared'
@@ -32,8 +33,9 @@ interface RoomSettingsSectionProps {
 export function RoomSettingsSection({ onUpdateSettings }: RoomSettingsSectionProps) {
   const room = useRoomStore((s) => s.room)
   const currentUser = useRoomStore((s) => s.currentUser)
+  const roomPassword = useRoomStore((s) => s.roomPassword)
   const syncDrift = usePlayerStore((s) => s.syncDrift)
-  const isHost = currentUser?.role === 'host'
+  const isOwner = currentUser?.role === 'owner'
 
   const driftDisplay = useMemo(() => {
     const ms = Math.round(syncDrift * 1000)
@@ -43,6 +45,16 @@ export function RoomSettingsSection({ onUpdateSettings }: RoomSettingsSectionPro
   }, [syncDrift])
   const [passwordInput, setPasswordInput] = useState('')
   const [passwordEnabled, setPasswordEnabled] = useState(room?.hasPassword ?? false)
+
+  // 昵称编辑
+  const [nickname, setNickname] = useState(storage.getNickname())
+  const handleNicknameBlur = () => {
+    const trimmed = nickname.trim()
+    if (trimmed) {
+      storage.setNickname(trimmed)
+      toast.success('昵称已保存（下次加入房间生效）')
+    }
+  }
 
   // Room name editing state
   const [editingName, setEditingName] = useState(false)
@@ -134,7 +146,7 @@ export function RoomSettingsSection({ onUpdateSettings }: RoomSettingsSectionPro
           ) : (
             <div className="flex items-center gap-1.5">
               <span className="text-sm">{room?.name}</span>
-              {isHost && (
+              {isOwner && (
                 <Button
                   variant="ghost"
                   size="icon"
@@ -175,8 +187,8 @@ export function RoomSettingsSection({ onUpdateSettings }: RoomSettingsSectionPro
           </span>
         </SettingRow>
 
-        <SettingRow label="音质" description={isHost ? '切换后对下一首歌生效' : undefined}>
-          {isHost ? (
+        <SettingRow label="音质" description={isOwner ? '切换后对下一首歌生效' : undefined}>
+          {isOwner ? (
             <Select
               value={String(room?.audioQuality ?? 320)}
               onValueChange={(v) => {
@@ -208,9 +220,27 @@ export function RoomSettingsSection({ onUpdateSettings }: RoomSettingsSectionPro
 
         <SettingRow label="密码保护">
           {room?.hasPassword ? (
-            <Badge variant="secondary" className="gap-1">
-              <Lock className="h-3 w-3" /> 已设置
-            </Badge>
+            <div className="flex items-center gap-2">
+              <Badge variant="secondary" className="gap-1">
+                <Lock className="h-3 w-3" /> 已设置
+              </Badge>
+              {roomPassword && (
+                <Tooltip>
+                  <TooltipTrigger asChild>
+                    <code
+                      className="cursor-pointer rounded bg-muted px-2 py-0.5 text-xs transition-colors hover:bg-muted/80"
+                      onClick={() => {
+                        navigator.clipboard.writeText(roomPassword)
+                        toast.success('密码已复制')
+                      }}
+                    >
+                      {roomPassword}
+                    </code>
+                  </TooltipTrigger>
+                  <TooltipContent>点击复制密码</TooltipContent>
+                </Tooltip>
+              )}
+            </div>
           ) : (
             <Badge variant="outline" className="gap-1">
               <LockOpen className="h-3 w-3" /> 无密码
@@ -219,7 +249,7 @@ export function RoomSettingsSection({ onUpdateSettings }: RoomSettingsSectionPro
         </SettingRow>
       </div>
 
-      {isHost && (
+      {isOwner && (
         <div>
           <h3 className="text-base font-semibold">房主设置</h3>
           <Separator className="mt-2 mb-4" />
@@ -246,6 +276,23 @@ export function RoomSettingsSection({ onUpdateSettings }: RoomSettingsSectionPro
           )}
         </div>
       )}
+
+      {/* ---- 个人信息 ---- */}
+      <div>
+        <h3 className="text-base font-semibold">个人信息</h3>
+        <Separator className="mt-2 mb-4" />
+
+        <SettingRow label="昵称" description="修改后下次加入房间生效">
+          <Input
+            value={nickname}
+            onChange={(e) => setNickname(e.target.value)}
+            onBlur={handleNicknameBlur}
+            onKeyDown={(e) => e.key === 'Enter' && handleNicknameBlur()}
+            className="w-40"
+            placeholder="输入昵称..."
+          />
+        </SettingRow>
+      </div>
     </div>
   )
 }

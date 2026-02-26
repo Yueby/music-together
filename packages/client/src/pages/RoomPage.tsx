@@ -326,10 +326,10 @@ export default function RoomPage() {
             <div
               className={cn(
                 'hidden h-full shrink-0 overflow-hidden transition-[width] duration-200 ease-out md:block',
-                chatOpen ? 'w-[380px] pl-3' : 'w-0',
+                chatOpen ? 'w-[320px] pl-3' : 'w-0',
               )}
             >
-              <div className="flex h-full w-[380px] flex-col">{chatOpen && <ChatPanel />}</div>
+              <div className="flex h-full w-[320px] flex-col">{chatOpen && <ChatPanel />}</div>
             </div>
           </div>
 

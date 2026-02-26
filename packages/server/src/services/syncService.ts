@@ -15,7 +15,7 @@ export function estimateCurrentTime(roomId: string): number {
   const estimated = playState.currentTime + elapsed
 
   // Clamp to track duration so mid-song joiners don't receive a position
-  // beyond the song length when the host hasn't reported end-of-track.
+  // beyond the song length when the conductor hasn't reported end-of-track.
   const duration = room.currentTrack?.duration
   if (duration && duration > 0) {
     return Math.min(estimated, duration)

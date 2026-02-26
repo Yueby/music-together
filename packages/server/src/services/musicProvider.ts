@@ -150,7 +150,7 @@ class MusicProvider {
   private coverCache = new LRUCache<string, string>({ max: 1000, ttl: 24 * HOUR })
   private lyricCache = new LRUCache<
     string,
-    { lyric: string; tlyric: string; yrc: string; wordByWord?: AmllLyricLine[] }
+    { lyric: string; tlyric: string; romalrc: string; yrc: string; wordByWord?: AmllLyricLine[] }
   >({
     max: 500,
     ttl: 24 * HOUR,
@@ -351,7 +351,7 @@ class MusicProvider {
   async getLyric(
     source: MusicSource,
     lyricId: string,
-  ): Promise<{ lyric: string; tlyric: string; yrc: string; wordByWord?: AmllLyricLine[] }> {
+  ): Promise<{ lyric: string; tlyric: string; romalrc: string; yrc: string; wordByWord?: AmllLyricLine[] }> {
     const cacheKey = `${source}:${lyricId}`
     const cached = this.lyricCache.get(cacheKey)
     if (cached) {
@@ -359,10 +359,10 @@ class MusicProvider {
       return cached
     }
 
-    const empty = { lyric: '', tlyric: '', yrc: '' as string }
+    const empty = { lyric: '', tlyric: '', romalrc: '', yrc: '' as string }
 
     try {
-      let result: { lyric: string; tlyric: string; yrc: string; wordByWord?: AmllLyricLine[] } = {
+      let result: { lyric: string; tlyric: string; romalrc: string; yrc: string; wordByWord?: AmllLyricLine[] } = {
         ...empty,
       }
 
@@ -377,6 +377,7 @@ class MusicProvider {
         result = {
           lyric: (body.lrc?.lyric as string) || '',
           tlyric: (body.tlyric?.lyric as string) || '',
+          romalrc: ((body.romalrc as Record<string, unknown> | undefined)?.lyric as string) || '',
           yrc: (body.yrc?.lyric as string) || '',
         }
         if (result.yrc) {
@@ -395,6 +396,7 @@ class MusicProvider {
           result = {
             lyric: (data.lyric as string) || '',
             tlyric: (data.tlyric as string) || '',
+            romalrc: '',
             yrc: '',
           }
         } catch {
@@ -423,6 +425,7 @@ class MusicProvider {
           result = {
             lyric: (data.lyric as string) || '',
             tlyric: (data.tlyric as string) || '',
+            romalrc: '',
             yrc: '',
           }
         } catch {

@@ -1,9 +1,7 @@
 import { EVENTS } from '@music-together/shared'
 import type { MusicSource } from '@music-together/shared'
 import * as authService from '../services/authService.js'
-import * as neteaseAuth from '../services/neteaseAuthService.js'
-import * as kugouAuth from '../services/kugouAuthService.js'
-import * as tencentAuth from '../services/tencentAuthService.js'
+import { AUTH_PROVIDERS } from '../services/authProvider.js'
 import { roomRepo } from '../repositories/roomRepository.js'
 import { logger } from '../utils/logger.js'
 import type { TypedServer, TypedSocket } from '../middleware/types.js'
@@ -33,18 +31,8 @@ export function registerPlaylistController(io: TypedServer, socket: TypedSocket)
         return
       }
 
-      if (platform === 'netease') {
-        const playlists = await neteaseAuth.getUserPlaylists(cookie)
-        socket.emit(EVENTS.PLAYLIST_MY_LIST, { platform, playlists })
-      } else if (platform === 'kugou') {
-        const playlists = await kugouAuth.getUserPlaylists(cookie)
-        socket.emit(EVENTS.PLAYLIST_MY_LIST, { platform, playlists })
-      } else if (platform === 'tencent') {
-        const playlists = await tencentAuth.getUserPlaylists(cookie)
-        socket.emit(EVENTS.PLAYLIST_MY_LIST, { platform, playlists })
-      } else {
-        socket.emit(EVENTS.PLAYLIST_MY_LIST, { platform, playlists: [] })
-      }
+      const playlists = await AUTH_PROVIDERS[platform].getUserPlaylists(cookie)
+      socket.emit(EVENTS.PLAYLIST_MY_LIST, { platform, playlists })
     } catch (err) {
       logger.error('PLAYLIST_GET_MY error', err, { socketId: socket.id })
       socket.emit(EVENTS.PLAYLIST_MY_LIST, { platform, playlists: [] })

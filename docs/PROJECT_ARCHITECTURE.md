@@ -14,7 +14,7 @@
 | 多音源搜索 | 网易云、QQ音乐、酷狗                                                                                                                 |
 | 同步播放   | 房间内播放进度实时同步                                                                                                               |
 | 实时聊天   | 房间内文字聊天                                                                                                                       |
-| 权限控制   | RBAC 三级权限（host > admin > member）基于 @casl/ability，支持 creatorId 房主回收                                                    |
+| 权限控制   | RBAC 三级权限（owner > admin > member）基于 @casl/ability，hostId 为自动选举的播放主持（conductor）                                  |
 | 播放模式   | 顺序播放、列表循环、单曲循环、随机播放（Host/Admin 直接切换，Member 投票切换）                                                       |
 | 投票系统   | 普通成员通过投票控制播放（暂停/恢复/切歌/切换播放模式/指定播放/移除歌曲）                                                            |
 | VIP 认证   | 平台账号登录（网易云/QQ/酷狗），房间级 Cookie 池（VIP 播放共享）+ 用户级歌单（私有）                                                 |
@@ -196,7 +196,7 @@ src/
 │
 ├── services/                   # 服务层：业务逻辑
 │   ├── roomService.ts          #   房间 CRUD + 角色管理 + 加入校验（validateJoinRequest）
-│   ├── roomLifecycleService.ts #   房间生命周期定时器（删除/角色宽限期）+ 防抖广播
+│   ├── roomLifecycleService.ts #   房间生命周期定时器（空置删除）+ 防抖广播
 │   ├── playerService.ts        #   播放状态管理 + 流 URL 解析 + 切歌防抖 + 加入播放同步
 │   ├── queueService.ts         #   队列操作（reorder 保留未包含曲目防丢歌，getNextTrack 支持 4 种播放模式，clearQueue 清空，addBatchTracks 批量添加）
 │   ├── chatService.ts          #   聊天消息处理 + HTML 转义（含系统消息）
@@ -363,13 +363,14 @@ interface Playlist {
   description?: string
 }
 
-// 用户（RBAC: host > admin > member）
+// 用户（RBAC: owner > admin > member）
+// hostId 是自动选举的播放主持(conductor)，不是可见角色
 interface User {
   id: string
   nickname: string
   role: UserRole
 }
-type UserRole = 'host' | 'admin' | 'member'
+type UserRole = 'owner' | 'admin' | 'member'
 
 // 聊天消息
 interface ChatMessage {
@@ -492,12 +493,12 @@ Host（房主）**自适应频率**上报当前播放位置到服务端：新曲
 3. **自动续播**：房主独自重新加入时，若有歌曲暂停/排队中，自动恢复播放
 4. **加入房间补偿**：中途加入的客户端使用 `getServerTime()` 计算当前应处的播放位置，采用 fade-in 淡入策略（400ms 等待 + 200ms fade）减少加入延迟
 5. **房间宽限期**：房间空置 60 秒 (`ROOM_GRACE_PERIOD_MS`) 后自动清理（重复调用 `scheduleDeletion` 不会创建重复 timer）
-6. **角色持久化**：房间记录 `creatorId`（创建者 ID，永久不变）和 `adminUserIds: Set<string>`（持久化 admin 用户集合）。Admin 角色**永久保留**，不受 grace period 影响——离开/回来自动恢复 admin。Host 仍使用 30 秒宽限期 (`ROLE_GRACE_PERIOD_MS`)：host 离开后 30s 内重连可恢复 host；过期后转移给在线 admin → member，被取代的 host 加入 `adminUserIds`（降为 admin 而非 member）。**创建者自动回收 host**：房间创建者（`creatorId`）回来时无条件回收 host，前任 host 降为 admin。`setUserRole` 同步维护 `adminUserIds`（提权加入、降权移除）。返回的创建者/持久化 admin 免密码验证
+6. **角色与 Conductor 机制**：房间记录 `creatorId`（创建者 ID，永久不变）和 `adminUserIds: Set<string>`（持久化 admin 集合）。`user.role` 仅表示权限（`owner` / `admin` / `member`），`room.hostId` 是自动选举的播放主持（conductor）。Conductor 在用户加入/离开时自动重选（优先级：owner > admin > member），无需宽限期。创建者始终为 `owner`，返回时自动成为 conductor。`setUserRole` 只能设置 `admin` / `member`（不能改 `owner`），同步维护 `adminUserIds`。返回的创建者/持久化 admin 免密码验证
 7. **持久化用户身份**：客户端通过 `storage.getUserId()` 生成并持久化 `nanoid`，每次 `ROOM_CREATE` / `ROOM_JOIN` 携带 `userId`，使服务端可跨 socket 重连识别同一用户。服务端通过 `roomRepo.getSocketMapping(socket.id)` 获取 `{ roomId, userId }` 映射——`socket.id` 仅用于 Socket 映射查找，所有涉及用户身份的操作（host 判断、auth cookie 归属、权限检查等）统一使用 `mapping.userId`
 8. **`currentUser` 自动推导**：`roomStore` 中 `currentUser` 始终从 `room.users` 自动推导（`deriveCurrentUser`），`setRoom` / `addUser` / `removeUser` / `updateRoom` 等 action 内部自动同步，不暴露 `setCurrentUser` 以避免脱节风险
 9. **断线时钟重置**：`resetAllRoomState()` 除重置 Zustand stores 外，还调用 `resetClockSync()` 清空 NTP 采样，确保重连后使用全新的时钟校准数据
 10. **Socket 断开竞态防护**：页面刷新时新旧 socket 的 join/disconnect 到达顺序不确定，`leaveRoom` 通过 `roomRepo.hasOtherSocketForUser()` 检测同一用户是否有更新的 socket 连接，避免旧 socket disconnect 误删活跃用户
-11. **投票安全网**：`voteController` 接收 `VOTE_START` 时，若检测到用户已有直接操作权限（host/admin），不再返回错误，而是直接执行该操作（`executeAction`），防止客户端-服务端角色不同步时操作失效。部分 VoteAction 通过 `PERM_MAP` 映射到不同的 CASL action+subject（如 `'play-track'` → `('play', 'Player')`，`'remove-track'` → `('remove', 'Queue')`）
+11. **投票安全网**：`voteController` 接收 `VOTE_START` 时，若检测到用户已有直接操作权限（owner/admin），不再返回错误，而是直接执行该操作（`executeAction`），防止客户端-服务端角色不同步时操作失效。部分 VoteAction 通过 `PERM_MAP` 映射到不同的 CASL action+subject（如 `'play-track'` → `('play', 'Player')`，`'remove-track'` → `('remove', 'Queue')`）
 12. **切歌防抖**：500ms (`PLAYER_NEXT_DEBOUNCE_MS`) 内不重复触发下一首。`playNextTrackInRoom` / `playPrevTrackInRoom` 将 debounce 检查和队列导航封装在 per-room mutex 内部，确保同 tick 的多个 NEXT/PREV 事件不会都通过 debounce。支持 `{ skipDebounce: true }` 选项，投票执行、删除当前曲目等场景绕过 debounce 以确保操作不被静默吞掉
 13. **停止播放统一处理**：`playerService.stopPlayback()` 统一处理"队列为空/清空"场景——清除 currentTrack、emit PLAYER_PAUSE、广播 ROOM_STATE、刷新大厅列表，避免 controller 中重复逻辑。`stopPlaybackSafe()` 提供 mutex 保护版本，`QUEUE_CLEAR` 使用此版本防止与并发 `autoPlayIfEmpty` 竞态
 14. **大厅重连刷新**：`useLobby` 监听 socket `connect` 事件，断线重连后自动重新拉取房间列表
@@ -715,8 +716,8 @@ Controller → Service → Repository / Utils
 
 - **Controller**：注册 Socket 事件监听器，薄编排层（校验输入 → 调用 Service → 编排通知）。不包含业务逻辑。
 - **Service**：业务逻辑、跨领域编排、Socket 广播。关键服务职责拆分：
-  - `roomService`：房间 CRUD + 角色管理 + 加入校验（`validateJoinRequest`）。Re-export `toPublicRoomState` 和 `broadcastRoomList` 以保持控制器调用方式不变。
-  - `roomLifecycleService`：房间删除定时器 + 角色宽限期定时器（`roleGraceMap`，host + admin）+ 防抖广播。不依赖 `roomService`，消除循环依赖。API：`startRoleGrace`、`cancelRoleGrace`、`getGracedRole`、`hasHostGrace`、`cleanupAllGrace`、`clearAllTimers`（shutdown 时清理所有模块级定时器）。
+  - `roomService`：房间 CRUD + 角色管理 + conductor 选举（`electConductor`）+ 加入校验（`validateJoinRequest`）。Re-export `toPublicRoomState` 和 `broadcastRoomList` 以保持控制器调用方式不变。
+  - `roomLifecycleService`：房间空置删除定时器 + 防抖广播。不依赖 `roomService`，消除循环依赖。API：`scheduleDeletion`、`cancelDeletionTimer`、`broadcastRoomList`、`clearAllTimers`。角色宽限期已移除（conductor 自动选举，无需 grace period）。
   - `playerService`：播放状态管理 + 流 URL 解析 + 切歌防抖 + 加入播放同步（`syncPlaybackToSocket`）+ 房间清理（`cleanupRoom`）。`playTrackInRoom` 通过 per-room Promise 链互斥锁防止并发竞态。`playNextTrackInRoom` / `playPrevTrackInRoom` 将 debounce + 队列导航 + 播放统一封装在 mutex 内部。`autoPlayIfEmpty` 在 mutex 内重新检查 `room.currentTrack`，防止并发 QUEUE_ADD 双重自动播放。
 - **Repository**：数据存取（当前为内存 Map，接口抽象，可替换为数据库）
 - **Utils**：纯函数工具（`toPublicRoomState` 等），无状态，可被任意层引用
@@ -741,12 +742,12 @@ interface RoomRepository {
 
 ```
 withPermission(action, subject)  →  withRoom(io)  →  Handler
-withHostOnly(io)                 →  withRoom(io)  →  Handler
+withOwnerOnly(io)                →  withRoom(io)  →  Handler
 ```
 
 - `withRoom`：校验 Socket 是否在房间中，构建 `HandlerContext`（io, socket, roomId, room, user）
 - `withPermission`：在 `withRoom` 基础上用 CASL `defineAbilityFor(role)` 检查 `(action, subject)` 权限
-- `withHostOnly`：在 `withRoom` 基础上仅允许房主（`room.hostId === user.id`），用于设置和角色管理
+- `withOwnerOnly`：在 `withRoom` 基础上仅允许房主（`user.role === 'owner'`），用于设置和角色管理
 
 错误统一通过 `ROOM_ERROR` 事件回传给客户端，错误码使用 `ERROR_CODE` 枚举（`shared/types.ts`），包括：`NOT_IN_ROOM`、`ROOM_NOT_FOUND`、`NO_PERMISSION`、`INVALID_DATA`、`QUEUE_FULL`、`RATE_LIMITED`、`INTERNAL` 等。
 

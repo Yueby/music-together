@@ -66,7 +66,7 @@ export function createVote(
 
 /**
  * Cast a vote. Returns the result or null if no active vote.
- * Host veto: if host votes reject, immediately decided as failed.
+ * Conductor veto: if conductor (hostId) votes reject, immediately decided as failed.
  */
 export function castVote(roomId: string, userId: string, approve: boolean): CastResult | null {
   const vote = activeVotes.get(roomId)
@@ -77,7 +77,7 @@ export function castVote(roomId: string, userId: string, approve: boolean): Cast
 
   vote.votes[userId] = approve
 
-  // Host veto check
+  // Conductor veto check
   if (userId === vote.hostId && !approve) {
     return { vote, decided: true, passed: false, reason: 'host_veto' }
   }

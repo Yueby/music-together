@@ -10,16 +10,16 @@ interface MembersSectionProps {
 }
 
 const ROLE_LABELS: Record<UserRole, string> = {
-  host: '房主',
+  owner: '房主',
   admin: '管理员',
   member: '成员',
 }
 
-const ROLE_ORDER: Record<string, number> = { host: 0, admin: 1, member: 2 }
+const ROLE_ORDER: Record<string, number> = { owner: 0, admin: 1, member: 2 }
 
 function getRoleIcon(role: UserRole) {
   switch (role) {
-    case 'host':
+    case 'owner':
       return <Crown className="h-4 w-4 text-yellow-500" />
     case 'admin':
       return <Shield className="h-4 w-4 text-blue-400" />
@@ -31,7 +31,7 @@ function getRoleIcon(role: UserRole) {
 export function MembersSection({ onSetUserRole }: MembersSectionProps) {
   const room = useRoomStore((s) => s.room)
   const currentUser = useRoomStore((s) => s.currentUser)
-  const isHost = currentUser?.role === 'host'
+  const isOwner = currentUser?.role === 'owner'
 
   return (
     <div className="space-y-6">
@@ -55,8 +55,8 @@ export function MembersSection({ onSetUserRole }: MembersSectionProps) {
                   {ROLE_LABELS[user.role]}
                 </Badge>
 
-                {/* Host can change other users' roles (not their own) */}
-                {isHost && user.role !== 'host' && user.id !== currentUser?.id && onSetUserRole && (
+                {/* Owner can change other users' roles (not their own, not other owners) */}
+                {isOwner && user.role !== 'owner' && user.id !== currentUser?.id && onSetUserRole && (
                   <Select value={user.role} onValueChange={(v) => onSetUserRole(user.id, v as 'admin' | 'member')}>
                     <SelectTrigger className="ml-auto h-7 w-24 text-xs">
                       <SelectValue />

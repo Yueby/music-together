@@ -109,7 +109,7 @@ export function registerVoteController(io: TypedServer, socket: TypedSocket) {
 
       const { action, payload } = parsed.data
 
-      // Check if user has direct permission (host/admin don't need to vote).
+      // Check if user has direct permission (owner/admin don't need to vote).
       // VoteAction includes 'resume' which is not in CASL Actions — cast is intentional.
       // Some vote actions map to a different CASL action for permission checks
       // (e.g. 'play-track' requires the same 'play' permission as normal playback).

@@ -1,27 +1,26 @@
 import { create } from 'zustand'
 import { storage } from '@/lib/storage'
-import type { RoomState, User, UserRole } from '@music-together/shared'
+import type { RoomState, User } from '@music-together/shared'
 
 /**
- * Derive the current user (with correct role) from the authoritative room.users list.
- * This ensures `currentUser` is ALWAYS in sync with `room.users` — they can never diverge.
+ * Derive the current user from the authoritative room.users list.
+ * Role is purely permission-based (owner/admin/member) — no client-side override.
  */
 function deriveCurrentUser(room: RoomState | null): User | null {
   if (!room) return null
   const myId = storage.getUserId()
-  const me = room.users.find((u) => u.id === myId)
-  if (!me) return null
-  const role: UserRole = room.hostId === myId ? 'host' : me.role
-  // Avoid unnecessary object creation if role is already correct
-  return role !== me.role ? { ...me, role } : me
+  return room.users.find((u) => u.id === myId) ?? null
 }
 
 interface RoomStore {
   room: RoomState | null
   currentUser: User | null
+  /** 房间密码明文（从 ROOM_SETTINGS 事件接收） */
+  roomPassword: string | null
 
   setRoom: (room: RoomState | null) => void
   updateRoom: (partial: Partial<RoomState>) => void
+  setRoomPassword: (password: string | null) => void
   addUser: (user: User) => void
   removeUser: (userId: string) => void
   reset: () => void
@@ -30,6 +29,7 @@ interface RoomStore {
 export const useRoomStore = create<RoomStore>((set) => ({
   room: null,
   currentUser: null,
+  roomPassword: null,
 
   setRoom: (room) => set({ room, currentUser: deriveCurrentUser(room) }),
 
@@ -37,12 +37,14 @@ export const useRoomStore = create<RoomStore>((set) => ({
     set((state) => {
       if (!state.room) return {}
       const room = { ...state.room, ...partial }
-      // Re-derive currentUser when users list or hostId changed
-      if ('users' in partial || 'hostId' in partial) {
+      // Re-derive currentUser when users list changed (role may have been updated by server)
+      if ('users' in partial) {
         return { room, currentUser: deriveCurrentUser(room) }
       }
       return { room }
     }),
+
+  setRoomPassword: (password) => set({ roomPassword: password }),
 
   addUser: (user) =>
     set((state) => {
@@ -68,5 +70,5 @@ export const useRoomStore = create<RoomStore>((set) => ({
       return { room }
     }),
 
-  reset: () => set({ room: null, currentUser: null }),
+  reset: () => set({ room: null, currentUser: null, roomPassword: null }),
 }))

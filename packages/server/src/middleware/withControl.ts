@@ -30,15 +30,15 @@ export function createWithPermission(io: TypedServer) {
 }
 
 /**
- * Socket 中间件：仅 Host 可执行。
- * 用于房间设置等只有房主才能操作的场景。
+ * Socket 中间件：仅 Owner（房间创建者）可执行。
+ * 用于房间设置、角色管理等只有房主才能操作的场景。
  */
-export function createWithHostOnly(io: TypedServer) {
+export function createWithOwnerOnly(io: TypedServer) {
   const withRoom = createWithRoom(io)
 
-  return function withHostOnly<T = void>(handler: (ctx: HandlerContext, data: T) => void | Promise<void>) {
+  return function withOwnerOnly<T = void>(handler: (ctx: HandlerContext, data: T) => void | Promise<void>) {
     return withRoom<T>((ctx, data) => {
-      if (ctx.room.hostId !== ctx.user.id) {
+      if (ctx.user.role !== 'owner') {
         ctx.socket.emit(EVENTS.ROOM_ERROR, {
           code: ERROR_CODE.NO_PERMISSION,
           message: '只有房主可以操作',

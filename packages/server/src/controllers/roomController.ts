@@ -7,7 +7,7 @@ import {
   setRoleSchema,
 } from '@music-together/shared'
 import type { TypedServer, TypedSocket } from '../middleware/types.js'
-import { createWithHostOnly } from '../middleware/withControl.js'
+import { createWithOwnerOnly } from '../middleware/withControl.js'
 import { cleanupSocketRateLimit } from '../middleware/socketRateLimiter.js'
 import { roomRepo } from '../repositories/roomRepository.js'
 import * as chatService from '../services/chatService.js'
@@ -17,7 +17,7 @@ import * as voteService from '../services/voteService.js'
 import { logger } from '../utils/logger.js'
 
 export function registerRoomController(io: TypedServer, socket: TypedSocket) {
-  const withHostOnly = createWithHostOnly(io)
+  const withOwnerOnly = createWithOwnerOnly(io)
 
   // ---- Room list (不需要在房间内) ----
   socket.on(EVENTS.ROOM_LIST, () => {
@@ -100,7 +100,7 @@ export function registerRoomController(io: TypedServer, socket: TypedSocket) {
       socket.join(roomId)
 
       // Send full room state + chat history
-      // If host changed (creator reclaim, etc.), broadcast to ALL clients.
+      // If conductor changed (owner joined, etc.), broadcast to ALL clients.
       // Otherwise, only send to the joining socket.
       const publicState = roomService.toPublicRoomState(updatedRoom)
       if (hostChanged) {
@@ -150,7 +150,7 @@ export function registerRoomController(io: TypedServer, socket: TypedSocket) {
   // ---- Room settings (仅房主，含密码管理) ----
   socket.on(
     EVENTS.ROOM_SETTINGS,
-    withHostOnly((ctx, raw) => {
+    withOwnerOnly((ctx, raw) => {
       const parsed = roomSettingsSchema.safeParse(raw)
       if (!parsed.success) {
         ctx.socket.emit(EVENTS.ROOM_ERROR, {
@@ -171,6 +171,7 @@ export function registerRoomController(io: TypedServer, socket: TypedSocket) {
       io.to(ctx.roomId).emit(EVENTS.ROOM_SETTINGS, {
         name: updatedRoom.name,
         hasPassword: updatedRoom.password !== null,
+        password: updatedRoom.password ?? null,
         audioQuality: updatedRoom.audioQuality,
       })
 
@@ -184,7 +185,7 @@ export function registerRoomController(io: TypedServer, socket: TypedSocket) {
   // ---- Set user role (仅房主) ----
   socket.on(
     EVENTS.ROOM_SET_ROLE,
-    withHostOnly((ctx, raw) => {
+    withOwnerOnly((ctx, raw) => {
       const parsed = setRoleSchema.safeParse(raw)
       if (!parsed.success) {
         ctx.socket.emit(EVENTS.ROOM_ERROR, {

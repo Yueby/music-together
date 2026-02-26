@@ -158,7 +158,7 @@ async function _playTrackInRoom(io: TypedServer, roomId: string, track: Track): 
   }
 
   // Update room state — align serverTimestamp with the scheduled execution time
-  // so that estimateCurrentTime() is accurate before the first host report.
+  // so that estimateCurrentTime() is accurate before the first conductor report.
   room.currentTrack = resolved
   const scheduleTime = getScheduleTime(roomId)
   room.playState = {
@@ -296,6 +296,12 @@ export function playNextTrackInRoom(
       const skipTrack = queueService.getNextTrack(roomId, playMode)
       if (skipTrack) await _playTrackInRoom(io, roomId, skipTrack)
     }
+
+    // Refresh debounce timestamp after async work completes.
+    // Without this, a second PLAYER_NEXT waiting on the mutex could pass
+    // the debounce check if _playTrackInRoom took longer than 500ms (e.g.
+    // stream URL resolution), causing a double-skip.
+    lastNextTimestamp.set(roomId, Date.now())
   })
 }
 
@@ -322,6 +328,9 @@ export function playPrevTrackInRoom(
       const skipTrack = queueService.getPreviousTrack(roomId)
       if (skipTrack) await _playTrackInRoom(io, roomId, skipTrack)
     }
+
+    // Refresh debounce timestamp after async work (same rationale as playNextTrackInRoom)
+    lastNextTimestamp.set(roomId, Date.now())
   })
 }
 
@@ -342,7 +351,7 @@ export async function syncPlaybackToSocket(
   const isAloneInRoom = room.users.length === 1
 
   if (room.currentTrack?.streamUrl) {
-    // Alone in room + track was paused → auto-resume (host rejoining)
+    // Alone in room + track was paused → auto-resume (user rejoining)
     const shouldAutoPlay = isAloneInRoom || room.playState.isPlaying
     if (isAloneInRoom && !room.playState.isPlaying) {
       room.playState = { ...room.playState, isPlaying: true, serverTimestamp: Date.now() }
@@ -364,46 +373,46 @@ export async function syncPlaybackToSocket(
 }
 
 // ---------------------------------------------------------------------------
-// Room cleanup, debounce & host report validation
+// Room cleanup, debounce & conductor report validation
 // ---------------------------------------------------------------------------
 
 /** Debounce tracking for PLAYER_NEXT per room */
 const lastNextTimestamp = new Map<string, number>()
 
-/** Track consecutive rejected host reports per room to break deadlocks */
-const hostRejectCount = new Map<string, number>()
+/** Track consecutive rejected conductor reports per room to break deadlocks */
+const conductorRejectCount = new Map<string, number>()
 
-/** Force-accept a host report after this many consecutive rejections */
-const HOST_REJECT_FORCE_ACCEPT_COUNT = 2
+/** Force-accept a conductor report after this many consecutive rejections */
+const CONDUCTOR_REJECT_FORCE_ACCEPT_COUNT = 2
 
-/** Max allowed drift (seconds) between host-reported time and server estimate */
-const HOST_REJECT_DRIFT_THRESHOLD_S = 3
+/** Max allowed drift (seconds) between conductor-reported time and server estimate */
+const CONDUCTOR_REJECT_DRIFT_THRESHOLD_S = 3
 
 /** Remove per-room entries for a deleted room */
 export function cleanupRoom(roomId: string): void {
   lastNextTimestamp.delete(roomId)
-  hostRejectCount.delete(roomId)
+  conductorRejectCount.delete(roomId)
   playMutexes.delete(roomId)
 }
 
 /**
- * Validate a host sync report against the server estimate.
+ * Validate a conductor sync report against the server estimate.
  * Returns true if the report should be ACCEPTED, false if rejected (stale).
- * Automatically force-accepts after HOST_REJECT_FORCE_ACCEPT consecutive
+ * Automatically force-accepts after CONDUCTOR_REJECT_FORCE_ACCEPT consecutive
  * rejections to break deadlocks when the server estimate has diverged.
  */
-export function validateHostReport(roomId: string, reportedTime: number, estimatedTime: number): boolean {
-  if (estimatedTime - reportedTime > HOST_REJECT_DRIFT_THRESHOLD_S) {
-    const count = (hostRejectCount.get(roomId) ?? 0) + 1
-    hostRejectCount.set(roomId, count)
-    if (count < HOST_REJECT_FORCE_ACCEPT_COUNT) {
+export function validateConductorReport(roomId: string, reportedTime: number, estimatedTime: number): boolean {
+  if (estimatedTime - reportedTime > CONDUCTOR_REJECT_DRIFT_THRESHOLD_S) {
+    const count = (conductorRejectCount.get(roomId) ?? 0) + 1
+    conductorRejectCount.set(roomId, count)
+    if (count < CONDUCTOR_REJECT_FORCE_ACCEPT_COUNT) {
       return false // reject
     }
     // Too many consecutive rejections — force accept to break deadlock
-    logger.warn(`Force-accepting host report after ${count} consecutive rejections`, { roomId })
+    logger.warn(`Force-accepting conductor report after ${count} consecutive rejections`, { roomId })
   }
   // Accepted — reset counter
-  hostRejectCount.delete(roomId)
+  conductorRejectCount.delete(roomId)
   return true
 }
 

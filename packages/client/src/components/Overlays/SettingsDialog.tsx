@@ -6,19 +6,19 @@ import {
 } from '@/components/ui/responsive-dialog'
 import { ScrollArea } from '@/components/ui/scroll-area'
 import { cn } from '@/lib/utils'
-import { KeyRound, Palette, Settings2, UserCog, Users, type LucideIcon } from 'lucide-react'
+import { KeyRound, Palette, Settings2, Type, Users, type LucideIcon } from 'lucide-react'
 import { useEffect, useState } from 'react'
 import { RoomSettingsSection } from './Settings/RoomSettingsSection'
 import { MembersSection } from './Settings/MembersSection'
-import { ProfileSettingsSection } from './Settings/ProfileSettingsSection'
 import { AppearanceSection } from './Settings/AppearanceSection'
+import { LyricsSection } from './Settings/LyricsSection'
 import { PlatformHub } from './Settings/PlatformHub'
 
 // ---------------------------------------------------------------------------
 // Types
 // ---------------------------------------------------------------------------
 
-export type SettingsTab = 'room' | 'members' | 'profile' | 'appearance' | 'accounts'
+export type SettingsTab = 'room' | 'members' | 'appearance' | 'lyrics' | 'accounts'
 
 interface SettingsDialogProps {
   open: boolean
@@ -71,8 +71,8 @@ const TABS: { id: SettingsTab; icon: LucideIcon; label: string }[] = [
   { id: 'room', icon: Settings2, label: '房间' },
   { id: 'members', icon: Users, label: '成员' },
   { id: 'accounts', icon: KeyRound, label: '账号' },
-  { id: 'profile', icon: UserCog, label: '个人' },
   { id: 'appearance', icon: Palette, label: '外观' },
+  { id: 'lyrics', icon: Type, label: '歌词' },
 ]
 
 // ---------------------------------------------------------------------------
@@ -144,7 +144,7 @@ export function SettingsDialog({
               <div className="p-4 sm:p-6">
                 {tab === 'room' && <RoomSettingsSection onUpdateSettings={onUpdateSettings} />}
                 {tab === 'members' && <MembersSection onSetUserRole={onSetUserRole} />}
-                {tab === 'profile' && <ProfileSettingsSection />}
+                {tab === 'lyrics' && <LyricsSection />}
                 {tab === 'appearance' && <AppearanceSection />}
               </div>
             </ScrollArea>

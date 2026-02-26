@@ -14,14 +14,14 @@ export const HOWL_UNMUTE_DELAY_DEFAULT_MS = 100
 /** Throttle interval for currentTime store updates */
 export const CURRENT_TIME_THROTTLE_MS = 100
 
-/** Interval for host progress reporting — normal (steady state) */
-export const HOST_REPORT_INTERVAL_MS = 5_000
+/** Interval for conductor progress reporting — normal (steady state) */
+export const CONDUCTOR_REPORT_INTERVAL_MS = 5_000
 
-/** Interval for host progress reporting — fast (first seconds of a new track) */
-export const HOST_REPORT_FAST_INTERVAL_MS = 2_000
+/** Interval for conductor progress reporting — fast (first seconds of a new track) */
+export const CONDUCTOR_REPORT_FAST_INTERVAL_MS = 2_000
 
-/** Duration (ms) of the fast host reporting phase after a new track starts */
-export const HOST_REPORT_FAST_DURATION_MS = 10_000
+/** Duration (ms) of the fast conductor reporting phase after a new track starts */
+export const CONDUCTOR_REPORT_FAST_DURATION_MS = 10_000
 
 /** Interval for client-initiated sync requests (drift correction) */
 export const SYNC_REQUEST_INTERVAL_MS = 2_000
@@ -45,7 +45,7 @@ export const DRIFT_SMOOTH_ALPHA = 0.3
 export const DRIFT_PLUGIN_SEEK_THRESHOLD_MS = 30
 
 /** Grace period (ms) after new track before drift correction activates.
- *  Allows at least one host report to correct estimateCurrentTime. */
+ *  Allows at least one conductor report to correct estimateCurrentTime. */
 export const DRIFT_GRACE_PERIOD_MS = 3_000
 
 /** Safety clamp for network delay estimation (seconds) — prevents clock-skew outliers */

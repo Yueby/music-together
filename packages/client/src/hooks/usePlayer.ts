@@ -1,5 +1,6 @@
 import { getServerTime, isCalibrated } from '@/lib/clockSync'
 import { PLAYER_PLAY_DEDUP_MS } from '@/lib/constants'
+import { storage } from '@/lib/storage'
 import { useSocketContext } from '@/providers/SocketProvider'
 import { usePlayerStore } from '@/stores/playerStore'
 import { useRoomStore } from '@/stores/roomStore'
@@ -26,11 +27,13 @@ export function usePlayer() {
 
   const next = useCallback(() => socket.emit(EVENTS.PLAYER_NEXT), [socket])
 
-  // Auto-next on song end: only host/admin emit PLAYER_NEXT.
-  // Members silently wait — the host's client will advance the queue.
+  // Auto-next on song end: only the current conductor (hostId) emits PLAYER_NEXT.
+  // The conductor is auto-elected by the server (owner > admin > member).
+  // Other clients silently wait to prevent duplicate PLAYER_NEXT events.
   const autoNext = useCallback(() => {
-    const role = useRoomStore.getState().currentUser?.role
-    if (role === 'host' || role === 'admin') {
+    const { room } = useRoomStore.getState()
+    const myId = storage.getUserId()
+    if (room?.hostId === myId) {
       socket.emit(EVENTS.PLAYER_NEXT)
     }
   }, [socket])
@@ -38,7 +41,7 @@ export function usePlayer() {
   const { howlRef, soundIdRef, loadTrack } = useHowl(autoNext)
   const { fetchLyric } = useLyric()
 
-  // Connect sync (handles SEEK, PAUSE, RESUME + host reporting)
+  // Connect sync (handles SEEK, PAUSE, RESUME + conductor reporting)
   usePlayerSync(howlRef, soundIdRef)
 
   // Reset dedup ref on disconnect so reconnect PLAYER_PLAY is never blocked

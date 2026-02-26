@@ -164,7 +164,7 @@ export function QueueDrawer({ open, onOpenChange, onRemoveFromQueue, onReorderQu
           {queue.length === 0 ? (
             <div className="flex h-40 items-center justify-center text-muted-foreground">播放列表为空</div>
           ) : (
-            <div className="p-2">
+            <div className="w-full overflow-hidden p-2">
               <AnimatePresence initial={false}>
                 {queue.map((track, i) => (
                   <motion.div

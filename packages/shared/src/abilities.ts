@@ -22,7 +22,7 @@ export type AppAbility = PureAbility<[Actions, Subjects]>
 /**
  * Define CASL abilities for a given user role.
  *
- * - Host: manage all (播放控制 + 队列 + 房间设置 + 角色管理 + 投票否决)
+ * - Owner: manage all (播放控制 + 队列 + 房间设置 + 角色管理 + 投票否决)
  * - Admin: 全部播放控制 + 全部队列权限
  * - Member: 仅添加歌曲 + 发起投票
  */
@@ -30,7 +30,7 @@ export function defineAbilityFor(role: UserRole): AppAbility {
   const { can, build } = new AbilityBuilder<AppAbility>(PureAbility)
 
   switch (role) {
-    case 'host':
+    case 'owner':
       can('manage', 'all')
       break
     case 'admin':

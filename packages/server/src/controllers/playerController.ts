@@ -91,7 +91,7 @@ export function registerPlayerController(io: TypedServer, socket: TypedSocket) {
     }
   })
 
-  // Host reports real playback position (keeps server-side playState accurate
+  // Conductor reports real playback position (keeps server-side playState accurate
   // for mid-song joiners and reconnection recovery — no forwarding to clients)
   socket.on(EVENTS.PLAYER_SYNC, (raw) => {
     try {
@@ -103,16 +103,16 @@ export function registerPlayerController(io: TypedServer, socket: TypedSocket) {
       if (!mapping) return
       const room = roomRepo.get(mapping.roomId)
       if (!room) return
-      // Only accept reports from the host
+      // Only accept reports from the conductor
       if (room.hostId !== mapping.userId) return
 
-      // Reject stale reports from a sleeping host: if the reported position is
-      // far behind the server's estimate, the host likely just woke from sleep
+      // Reject stale reports from a sleeping conductor: if the reported position is
+      // far behind the server's estimate, the conductor likely just woke from sleep
       // and hasn't drift-corrected yet.  Accepting this would poison the server
       // state and cause all other clients to seek backwards.
       if (room.playState.isPlaying) {
         const estimated = estimateCurrentTime(mapping.roomId)
-        if (!playerService.validateHostReport(mapping.roomId, currentTime, estimated)) {
+        if (!playerService.validateConductorReport(mapping.roomId, currentTime, estimated)) {
           return
         }
       }

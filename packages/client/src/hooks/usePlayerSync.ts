@@ -6,13 +6,14 @@ import {
   MAX_RATE_ADJUSTMENT,
   DRIFT_SMOOTH_ALPHA,
   DRIFT_PLUGIN_SEEK_THRESHOLD_MS,
-  HOST_REPORT_INTERVAL_MS,
-  HOST_REPORT_FAST_INTERVAL_MS,
-  HOST_REPORT_FAST_DURATION_MS,
+  CONDUCTOR_REPORT_INTERVAL_MS,
+  CONDUCTOR_REPORT_FAST_INTERVAL_MS,
+  CONDUCTOR_REPORT_FAST_DURATION_MS,
   MAX_NETWORK_DELAY_S,
   SYNC_REQUEST_INTERVAL_MS,
   DRIFT_GRACE_PERIOD_MS,
 } from '@/lib/constants'
+import { storage } from '@/lib/storage'
 import { useSocketContext } from '@/providers/SocketProvider'
 import { usePlayerStore } from '@/stores/playerStore'
 import { useRoomStore } from '@/stores/roomStore'
@@ -80,7 +81,7 @@ export function usePlayerSync(howlRef: RefObject<Howl | null>, soundIdRef: RefOb
   // When true, next sync response seeds EMA directly instead of blending,
   // avoiding the cold-start lag after pause/resume/new-track.
   const emaColdStartRef = useRef(true)
-  // Timestamp when the current track started playing (for adaptive host reporting)
+  // Timestamp when the current track started playing (for adaptive conductor reporting)
   const trackStartTimeRef = useRef(0)
 
   const clearScheduled = () => {
@@ -202,14 +203,15 @@ export function usePlayerSync(howlRef: RefObject<Howl | null>, soundIdRef: RefOb
       if (!howlRef.current) return
       if (!howlRef.current.playing()) return
 
-      // Host is the authoritative playback source — skip drift correction
-      // to avoid a feedback loop where server estimate (based on host reports)
-      // pulls the host forward/backward.
-      const currentRole = useRoomStore.getState().currentUser?.role
-      if (currentRole === 'host') return
+      // Conductor (hostId) is the authoritative playback source — skip drift
+      // correction to avoid a feedback loop where server estimate (based on
+      // host reports) pulls the conductor forward/backward.
+      const { room: syncRoom } = useRoomStore.getState()
+      const myId = storage.getUserId()
+      if (syncRoom?.hostId === myId) return
 
       // Grace period after new track: skip rate micro-adjustments
-      // (estimateCurrentTime is unreliable until host submits at least
+      // (estimateCurrentTime is unreliable until conductor submits at least
       // one progress report), but still allow hard seek for large drifts.
       const inGracePeriod = Date.now() - trackStartTimeRef.current < DRIFT_GRACE_PERIOD_MS
 
@@ -251,7 +253,7 @@ export function usePlayerSync(howlRef: RefObject<Howl | null>, soundIdRef: RefOb
         smoothedDriftRef.current = 0
         emaColdStartRef.current = true
       } else if (absDrift > DRIFT_DEAD_ZONE_MS / 1000 && !rateDisabledRef.current) {
-        // 宽限期内跳过 rate 微调 — 等 host report 稳定后再启用
+        // 宽限期内跳过 rate 微调 — 等 conductor report 稳定后再启用
         if (inGracePeriod) return
         // Proportional rate correction: larger drift → stronger correction,
         // naturally decelerating as we approach the target — no oscillation.
@@ -312,8 +314,9 @@ export function usePlayerSync(howlRef: RefObject<Howl | null>, soundIdRef: RefOb
   // -----------------------------------------------------------------------
   useEffect(() => {
     const interval = setInterval(() => {
-      const currentRole = useRoomStore.getState().currentUser?.role
-      if (currentRole !== 'host') {
+      const { room: r2 } = useRoomStore.getState()
+      const myId = storage.getUserId()
+      if (r2?.hostId !== myId) {
         socket.emit(EVENTS.PLAYER_SYNC_REQUEST)
       }
     }, SYNC_REQUEST_INTERVAL_MS)
@@ -321,7 +324,7 @@ export function usePlayerSync(howlRef: RefObject<Howl | null>, soundIdRef: RefOb
   }, [socket])
 
   // -----------------------------------------------------------------------
-  // Host progress reporting (keeps server-side playState accurate for
+  // Conductor progress reporting (keeps server-side playState accurate for
   // mid-song joiners and reconnection recovery).
   // Adaptive: fast interval (2s) for the first 10s of a new track,
   // then slows to the normal interval (5s) to reduce overhead.
@@ -330,8 +333,9 @@ export function usePlayerSync(howlRef: RefObject<Howl | null>, soundIdRef: RefOb
     let timerId: ReturnType<typeof setTimeout> | null = null
 
     const report = () => {
-      const currentUser = useRoomStore.getState().currentUser
-      if (currentUser?.role === 'host' && howlRef.current?.playing()) {
+      const { room } = useRoomStore.getState()
+      const myId = storage.getUserId()
+      if (room?.hostId === myId && howlRef.current?.playing()) {
         socket.emit(EVENTS.PLAYER_SYNC, {
           currentTime: howlRef.current.seek() as number,
           hostServerTime: getServerTime(),
@@ -339,16 +343,18 @@ export function usePlayerSync(howlRef: RefObject<Howl | null>, soundIdRef: RefOb
       }
       // Schedule next report — fast if within the initial window, slow otherwise
       const elapsed = Date.now() - trackStartTimeRef.current
-      const interval = elapsed < HOST_REPORT_FAST_DURATION_MS ? HOST_REPORT_FAST_INTERVAL_MS : HOST_REPORT_INTERVAL_MS
+      const interval =
+        elapsed < CONDUCTOR_REPORT_FAST_DURATION_MS ? CONDUCTOR_REPORT_FAST_INTERVAL_MS : CONDUCTOR_REPORT_INTERVAL_MS
       timerId = setTimeout(report, interval)
     }
 
-    // When the tab returns from background, immediately send a host report
+    // When the tab returns from background, immediately send a conductor report
     // so the server's playState is refreshed after potential setTimeout throttling.
     const onVisibilityChange = () => {
       if (document.visibilityState !== 'visible') return
-      const currentUser = useRoomStore.getState().currentUser
-      if (currentUser?.role === 'host' && howlRef.current?.playing()) {
+      const { room: r } = useRoomStore.getState()
+      const myId = storage.getUserId()
+      if (r?.hostId === myId && howlRef.current?.playing()) {
         socket.emit(EVENTS.PLAYER_SYNC, {
           currentTime: howlRef.current.seek() as number,
           hostServerTime: getServerTime(),
@@ -357,7 +363,7 @@ export function usePlayerSync(howlRef: RefObject<Howl | null>, soundIdRef: RefOb
     }
     document.addEventListener('visibilitychange', onVisibilityChange)
 
-    timerId = setTimeout(report, HOST_REPORT_FAST_INTERVAL_MS)
+    timerId = setTimeout(report, CONDUCTOR_REPORT_FAST_INTERVAL_MS)
 
     return () => {
       if (timerId) clearTimeout(timerId)

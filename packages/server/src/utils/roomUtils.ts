@@ -1,7 +1,7 @@
 import type { RoomState } from '@music-together/shared'
 import type { RoomData } from '../repositories/types.js'
 
-/** 将内部 RoomData 转为客户端可见的 RoomState（不含密码） */
+/** 将内部 RoomData 转为客户端可见的 RoomState */
 export function toPublicRoomState(data: RoomData): RoomState {
   return {
     id: data.id,
@@ -9,6 +9,7 @@ export function toPublicRoomState(data: RoomData): RoomState {
     creatorId: data.creatorId,
     hostId: data.hostId,
     hasPassword: data.password !== null,
+    password: data.password ?? null,
     audioQuality: data.audioQuality,
     users: data.users,
     queue: data.queue,

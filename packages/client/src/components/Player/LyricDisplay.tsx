@@ -111,6 +111,7 @@ export function LyricDisplay() {
   const fontWeight = useSettingsStore((s) => s.lyricFontWeight)
   const fontSize = useSettingsStore((s) => s.lyricFontSize)
   const translationFontSize = useSettingsStore((s) => s.lyricTranslationFontSize)
+  const romanFontSize = useSettingsStore((s) => s.lyricRomanFontSize)
 
   // LRC 解析（仅在没有 TTML 时使用）
   const lrcLines = useMemo(() => mergeLyrics(lyric, tlyric), [lyric, tlyric])
@@ -136,6 +137,7 @@ export function LyricDisplay() {
           fontWeight,
           '--amll-lp-font-size': `clamp(16px, calc(min(5vh, 7vw) * ${fontSize / 100}), 80px)`,
           '--amll-translated-font-size': `${translationFontSize / 100}em`,
+          '--amll-roman-font-size': `${romanFontSize / 100}em`,
         } as React.CSSProperties
       }
     >

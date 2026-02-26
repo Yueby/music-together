@@ -61,8 +61,24 @@ function safeEnum<T extends string>(key: string, allowed: readonly T[], fallback
 }
 
 const LYRIC_ANCHORS = ['top', 'center', 'bottom'] as const
-const LYRIC_FONT_SIZES = [75, 90, 100, 110, 125, 150] as const
-const LYRIC_TRANS_FONT_SIZES = [50, 65, 75, 90, 100] as const
+
+/** 所有持久化设置项的默认值 — 供 store 层的 resettable 工厂使用 */
+export const SETTING_DEFAULTS = {
+  ttmlEnabled: true,
+  ttmlDbUrl: 'https://amlldb.bikonoo.com/ncm-lyrics/%s.ttml',
+  lyricAlignAnchor: 'center' as 'top' | 'center' | 'bottom',
+  lyricAlignPosition: 0.4,
+  lyricEnableSpring: true,
+  lyricEnableBlur: false,
+  lyricEnableScale: true,
+  lyricFontWeight: 600,
+  lyricFontSize: 75,
+  lyricTranslationFontSize: 60,
+  lyricRomanFontSize: 60,
+  bgFps: 30,
+  bgFlowSpeed: 2,
+  bgRenderScale: 0.5,
+} satisfies Record<string, unknown>
 
 export const storage = {
   /** Persistent user identity — generated once and stored in localStorage */
@@ -85,11 +101,11 @@ export const storage = {
   setVolume: (v: number) => safeSet('volume', String(v)),
 
   // Lyric settings
-  getLyricAlignAnchor: () => safeEnum('lyricAlignAnchor', LYRIC_ANCHORS, 'center'),
+  getLyricAlignAnchor: () => safeEnum('lyricAlignAnchor', LYRIC_ANCHORS, SETTING_DEFAULTS.lyricAlignAnchor),
   setLyricAlignAnchor: (v: (typeof LYRIC_ANCHORS)[number]) => safeSet('lyricAlignAnchor', v),
 
   getLyricAlignPosition: () => {
-    const pos = safeFloat('lyricAlignPosition', 0.4)
+    const pos = safeFloat('lyricAlignPosition', SETTING_DEFAULTS.lyricAlignPosition)
     return Math.max(0, Math.min(1, pos))
   },
   setLyricAlignPosition: (v: number) => safeSet('lyricAlignPosition', String(v)),
@@ -104,46 +120,52 @@ export const storage = {
   setLyricEnableScale: (v: boolean) => safeSet('lyricEnableScale', String(v)),
 
   getLyricFontWeight: () => {
-    const w = safeInt('lyricFontWeight', 600)
-    return [400, 500, 600, 700].includes(w) ? w : 600
+    const w = safeInt('lyricFontWeight', SETTING_DEFAULTS.lyricFontWeight)
+    return Math.max(100, Math.min(900, w))
   },
   setLyricFontWeight: (v: number) => safeSet('lyricFontWeight', String(v)),
 
   getLyricFontSize: () => {
-    const size = safeInt('lyricFontSize', 100)
-    return (LYRIC_FONT_SIZES as readonly number[]).includes(size) ? size : 100
+    const size = safeInt('lyricFontSize', SETTING_DEFAULTS.lyricFontSize)
+    return Math.max(10, Math.min(200, size))
   },
   setLyricFontSize: (v: number) => safeSet('lyricFontSize', String(v)),
 
   getLyricTranslationFontSize: () => {
-    const size = safeInt('lyricTranslationFontSize', 65)
-    return (LYRIC_TRANS_FONT_SIZES as readonly number[]).includes(size) ? size : 65
+    const size = safeInt('lyricTranslationFontSize', SETTING_DEFAULTS.lyricTranslationFontSize)
+    return Math.max(10, Math.min(200, size))
   },
   setLyricTranslationFontSize: (v: number) => safeSet('lyricTranslationFontSize', String(v)),
+
+  getLyricRomanFontSize: () => {
+    const size = safeInt('lyricRomanFontSize', SETTING_DEFAULTS.lyricRomanFontSize)
+    return Math.max(10, Math.min(200, size))
+  },
+  setLyricRomanFontSize: (v: number) => safeSet('lyricRomanFontSize', String(v)),
 
   // TTML 在线逐词歌词
   getTtmlEnabled: () => safeGet('ttmlEnabled') !== 'false', // 默认开启
   setTtmlEnabled: (v: boolean) => safeSet('ttmlEnabled', String(v)),
 
-  getTtmlDbUrl: () => safeGet('ttmlDbUrl') || 'https://amlldb.bikonoo.com/ncm-lyrics/%s.ttml',
+  getTtmlDbUrl: () => safeGet('ttmlDbUrl') || SETTING_DEFAULTS.ttmlDbUrl,
   setTtmlDbUrl: (v: string) => safeSet('ttmlDbUrl', v),
 
   // Background settings
   getBgFps: () => {
-    const fps = safeInt('bgFps', 30)
-    return [15, 30, 60].includes(fps) ? fps : 30
+    const fps = safeInt('bgFps', SETTING_DEFAULTS.bgFps)
+    return [15, 30, 60].includes(fps) ? fps : SETTING_DEFAULTS.bgFps
   },
   setBgFps: (v: number) => safeSet('bgFps', String(v)),
 
   getBgFlowSpeed: () => {
-    const speed = safeFloat('bgFlowSpeed', 2)
+    const speed = safeFloat('bgFlowSpeed', SETTING_DEFAULTS.bgFlowSpeed)
     return Math.max(0.5, Math.min(5, speed))
   },
   setBgFlowSpeed: (v: number) => safeSet('bgFlowSpeed', String(v)),
 
   getBgRenderScale: () => {
-    const scale = safeFloat('bgRenderScale', 0.5)
-    return [0.25, 0.5, 0.75, 1].includes(scale) ? scale : 0.5
+    const scale = safeFloat('bgRenderScale', SETTING_DEFAULTS.bgRenderScale)
+    return [0.25, 0.5, 0.75, 1].includes(scale) ? scale : SETTING_DEFAULTS.bgRenderScale
   },
   setBgRenderScale: (v: number) => safeSet('bgRenderScale', String(v)),
 

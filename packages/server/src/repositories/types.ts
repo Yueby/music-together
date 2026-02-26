@@ -5,10 +5,10 @@ export interface RoomData {
   id: string
   name: string
   password: string | null
-  /** 房间创建者 ID（永久不变，创建者可自动回收 host） */
+  /** 房间创建者 ID（永久不变，创建者为 owner，加入时自动成为 conductor） */
   creatorId: string
   hostId: string
-  /** 持久化 admin 用户 ID 集合（不受 grace period 影响） */
+  /** 持久化 admin 用户 ID 集合（离开/回来自动恢复 admin） */
   adminUserIds: Set<string>
   audioQuality: AudioQuality
   users: User[]

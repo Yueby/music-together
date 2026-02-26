@@ -86,7 +86,11 @@ export function PlaylistDetail({
 
   // Button label
   let addAllLabel: string
-  if (isQueueFull) {
+  if (loading) {
+    addAllLabel = '加载中…'
+  } else if (tracks.length === 0) {
+    addAllLabel = '添加全部'
+  } else if (isQueueFull) {
     addAllLabel = '队列已满'
   } else if (uniqueTracks.length === 0) {
     addAllLabel = '全部已添加'

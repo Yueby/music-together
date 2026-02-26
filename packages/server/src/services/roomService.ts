@@ -4,14 +4,8 @@ import { nanoid } from 'nanoid'
 import type { RoomData } from '../repositories/types.js'
 import { roomRepo } from '../repositories/roomRepository.js'
 import { chatRepo } from '../repositories/chatRepository.js'
-import {
-  scheduleDeletion,
-  cancelDeletionTimer,
-  startRoleGrace,
-  cancelRoleGrace,
-  getGracedRole,
-  hasHostGrace,
-} from './roomLifecycleService.js'
+import { scheduleDeletion, cancelDeletionTimer } from './roomLifecycleService.js'
+import { estimateCurrentTime } from './syncService.js'
 import { updateVoteThreshold } from './voteService.js'
 import { logger } from '../utils/logger.js'
 import type { TypedServer } from '../middleware/types.js'
@@ -20,6 +14,35 @@ import type { TypedServer } from '../middleware/types.js'
 // in controllers don't need import changes.
 export { toPublicRoomState } from '../utils/roomUtils.js'
 export { broadcastRoomList } from './roomLifecycleService.js'
+
+// ---------------------------------------------------------------------------
+// Conductor (hostId) election — auto-selects the highest priority online user
+// ---------------------------------------------------------------------------
+
+/**
+ * 从在线用户中选出最高优先级的 conductor（播放主持）。
+ * 优先级：owner > admin > member（按加入顺序）。
+ * 若 conductor 变更且正在播放，刷新 playState 时间戳以确保
+ * 新 conductor 的首次 report 不被 validateConductorReport 拒绝。
+ */
+function electConductor(room: RoomData): boolean {
+  const prev = room.hostId
+  const candidate =
+    room.users.find((u) => u.role === 'owner') ?? room.users.find((u) => u.role === 'admin') ?? room.users[0]
+  room.hostId = candidate?.id ?? room.hostId
+
+  if (room.hostId !== prev) {
+    if (room.playState.isPlaying) {
+      room.playState = {
+        ...room.playState,
+        currentTime: estimateCurrentTime(room.id),
+        serverTimestamp: Date.now(),
+      }
+    }
+    return true
+  }
+  return false
+}
 
 // ---------------------------------------------------------------------------
 // Public API — Room CRUD
@@ -35,7 +58,7 @@ export function createRoom(
   const roomId = nanoid(6).toUpperCase()
   const userId = persistentUserId || socketId
 
-  const user: User = { id: userId, nickname, role: 'host' }
+  const user: User = { id: userId, nickname, role: 'owner' }
 
   const room: RoomData = {
     id: roomId,
@@ -77,99 +100,36 @@ export function joinRoom(
   cancelDeletionTimer(roomId)
 
   const userId = persistentUserId || socketId
-
-  // Check if this user has a saved host role from the grace period
-  const gracedRole = getGracedRole(roomId, userId)
   const isCreator = userId === room.creatorId
-  const isReturningHost = room.hostId === userId
 
-  // Cancel the user's own grace timer if they are returning
-  if (gracedRole) {
-    cancelRoleGrace(roomId, userId)
+  // Determine the permission role — purely based on identity, no grace logic
+  function resolveRole(): User['role'] {
+    if (isCreator) return 'owner'
+    if (room!.adminUserIds.has(userId)) return 'admin'
+    return 'member'
   }
-
-  let hostChanged = false
 
   // Rejoin — update existing user entry instead of creating duplicate
   const existing = room.users.find((u) => u.id === userId)
   if (existing) {
     existing.nickname = nickname
-    // Creator always reclaims host
-    if (isCreator && room.hostId !== userId) {
-      hostChanged = reclaimHostForCreator(room, userId, nickname)
-      existing.role = 'host'
-    } else if (gracedRole === 'host') {
-      existing.role = 'host'
-      room.hostId = userId
-      hostChanged = true
-      logger.info(`Restored host role for ${nickname} on rejoin in room ${roomId}`, { roomId })
-    } else if (room.hostId === existing.id) {
-      existing.role = 'host'
-    } else if (room.adminUserIds.has(userId)) {
-      existing.role = 'admin'
-    }
+    existing.role = resolveRole()
     roomRepo.setSocketMapping(socketId, roomId, userId)
+    const hostChanged = electConductor(room)
     return { room, user: existing, hostChanged }
   }
 
-  // Determine the role for this new user entry
-  let role: User['role'] = 'member'
-
-  if (isCreator) {
-    // Creator always reclaims host
-    if (room.hostId !== userId) {
-      hostChanged = reclaimHostForCreator(room, userId, nickname)
-    }
-    role = 'host'
-    room.hostId = userId
-    logger.info(`Creator ${nickname} reclaimed host in room ${roomId}`, { roomId })
-  } else if (gracedRole === 'host' || isReturningHost) {
-    // Returning host (with or without grace) — restore host role
-    role = 'host'
-    room.hostId = userId
-    hostChanged = true
-    logger.info(`Host ${nickname} reclaimed room ${roomId}`, { roomId })
-  } else if (room.adminUserIds.has(userId)) {
-    // Persistent admin — restore admin role
-    role = 'admin'
-    logger.info(`Admin ${nickname} restored from persistent admin list in room ${roomId}`, { roomId })
-  } else if (room.users.length === 0) {
-    // Empty room — check if a host grace is active
-    if (hasHostGrace(roomId)) {
-      // Host grace period is active — don't overwrite hostId, join as member
-      logger.info(`User ${nickname} joined empty room ${roomId} as member (host grace active)`, { roomId })
-    } else {
-      // No grace period — normal host takeover
-      role = 'host'
-      room.hostId = userId
-      logger.info(`User ${nickname} became host of empty room ${roomId}`, { roomId })
-    }
-  }
-
+  // New user entry
+  const role = resolveRole()
   const user: User = { id: userId, nickname, role }
   room.users.push(user)
   roomRepo.setSocketMapping(socketId, roomId, userId)
 
+  // Re-elect conductor (owner joining takes priority over current conductor)
+  const hostChanged = electConductor(room)
+
   logger.info(`User ${nickname} joined room ${roomId} as ${role}`, { roomId })
   return { room, user, hostChanged }
-}
-
-/**
- * 创建者回收 host 时，将当前 host 降为 admin 并记入 adminUserIds。
- * 返回 true 表示 host 发生了变更。
- */
-function reclaimHostForCreator(room: RoomData, creatorUserId: string, creatorNickname: string): boolean {
-  const currentHost = room.users.find((u) => u.id === room.hostId)
-  if (currentHost && currentHost.id !== creatorUserId) {
-    currentHost.role = 'admin'
-    room.adminUserIds.add(currentHost.id)
-    logger.info(
-      `Creator ${creatorNickname} reclaimed host; ${currentHost.nickname} demoted to admin in room ${room.id}`,
-      { roomId: room.id },
-    )
-  }
-  room.hostId = creatorUserId
-  return true
 }
 
 export function leaveRoom(
@@ -204,21 +164,14 @@ export function leaveRoom(
   room.users = room.users.filter((u) => u.id !== userId)
   roomRepo.deleteSocketMapping(socketId)
 
-  // Start role grace period for host only — admin roles are now permanently
-  // persisted in room.adminUserIds and don't need a grace timer.
-  if (user.role === 'host') {
-    startRoleGrace(roomId, userId, user.role, io)
-  }
-
   // If room is empty, schedule deletion after grace period
   if (room.users.length === 0) {
     scheduleDeletion(roomId, io)
     return { roomId, user, room, hostChanged: false, voteUpdated: false }
   }
 
-  // hostChanged stays false — hostId is intentionally preserved during grace period
-  // The actual transfer happens when the grace timer expires in roomLifecycleService
-  let hostChanged = false
+  // Re-elect conductor immediately — no grace period
+  const hostChanged = electConductor(room)
 
   // Update active vote threshold so it doesn't become impossible to pass
   const voteUpdated = updateVoteThreshold(roomId, room.users.length, user.id)
@@ -265,8 +218,8 @@ export function setUserRole(roomId: string, targetUserId: string, role: 'admin' 
   if (!room) return false
   const user = room.users.find((u) => u.id === targetUserId)
   if (!user) return false
-  // Cannot change host's role via this method
-  if (user.id === room.hostId) return false
+  // Cannot change owner's role
+  if (user.role === 'owner') return false
   user.role = role
   // Sync persistent admin set
   if (role === 'admin') {
@@ -274,6 +227,8 @@ export function setUserRole(roomId: string, targetUserId: string, role: 'admin' 
   } else {
     room.adminUserIds.delete(targetUserId)
   }
+  // Re-elect conductor (admin promotion/demotion may change priority)
+  electConductor(room)
   return true
 }
 
@@ -311,7 +266,7 @@ export interface JoinValidationResult {
   errorMessage?: string
   /** Whether this is a rejoin (user already in room or same socket mapping) — skip join notification */
   isRejoin: boolean
-  /** Whether password should be bypassed (rejoin, already in room, or returning host) */
+  /** Whether password should be bypassed (rejoin, creator, or persistent admin) */
   skipPassword: boolean
 }
 
@@ -339,19 +294,11 @@ export function validateJoinRequest(
   const existingMapping = roomRepo.getSocketMapping(socketId)
   const effectiveUserId = persistentUserId || socketId
   const alreadyInRoom = room.users.some((u) => u.id === effectiveUserId)
-  const isReturningPrivileged = getGracedRole(roomId, effectiveUserId) !== null
-  const isReturningHost = room.hostId === effectiveUserId && !alreadyInRoom
   const isCreator = effectiveUserId === room.creatorId
   const isPersistentAdmin = room.adminUserIds.has(effectiveUserId)
 
-  // Password bypass: same socket mapping, already in room, returning host/creator/admin, or returning privileged user
-  const skipPassword =
-    existingMapping?.roomId === roomId ||
-    alreadyInRoom ||
-    isReturningHost ||
-    isReturningPrivileged ||
-    isCreator ||
-    isPersistentAdmin
+  // Password bypass: same socket mapping, already in room, creator, or persistent admin
+  const skipPassword = existingMapping?.roomId === roomId || alreadyInRoom || isCreator || isPersistentAdmin
   // Notification skip: only when user is literally still in the room
   const isRejoin = existingMapping?.roomId === roomId || alreadyInRoom
 

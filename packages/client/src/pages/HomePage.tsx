@@ -12,6 +12,7 @@ import { ACTION_LOADING_TIMEOUT_MS } from '@/lib/constants'
 import { storage } from '@/lib/storage'
 import { useSocketContext } from '@/providers/SocketProvider'
 import { useRoomStore } from '@/stores/roomStore'
+import { useChatStore } from '@/stores/chatStore'
 import { EVENTS, ERROR_CODE, type RoomListItem, type RoomState } from '@music-together/shared'
 import { Github, Headphones } from 'lucide-react'
 import { motion } from 'motion/react'
@@ -69,7 +70,7 @@ export default function HomePage() {
     }
   }, [actionLoading])
 
-  // Listen for room created / room state events for navigation
+  // Listen for room created / room state / chat history events for navigation
   useEffect(() => {
     const onCreated = () => {
       // currentUser will be auto-derived when onState fires and calls setRoom
@@ -85,6 +86,13 @@ export default function HomePage() {
       setPasswordDialog({ open: false, room: null })
       setPasswordError(null)
       navigate(`/room/${roomState.id}`)
+    }
+
+    // 服务端在 ROOM_JOIN 后同时 emit ROOM_STATE + CHAT_HISTORY，
+    // 若不在这里监听 CHAT_HISTORY，消息会在 navigate 之前丢失
+    // （RoomPage 的 useChatSync 尚未挂载）。
+    const onChatHistory = (messages: import('@music-together/shared').ChatMessage[]) => {
+      useChatStore.getState().setMessages(messages)
     }
 
     const onError = (error: { code: string; message: string }) => {
@@ -120,11 +128,13 @@ export default function HomePage() {
 
     socket.on(EVENTS.ROOM_CREATED, onCreated)
     socket.on(EVENTS.ROOM_STATE, onState)
+    socket.on(EVENTS.CHAT_HISTORY, onChatHistory)
     socket.on(EVENTS.ROOM_ERROR, onError)
 
     return () => {
       socket.off(EVENTS.ROOM_CREATED, onCreated)
       socket.off(EVENTS.ROOM_STATE, onState)
+      socket.off(EVENTS.CHAT_HISTORY, onChatHistory)
       socket.off(EVENTS.ROOM_ERROR, onError)
     }
   }, [socket, navigate, setRoom])

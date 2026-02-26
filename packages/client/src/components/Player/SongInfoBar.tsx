@@ -6,11 +6,56 @@ import { MarqueeText } from '@/components/ui/marquee-text'
 import { usePlayerStore } from '@/stores/playerStore'
 import { MessageSquare, Volume2, VolumeX } from 'lucide-react'
 import { motion } from 'motion/react'
-import { memo, useCallback, useLayoutEffect, useRef } from 'react'
+import { memo, useCallback, useLayoutEffect, useRef, useState } from 'react'
 import { LAYOUT_TRANSITION, SPRING } from './constants'
 
 /** Must match PlayerControls.DESIGN_WIDTH so zoom factors are identical */
 const DESIGN_WIDTH = 300
+
+/**
+ * 音量控制组件：解决 Tooltip + Popover 共享 trigger 时 tooltip 闪现的问题。
+ * 核心策略：Popover 打开时通过 `open={false}` 强制隐藏外层 Tooltip。
+ */
+function VolumeControl({
+  volume,
+  setVolume,
+  toggleMute,
+}: {
+  volume: number
+  setVolume: (v: number) => void
+  toggleMute: () => void
+}) {
+  const [popoverOpen, setPopoverOpen] = useState(false)
+
+  return (
+    <Tooltip delayDuration={300} open={popoverOpen ? false : undefined}>
+      <Popover open={popoverOpen} onOpenChange={setPopoverOpen}>
+        <TooltipTrigger asChild>
+          <PopoverTrigger asChild>
+            <Button
+              variant="ghost"
+              size="icon"
+              className="h-9 w-9 text-white/70 hover:bg-white/10 active:scale-90 transition-transform"
+              aria-label={volume === 0 ? '取消静音' : '调节音量'}
+            >
+              {volume === 0 ? <VolumeX className="size-5" /> : <Volume2 className="size-5" />}
+            </Button>
+          </PopoverTrigger>
+        </TooltipTrigger>
+        <TooltipContent>音量</TooltipContent>
+        <PopoverContent side="top" align="center" className="flex w-44 items-center gap-2 rounded-xl px-3 py-2">
+          <Button variant="ghost" size="icon" className="h-7 w-7 shrink-0 text-white/70" onClick={toggleMute}>
+            {volume === 0 ? <VolumeX className="size-4" /> : <Volume2 className="size-4" />}
+          </Button>
+          <Slider min={0} max={100} value={[volume * 100]} onValueChange={([v]) => setVolume(v / 100)} />
+          <span className="w-8 shrink-0 text-right text-xs tabular-nums text-white/50">
+            {Math.round(volume * 100)}
+          </span>
+        </PopoverContent>
+      </Popover>
+    </Tooltip>
+  )
+}
 
 interface SongInfoBarProps {
   onOpenChat: () => void
@@ -73,37 +118,7 @@ export const SongInfoBar = memo(function SongInfoBar({ onOpenChat, chatUnreadCou
 
         {/* Right-bottom: volume + chat buttons (always visible, aligned to bottom) */}
         <div className="flex shrink-0 items-center">
-          <Tooltip delayDuration={300}>
-            <Popover>
-              <TooltipTrigger asChild>
-                <PopoverTrigger asChild>
-                  <Button
-                    variant="ghost"
-                    size="icon"
-                    className="h-9 w-9 text-white/70 hover:bg-white/10 active:scale-90 transition-transform"
-                    aria-label={volume === 0 ? '取消静音' : '调节音量'}
-                  >
-                    {volume === 0 ? <VolumeX className="size-5" /> : <Volume2 className="size-5" />}
-                  </Button>
-                </PopoverTrigger>
-              </TooltipTrigger>
-              <TooltipContent>音量</TooltipContent>
-              <PopoverContent side="top" align="center" className="flex w-44 items-center gap-2 rounded-xl px-3 py-2">
-                <Tooltip delayDuration={300}>
-                  <TooltipTrigger asChild>
-                    <Button variant="ghost" size="icon" className="h-7 w-7 shrink-0 text-white/70" onClick={toggleMute}>
-                      {volume === 0 ? <VolumeX className="size-4" /> : <Volume2 className="size-4" />}
-                    </Button>
-                  </TooltipTrigger>
-                  <TooltipContent>{volume === 0 ? '取消静音' : '静音'}</TooltipContent>
-                </Tooltip>
-                <Slider min={0} max={100} value={[volume * 100]} onValueChange={([v]) => setVolume(v / 100)} />
-                <span className="w-8 shrink-0 text-right text-xs tabular-nums text-white/50">
-                  {Math.round(volume * 100)}
-                </span>
-              </PopoverContent>
-            </Popover>
-          </Tooltip>
+          <VolumeControl volume={volume} setVolume={setVolume} toggleMute={toggleMute} />
           <Tooltip delayDuration={300}>
             <TooltipTrigger asChild>
               <motion.div whileTap={{ scale: 0.9 }}>
