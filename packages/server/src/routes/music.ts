@@ -131,24 +131,31 @@ router.get('/cover-proxy', async (req: Request, res: Response) => {
       headers: { 'User-Agent': 'Mozilla/5.0' },
     })
 
-    if (!response.ok || !response.body) {
+    if (!response.ok) {
       res.status(response.status).json({ error: 'Upstream fetch failed' })
       return
     }
 
+    // 这里不要直接 pipe web stream。
+    // 上游 CDN 超时/中断时，Readable 的异步 error 可能逃出当前 try/catch，导致 Node 进程崩溃。
+    // 封面图体积小，直接读成 buffer 更稳，失败也会在当前 await 中被 catch。
+    const arrayBuffer = await response.arrayBuffer()
+    const buffer = Buffer.from(arrayBuffer)
+
     // 透传 content-type，设置缓存（封面图不会频繁变化）
     const contentType = response.headers.get('content-type') || 'image/jpeg'
     res.setHeader('Content-Type', contentType)
+    res.setHeader('Content-Length', String(buffer.length))
     res.setHeader('Cache-Control', 'public, max-age=86400') // 24h 缓存
     res.setHeader('Access-Control-Allow-Origin', '*')
-
-    // Node 18+ fetch 返回 web ReadableStream，转换为 Node stream 流式输出
-    const { Readable } = await import('stream')
-    const nodeStream = Readable.fromWeb(response.body as import('stream/web').ReadableStream)
-    nodeStream.pipe(res)
+    res.status(200).end(buffer)
   } catch (err) {
-    logger.error('Cover proxy failed', err)
-    res.status(500).json({ error: 'Cover proxy failed' })
+    logger.error('Cover proxy failed', err, { imageUrl })
+    if (!res.headersSent) {
+      res.status(504).json({ error: 'Cover proxy failed' })
+    } else {
+      res.end()
+    }
   }
 })
 
