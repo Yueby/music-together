@@ -1,8 +1,10 @@
 import type { AudioQuality, MusicSource, PlayMode, PlayState, ScheduledPlayState, Track } from '@music-together/shared'
 import { EVENTS, ERROR_CODE, NTP } from '@music-together/shared'
 import { roomRepo } from '../repositories/roomRepository.js'
+import { nanoid } from 'nanoid'
 import { musicProvider } from './musicProvider.js'
 import * as queueService from './queueService.js'
+import * as trackFallbackService from './trackFallbackService.js'
 import * as authService from './authService.js'
 import { estimateCurrentTime } from './syncService.js'
 import { broadcastRoomList } from './roomLifecycleService.js'
@@ -17,6 +19,28 @@ import type { TypedServer, TypedSocket } from '../middleware/types.js'
 // ---------------------------------------------------------------------------
 
 const playMutexes = new Map<string, Promise<unknown>>()
+
+// ---------------------------------------------------------------------------
+// Auto fallback cooldown (prevents repeated attempts / ping-pong)
+// ---------------------------------------------------------------------------
+
+const autoFallbackCooldown = new Map<string, number>()
+
+function canAutoFallback(roomId: string, trackId: string): boolean {
+  const key = `${roomId}:${trackId}`
+  const until = autoFallbackCooldown.get(key)
+  if (!until) return true
+  if (Date.now() >= until) {
+    autoFallbackCooldown.delete(key)
+    return true
+  }
+  return false
+}
+
+function markAutoFallback(roomId: string, trackId: string, ms: number): void {
+  const key = `${roomId}:${trackId}`
+  autoFallbackCooldown.set(key, Date.now() + ms)
+}
 
 function withPlayMutex<T>(roomId: string, fn: () => Promise<T>): Promise<T> {
   const prev = playMutexes.get(roomId) ?? Promise.resolve()
@@ -126,17 +150,105 @@ async function _playTrackInRoom(io: TypedServer, roomId: string, track: Track): 
         const isVip = resolved.vip
         const hint = isVip && !cookie ? '（VIP 歌曲，需要有用户登录 VIP 账号）' : ''
         logger.warn(`Cannot get stream URL for "${resolved.title}"${hint}, removing from queue`, { roomId })
-        // Auto-remove the invalid track from the queue
-        queueService.removeTrack(roomId, resolved.id)
-        const room2 = roomRepo.get(roomId)
-        if (room2) io.to(roomId).emit(EVENTS.QUEUE_UPDATED, { queue: room2.queue })
-        io.to(roomId).emit(EVENTS.ROOM_ERROR, {
-          code: ERROR_CODE.STREAM_FAILED,
-          message: `无法获取「${resolved.title}」的播放链接${hint}，已从列表移除`,
-        })
-        return false
+
+        // -------------------------------------------------------------------
+        // Auto fallback (netease <-> tencent)
+        // -------------------------------------------------------------------
+        if (
+          config.autoFallback.enabled &&
+          (resolved.source === 'netease' || resolved.source === 'tencent') &&
+          canAutoFallback(roomId, resolved.id)
+        ) {
+          // Prevent repeated fallback attempts for this queue item
+          markAutoFallback(roomId, resolved.id, 60_000)
+          const fromSource = resolved.source
+          const trackTitle = resolved.title
+          const toSource = trackFallbackService.getFallbackTargetSource(fromSource)
+          if (toSource) {
+            const attemptId = nanoid()
+            io.to(roomId).emit(EVENTS.ROOM_AUTO_FALLBACK, {
+              attemptId,
+              status: 'trying',
+              fromSource,
+              toSource,
+              trackTitle,
+              reasonType: isVip && !cookie ? 'VIP_REQUIRED' : 'UNKNOWN',
+              reasonDetail: isVip && !cookie ? 'VIP 歌曲未登录' : undefined,
+            })
+
+            try {
+              const best = await trackFallbackService.findBestAlternativeTrack(resolved, toSource)
+              if (best) {
+                const cookie2 = authService.getAnyCookie(best.track.source, roomId)
+                const url2 = await resolveStreamUrl(best.track.source, best.track.urlId, room.audioQuality, cookie2 ?? undefined)
+                if (url2) {
+                  const replacement: Track = {
+                    ...best.track,
+                    id: resolved.id, // keep stable id so queue/current references remain consistent
+                    requestedBy: resolved.requestedBy,
+                    streamUrl: url2,
+                  }
+
+                  // Replace in queue (if present) before playing
+                  const roomBefore = roomRepo.get(roomId)
+                  if (roomBefore) {
+                    roomBefore.queue = roomBefore.queue.map((t) => (t.id === resolved.id ? replacement : t))
+                    io.to(roomId).emit(EVENTS.QUEUE_UPDATED, { queue: roomBefore.queue })
+                  }
+
+                  io.to(roomId).emit(EVENTS.ROOM_AUTO_FALLBACK, {
+                    attemptId,
+                    status: 'success',
+                    fromSource,
+                    toSource,
+                    trackTitle,
+                  })
+
+                  // Continue playback with replacement
+                  resolved.source = replacement.source
+                  resolved.sourceId = replacement.sourceId
+                  resolved.urlId = replacement.urlId
+                  resolved.lyricId = replacement.lyricId
+                  resolved.picId = replacement.picId
+                  resolved.vip = replacement.vip
+                  resolved.album = replacement.album
+                  resolved.artist = replacement.artist
+                  resolved.title = replacement.title
+                  resolved.cover = replacement.cover
+                  resolved.streamUrl = replacement.streamUrl
+                }
+              }
+            } catch (fallbackErr) {
+              logger.error('Auto fallback failed', fallbackErr, { roomId })
+            }
+
+            if (!resolved.streamUrl) {
+              io.to(roomId).emit(EVENTS.ROOM_AUTO_FALLBACK, {
+                attemptId,
+                status: 'failed',
+                fromSource,
+                toSource,
+                trackTitle,
+                reasonType: isVip && !cookie ? 'VIP_REQUIRED' : 'UNKNOWN',
+              })
+            }
+          }
+        }
+
+        // If still no streamUrl, follow original failure path
+        if (!resolved.streamUrl) {
+          // Auto-remove the invalid track from the queue
+          queueService.removeTrack(roomId, resolved.id)
+          const room2 = roomRepo.get(roomId)
+          if (room2) io.to(roomId).emit(EVENTS.QUEUE_UPDATED, { queue: room2.queue })
+          io.to(roomId).emit(EVENTS.ROOM_ERROR, {
+            code: ERROR_CODE.STREAM_FAILED,
+            message: `无法获取「${resolved.title}」的播放链接${hint}，已从列表移除`,
+          })
+          return false
+        }
       }
-      resolved.streamUrl = url
+      resolved.streamUrl = url ?? resolved.streamUrl
     } catch (err) {
       logger.error(`getStreamUrl failed for ${resolved.urlId}`, err, { roomId })
       // Auto-remove on unexpected failure too

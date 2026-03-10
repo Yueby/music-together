@@ -22,6 +22,22 @@ export type ErrorCode = (typeof ERROR_CODE)[keyof typeof ERROR_CODE]
 
 export type MusicSource = 'netease' | 'tencent' | 'kugou'
 
+export type AutoFallbackStatus = 'trying' | 'success' | 'failed'
+
+export type AutoFallbackReasonType = 'VIP_REQUIRED' | 'COPYRIGHT_RESTRICTED' | 'NO_RESOURCE' | 'TIMEOUT' | 'UNKNOWN'
+
+export interface RoomAutoFallbackEvent {
+  /** Correlates trying/success/failed toasts */
+  attemptId: string
+  status: AutoFallbackStatus
+  fromSource: Exclude<MusicSource, 'kugou'>
+  toSource: Exclude<MusicSource, 'kugou'>
+  trackTitle: string
+  reasonType?: AutoFallbackReasonType
+  /** Safe, short detail suitable for UI (no URLs/cookies/stack traces). */
+  reasonDetail?: string
+}
+
 export type UserRole = 'owner' | 'admin' | 'member'
 
 export type PlayMode = 'sequential' | 'loop-all' | 'loop-one' | 'shuffle'

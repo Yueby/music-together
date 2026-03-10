@@ -15,6 +15,7 @@ import type {
   UserRole,
   VoteAction,
   VoteState,
+  RoomAutoFallbackEvent,
 } from './types.js'
 
 /** 服务端 → 客户端 事件接口 */
@@ -23,6 +24,7 @@ export interface ServerToClientEvents {
   [EVENTS.ROOM_STATE]: (room: RoomState) => void
   [EVENTS.ROOM_REJOIN_TOKEN]: (data: { roomId: string; token: string; expiresAt: number }) => void
   [EVENTS.ROOM_ERROR]: (error: { code: string; message: string }) => void
+  [EVENTS.ROOM_AUTO_FALLBACK]: (data: RoomAutoFallbackEvent) => void
   [EVENTS.ROOM_USER_JOINED]: (user: User) => void
   [EVENTS.ROOM_USER_LEFT]: (user: User) => void
   [EVENTS.ROOM_SETTINGS]: (settings: {
@@ -87,9 +89,13 @@ export interface ClientToServerEvents {
   [EVENTS.PLAYER_SET_MODE]: (data: { mode: PlayMode }) => void
 
   [EVENTS.QUEUE_ADD]: (data: { track: Track }) => void
+  [EVENTS.QUEUE_INSERT_AFTER_CURRENT]: (data: { track: Track }) => void
   [EVENTS.QUEUE_REMOVE]: (data: { trackId: string }) => void
   [EVENTS.QUEUE_REORDER]: (data: { trackIds: string[] }) => void
   [EVENTS.QUEUE_CLEAR]: () => void
+
+  // Queue batch
+  [EVENTS.QUEUE_ADD_BATCH]: (data: { tracks: Track[]; playlistName?: string }) => void
 
   [EVENTS.CHAT_MESSAGE]: (data: { content: string }) => void
 
@@ -105,9 +111,6 @@ export interface ClientToServerEvents {
 
   // Playlist
   [EVENTS.PLAYLIST_GET_MY]: (data: { platform: MusicSource }) => void
-
-  // Queue batch
-  [EVENTS.QUEUE_ADD_BATCH]: (data: { tracks: Track[]; playlistName?: string }) => void
 
   // NTP clock sync
   [EVENTS.NTP_PING]: (data: { clientPingId: number; lastRttMs?: number }) => void

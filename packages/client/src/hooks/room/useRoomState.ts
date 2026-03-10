@@ -2,7 +2,7 @@ import { useSocketContext } from '@/providers/SocketProvider'
 import { useRoomStore } from '@/stores/roomStore'
 import { storage } from '@/lib/storage'
 import { ERROR_CODE, EVENTS } from '@music-together/shared'
-import type { AudioQuality, RoomState, User, UserRole } from '@music-together/shared'
+import type { AudioQuality, RoomAutoFallbackEvent, RoomState, User, UserRole } from '@music-together/shared'
 import { useEffect, useRef } from 'react'
 import { useNavigate } from 'react-router-dom'
 import { toast } from 'sonner'
@@ -78,6 +78,46 @@ export function useRoomState() {
       store.updateRoom({ users: updatedUsers })
     }
 
+    const sourceLabel = (source: 'netease' | 'tencent') => (source === 'netease' ? '网易云' : 'QQ音乐')
+
+    const onAutoFallback = (data: RoomAutoFallbackEvent) => {
+      const id = `auto-fallback:${data.attemptId}`
+      const from = sourceLabel(data.fromSource)
+      const to = sourceLabel(data.toSource)
+
+      if (data.status === 'trying') {
+        const reasonLabel =
+          data.reasonType === 'VIP_REQUIRED'
+            ? '无权限'
+            : data.reasonType === 'COPYRIGHT_RESTRICTED'
+              ? '版权限制'
+              : data.reasonType === 'NO_RESOURCE'
+                ? '无资源'
+                : data.reasonType === 'TIMEOUT'
+                  ? '超时'
+                  : '不可用'
+
+        toast.loading(`${from} ${reasonLabel}，正在尝试使用 ${to} 点播…`, { id })
+        return
+      }
+
+      if (data.status === 'success') {
+        toast.success(`已切换到 ${to}，点播成功：${data.trackTitle}`, { id })
+        return
+      }
+
+      // failed
+      type ReasonType = NonNullable<RoomAutoFallbackEvent['reasonType']>
+      const reasonMap: Partial<Record<ReasonType, string>> = {
+        VIP_REQUIRED: 'VIP/权限',
+        COPYRIGHT_RESTRICTED: '版权限制',
+        NO_RESOURCE: '无资源',
+        TIMEOUT: '超时',
+      }
+      const reasonText = data.reasonType ? reasonMap[data.reasonType] ?? null : null
+      toast.error(reasonText ? `自动换源失败：${data.trackTitle}（${reasonText}）` : `自动换源失败：${data.trackTitle}`, { id })
+    }
+
     const onError = (error: { code: string; message: string }) => {
       // WRONG_PASSWORD is handled by RoomPage's own UI (gate password field),
       // so skip the generic toast to avoid duplicate feedback.
@@ -95,6 +135,7 @@ export function useRoomState() {
     socket.on(EVENTS.ROOM_USER_LEFT, onUserLeft)
     socket.on(EVENTS.ROOM_SETTINGS, onSettings)
     socket.on(EVENTS.ROOM_ROLE_CHANGED, onRoleChanged)
+    socket.on(EVENTS.ROOM_AUTO_FALLBACK, onAutoFallback)
     socket.on(EVENTS.ROOM_ERROR, onError)
 
     // If room was already set before this hook mounted (e.g. HomePage consumed
@@ -112,6 +153,7 @@ export function useRoomState() {
       socket.off(EVENTS.ROOM_USER_LEFT, onUserLeft)
       socket.off(EVENTS.ROOM_SETTINGS, onSettings)
       socket.off(EVENTS.ROOM_ROLE_CHANGED, onRoleChanged)
+      socket.off(EVENTS.ROOM_AUTO_FALLBACK, onAutoFallback)
       socket.off(EVENTS.ROOM_ERROR, onError)
     }
   }, [socket])

@@ -3,6 +3,7 @@ import {
   ERROR_CODE,
   queueAddSchema,
   queueAddBatchSchema,
+  queueInsertAfterCurrentSchema,
   queueRemoveSchema,
   queueReorderSchema,
 } from '@music-together/shared'
@@ -47,6 +48,35 @@ export function registerQueueController(io: TypedServer, socket: TypedSocket) {
       await playerService.autoPlayIfEmpty(io, ctx.roomId, track)
 
       logger.info(`Track added: ${track.title}`, { roomId: ctx.roomId })
+    }),
+  )
+
+  socket.on(
+    EVENTS.QUEUE_INSERT_AFTER_CURRENT,
+    withPermission('add', 'Queue', async (ctx, raw) => {
+      if (!(await checkSocketRateLimit(ctx.socket))) return
+      const parsed = queueInsertAfterCurrentSchema.safeParse(raw)
+      if (!parsed.success) {
+        socket.emit(EVENTS.ROOM_ERROR, { code: ERROR_CODE.INVALID_DATA, message: '无效的歌曲数据' })
+        return
+      }
+      const track: Track = { ...parsed.data.track, requestedBy: ctx.user.nickname }
+
+      const added = queueService.insertAfterCurrent(ctx.roomId, track)
+      if (!added) {
+        socket.emit(EVENTS.ROOM_ERROR, { code: ERROR_CODE.QUEUE_FULL, message: '播放队列已满' })
+        return
+      }
+      io.to(ctx.roomId).emit(EVENTS.QUEUE_UPDATED, { queue: ctx.room.queue })
+
+      // System message
+      const msg = chatService.createSystemMessage(ctx.roomId, `${ctx.user.nickname} 置顶了一首「${track.title}」`)
+      io.to(ctx.roomId).emit(EVENTS.CHAT_MESSAGE, msg)
+
+      // If nothing was playing, auto-play this track.
+      await playerService.autoPlayIfEmpty(io, ctx.roomId, track)
+
+      logger.info(`Track inserted after current: ${track.title}`, { roomId: ctx.roomId })
     }),
   )
 

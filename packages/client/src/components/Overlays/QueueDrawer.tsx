@@ -11,9 +11,9 @@ import type { Track } from '@music-together/shared'
 import { EVENTS } from '@music-together/shared'
 import { useHasHover } from '@/hooks/useHasHover'
 import { useIsMobile } from '@/hooks/useIsMobile'
-import { useCallback, useContext, useEffect, useRef, useState } from 'react'
+import { useCallback, useContext, useEffect, useRef, useState, type MouseEvent } from 'react'
 import { AbilityContext } from '@/providers/AbilityProvider'
-import { ChevronDown, ChevronUp, ListX, Music, Play, Trash2, User, X } from 'lucide-react'
+import { ArrowUpToLine, ChevronDown, ChevronUp, ListX, Music, Play, Trash2, User, X } from 'lucide-react'
 import { AnimatePresence, motion } from 'motion/react'
 import { toast } from 'sonner'
 import { MarqueeText } from '@/components/ui/marquee-text'
@@ -51,6 +51,8 @@ export function QueueDrawer({ open, onOpenChange, onRemoveFromQueue, onReorderQu
   const confirmTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null)
   // Mobile: track which item has its action toolbar visible
   const [activeTrackId, setActiveTrackId] = useState<string | null>(null)
+  // Desktop: after clicking an action, temporarily suppress the hover toolbar until the cursor leaves the item
+  const [dismissedHoverTrackId, setDismissedHoverTrackId] = useState<string | null>(null)
 
   // Clear the confirm-dismiss timer on unmount
   useEffect(
@@ -119,6 +121,43 @@ export function QueueDrawer({ open, onOpenChange, onRemoveFromQueue, onReorderQu
     }
   }
 
+  const handleInsertAfterCurrent = (track: Track, e?: MouseEvent) => {
+    // If this was triggered from inside the floating actions, hide it immediately.
+    // - Touch: activeTrackId controls visibility
+    // - Desktop: group-hover/group-focus-within can keep it visible after DOM reorders (transform keeps hover)
+    if (e) {
+      e.stopPropagation()
+      ;(e.currentTarget as HTMLButtonElement | null)?.blur()
+    }
+    if (isTouch && activeTrackId === track.id) setActiveTrackId(null)
+    if (!isTouch) setDismissedHoverTrackId(track.id)
+    const current = currentTrack
+    const currentIndex = current?.id ? queue.findIndex((t) => t.id === current.id) : -1
+
+    if (current && track.id === current.id) return
+
+    const ids = queue.map((t) => t.id)
+    const from = ids.indexOf(track.id)
+    if (from < 0) return
+
+    // 先移除再插入，避免重复
+    ids.splice(from, 1)
+
+    if (currentIndex >= 0) {
+      // 目标位置：当前播放歌曲的下方（已播放的在上方，不动）
+      // 如果被移动的歌曲在 current 之前，移除后 currentIndex 会左移一位
+      const adjustedCurrentIndex = from < currentIndex ? currentIndex - 1 : currentIndex
+      const to = adjustedCurrentIndex + 1
+      ids.splice(to, 0, track.id)
+    } else {
+      // 无 currentTrack（或 currentTrack 不在队列中）时，退化为置顶到队首
+      ids.unshift(track.id)
+    }
+
+    onReorderQueue(ids)
+    toast.success(`已置顶「${track.title}」`)
+  }
+
   return (
     <Drawer open={open} onOpenChange={onOpenChange} direction={isMobile ? 'bottom' : 'right'}>
       <DrawerContent className={cn('flex flex-col p-0', isMobile && 'h-[70vh]')}>
@@ -181,6 +220,9 @@ export function QueueDrawer({ open, onOpenChange, onRemoveFromQueue, onReorderQu
                       if (isTouch) {
                         setActiveTrackId((prev) => (prev === track.id ? null : track.id))
                       }
+                    }}
+                    onMouseLeave={() => {
+                      if (!isTouch && dismissedHoverTrackId === track.id) setDismissedHoverTrackId(null)
                     }}
                   >
                     {/* Index */}
@@ -249,6 +291,7 @@ export function QueueDrawer({ open, onOpenChange, onRemoveFromQueue, onReorderQu
                         'group-hover:opacity-100 group-hover:pointer-events-auto',
                         'group-focus-within:opacity-100 group-focus-within:pointer-events-auto',
                         isTouch && activeTrackId === track.id && 'opacity-100 pointer-events-auto',
+                        !isTouch && dismissedHoverTrackId === track.id && 'opacity-0 pointer-events-none',
                       )}
                       onClick={(e) => e.stopPropagation()}
                     >
@@ -302,6 +345,21 @@ export function QueueDrawer({ open, onOpenChange, onRemoveFromQueue, onReorderQu
                               </Button>
                             </TooltipTrigger>
                             <TooltipContent side="bottom">下移</TooltipContent>
+                          </Tooltip>
+
+                          <Tooltip delayDuration={400}>
+                            <TooltipTrigger asChild>
+                              <Button
+                                variant="ghost"
+                                size="icon"
+                                className="h-6 w-6 min-h-9 min-w-9 sm:min-h-0 sm:min-w-0"
+                                onClick={(e) => handleInsertAfterCurrent(track, e)}
+                                aria-label={`置顶 ${track.title}`}
+                              >
+                                <ArrowUpToLine className="h-3 w-3" />
+                              </Button>
+                            </TooltipTrigger>
+                            <TooltipContent side="bottom">置顶到当前播放下方</TooltipContent>
                           </Tooltip>
                         </>
                       )}

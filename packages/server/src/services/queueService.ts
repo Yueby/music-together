@@ -25,6 +25,27 @@ export function addBatchTracks(roomId: string, tracks: Track[]): number {
   return toAdd.length
 }
 
+/**
+ * Insert a new track right after the current playing track.
+ * If current track is missing from the queue (edge race), insert to the front.
+ */
+export function insertAfterCurrent(roomId: string, track: Track): boolean {
+  const room = roomRepo.get(roomId)
+  if (!room) return false
+  if (room.queue.length >= LIMITS.QUEUE_MAX_SIZE) return false
+
+  const currentId = room.currentTrack?.id
+  if (!currentId) {
+    room.queue.push(track)
+    return true
+  }
+
+  const currentIndex = room.queue.findIndex((t) => t.id === currentId)
+  const insertIndex = currentIndex >= 0 ? currentIndex + 1 : 0
+  room.queue.splice(insertIndex, 0, track)
+  return true
+}
+
 export function removeTrack(roomId: string, trackId: string): void {
   const room = roomRepo.get(roomId)
   if (room) {

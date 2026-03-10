@@ -30,9 +30,10 @@ interface SearchDialogProps {
   open: boolean
   onOpenChange: (open: boolean) => void
   onAddToQueue: (track: Track) => void
+  onInsertAfterCurrent: (track: Track) => void
 }
 
-export function SearchDialog({ open, onOpenChange, onAddToQueue }: SearchDialogProps) {
+export function SearchDialog({ open, onOpenChange, onAddToQueue, onInsertAfterCurrent }: SearchDialogProps) {
   const [source, setSource] = useState<MusicSource>('netease')
   const [keyword, setKeyword] = useState('')
   const [addedIds, setAddedIds] = useState<Set<string>>(new Set())
@@ -63,6 +64,20 @@ export function SearchDialog({ open, onOpenChange, onAddToQueue }: SearchDialogP
       toast.success(`已添加「${track.title}」`)
     },
     [onAddToQueue, queueKeys, addedIds],
+  )
+
+  const handleInsertAfterCurrent = useCallback(
+    (track: Track) => {
+      const key = trackKey(track)
+      if (queueKeys.has(key) || addedIds.has(key)) {
+        toast.info(`「${track.title}」已在队列中`)
+        return
+      }
+      onInsertAfterCurrent(track)
+      setAddedIds((prev) => new Set(prev).add(key))
+      toast.success(`已置顶「${track.title}」`)
+    },
+    [onInsertAfterCurrent, queueKeys, addedIds],
   )
 
   const isTrackAdded = useCallback(
@@ -126,6 +141,7 @@ export function SearchDialog({ open, onOpenChange, onAddToQueue }: SearchDialogP
               onLoadMore={loadMore}
               isTrackAdded={isTrackAdded}
               onAddTrack={handleAdd}
+              onInsertAfterCurrent={handleInsertAfterCurrent}
               onArtistClick={handleSearch}
               emptyIcon={<Music2 className="h-8 w-8" />}
               emptyMessage="暂无结果，换个关键词试试"

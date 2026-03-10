@@ -10,6 +10,7 @@ const envSchema = z.object({
   IDENTITY_TTL_DAYS: z.coerce.number().int().positive().default(30),
   REJOIN_TTL_MS: z.coerce.number().int().positive().default(TIMING.ROOM_GRACE_PERIOD_MS),
   IDENTITY_COOKIE_SECURE: z.enum(['true', 'false']).optional(),
+  AUTO_FALLBACK_ENABLED: z.enum(['true', 'false']).default('true'),
 })
 
 const env = envSchema.parse(process.env)
@@ -38,5 +39,8 @@ export const config = {
   },
   rejoin: {
     ttlMs: env.REJOIN_TTL_MS,
+  },
+  autoFallback: {
+    enabled: env.AUTO_FALLBACK_ENABLED === 'true',
   },
 } as const

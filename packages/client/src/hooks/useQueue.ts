@@ -7,6 +7,11 @@ export function useQueue() {
 
   const addTrack = useCallback((track: Track) => socket.emit(EVENTS.QUEUE_ADD, { track }), [socket])
 
+  const insertAfterCurrent = useCallback(
+    (track: Track) => socket.emit(EVENTS.QUEUE_INSERT_AFTER_CURRENT, { track }),
+    [socket],
+  )
+
   const addBatchTracks = useCallback(
     (tracks: Track[], playlistName?: string) => socket.emit(EVENTS.QUEUE_ADD_BATCH, { tracks, playlistName }),
     [socket],
@@ -18,5 +23,5 @@ export function useQueue() {
 
   const clearQueue = useCallback(() => socket.emit(EVENTS.QUEUE_CLEAR), [socket])
 
-  return { addTrack, addBatchTracks, removeTrack, reorderTracks, clearQueue }
+  return { addTrack, insertAfterCurrent, addBatchTracks, removeTrack, reorderTracks, clearQueue }
 }

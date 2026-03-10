@@ -32,6 +32,20 @@ export const setRoleSchema = z.object({
 })
 
 // ---------------------------------------------------------------------------
+// Room — auto fallback notifications
+// ---------------------------------------------------------------------------
+
+export const roomAutoFallbackSchema = z.object({
+  attemptId: z.string().min(1).max(100),
+  status: z.enum(['trying', 'success', 'failed']),
+  fromSource: z.enum(['netease', 'tencent']),
+  toSource: z.enum(['netease', 'tencent']),
+  trackTitle: z.string().min(1).max(500),
+  reasonType: z.enum(['VIP_REQUIRED', 'COPYRIGHT_RESTRICTED', 'NO_RESOURCE', 'TIMEOUT', 'UNKNOWN']).optional(),
+  reasonDetail: z.string().max(200).optional(),
+})
+
+// ---------------------------------------------------------------------------
 // Player
 // ---------------------------------------------------------------------------
 
@@ -71,6 +85,8 @@ const trackSchema = z.object({
 export const queueAddSchema = z.object({
   track: trackSchema,
 })
+
+export const queueInsertAfterCurrentSchema = queueAddSchema
 
 export const queueAddBatchSchema = z.object({
   tracks: z.array(trackSchema).min(1).max(LIMITS.QUEUE_BATCH_MAX_SIZE),
