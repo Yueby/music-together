@@ -76,6 +76,58 @@ interface NcmApiResponse {
   [key: string]: unknown
 }
 
+/** Tencent 新版搜索 API 响应结构 */
+interface TencentSearchResponse {
+  code: number
+  'music.search.SearchCgiService.DoSearchForQQMusicDesktop': {
+    code: number
+    data: {
+      body: {
+        song: {
+          list: TencentSearchSong[]
+        }
+      }
+      meta: {
+        curpage: number
+        perpage: number
+        sum: number
+        nextpage: number
+      }
+    }
+  }
+}
+
+/** Tencent 搜索结果单曲结构 */
+interface TencentSearchSong {
+  id: number
+  mid: string
+  name: string
+  title?: string
+  interval: number
+  singer: Array<{ id: number; mid: string; name: string }>
+  album?: {
+    id: number
+    mid: string
+    name: string
+    pmid?: string
+  }
+  file?: {
+    media_mid?: string
+    size_128mp3?: number
+    size_320mp3?: number
+    size_flac?: number
+  }
+  pay?: {
+    pay_down?: number
+    pay_month?: number
+    pay_play?: number
+    price_track?: number
+  }
+  action?: {
+    msgpay?: number
+  }
+}
+
 /** External API timeout (ms) */
 const API_TIMEOUT_MS = 15_000
 
@@ -229,6 +281,90 @@ class MusicProvider {
   // ---------------------------------------------------------------------------
 
   /**
+   * Search Tencent (QQ 音乐) using the new Desktop API.
+   * The legacy Meting API returns empty results, so we use the direct API.
+   */
+  private async searchTencent(keyword: string, limit = 20, page = 1): Promise<Track[]> {
+    // Early Exit: empty keyword
+    if (!keyword.trim()) return []
+
+    try {
+      const url = 'https://u.y.qq.com/cgi-bin/musicu.fcg'
+      const payload = {
+        comm: {
+          ct: '6',
+          cv: '80600',
+          tmeAppID: 'qqmusic',
+        },
+        'music.search.SearchCgiService.DoSearchForQQMusicDesktop': {
+          module: 'music.search.SearchCgiService',
+          method: 'DoSearchForQQMusicDesktop',
+          param: {
+            num_per_page: limit,
+            page_num: page,
+            search_type: 0,
+            query: keyword,
+            grp: 1,
+          },
+        },
+      }
+
+      const response = await withTimeout(
+        fetch(url, {
+          method: 'POST',
+          headers: {
+            'Content-Type': 'application/json',
+            Referer: 'https://y.qq.com',
+            'User-Agent': 'QQ%E9%9F%B3%E4%B9%90/73222',
+          },
+          body: JSON.stringify(payload),
+        }).then((res) => res.json() as Promise<TencentSearchResponse>),
+      )
+
+      // Fail Fast: timeout or null response
+      if (!response) {
+        logger.warn(`Tencent search timeout for "${keyword}"`)
+        return []
+      }
+
+      const result = response['music.search.SearchCgiService.DoSearchForQQMusicDesktop']
+      // Fail Fast: invalid response code or missing data
+      if (result?.code !== 0 || !result?.data?.body?.song?.list) {
+        logger.warn(`Tencent search failed: code ${result?.code}`)
+        return []
+      }
+
+      const songList = result.data.body.song.list
+
+      // Transform to Track format (Atomic Predictability: pure transformation)
+      const tracks: Track[] = songList.map((song) => ({
+        id: nanoid(),
+        source: 'tencent' as const,
+        sourceId: song.mid,
+        title: song.name || song.title || 'Unknown',
+        artist: song.singer?.map((s) => s.name).filter(Boolean) || ['Unknown'],
+        album: song.album?.name || '',
+        duration: song.interval || 0, // already in seconds
+        cover: song.album?.pmid ? `https://y.gtimg.cn/music/photo_new/T002R300x300M000${song.album.pmid}.jpg` : '',
+        urlId: song.mid,
+        lyricId: song.mid,
+        picId: song.album?.mid || '',
+        // VIP 判断: pay_month=1 月度会员, pay_down=1 付费下载, msgpay>0 VIP 标志
+        vip: song.pay?.pay_month === 1 || song.pay?.pay_down === 1 || (song.action?.msgpay ?? 0) > 0,
+      }))
+
+      // Register into track registry and search index
+      this.registerTracks(tracks)
+
+      logger.info(`Search "${keyword}" on tencent: ${tracks.length} results`)
+      return tracks
+    } catch (error) {
+      logger.error('Tencent search failed:', error)
+      return []
+    }
+  }
+
+  /**
    * Search for tracks. Uses format(false) to get raw API data including duration,
    * then batch-resolves cover URLs.
    */
@@ -249,6 +385,17 @@ class MusicProvider {
     }
 
     try {
+      // QQ 音乐使用新版搜索 API (Meting API 已失效)
+      if (source === 'tencent') {
+        const tracks = await this.searchTencent(keyword, limit, page)
+        // Update search index (cacheKey already defined above)
+        this.searchIndex.set(cacheKey, {
+          source,
+          ids: tracks.map((t) => t.sourceId),
+        })
+        return tracks
+      }
+
       // Fresh instance without format — gets raw API response with all fields
       const meting = new Meting(source)
       const raw = await withTimeout(meting.search(keyword, { limit, page }))
@@ -260,8 +407,12 @@ class MusicProvider {
       let rawData: MetingJson
       try {
         rawData = JSON.parse(raw) as MetingJson
-      } catch {
-        logger.error(`Search JSON parse failed for ${source}`, raw?.substring?.(0, 200))
+      } catch (parseError) {
+        logger.error(`Search JSON parse failed for ${source}`)
+        logger.error(`Parse error:`, parseError)
+        logger.error(`Full raw response:`, raw)
+        logger.error(`Raw response type:`, typeof raw)
+        logger.error(`Raw response length:`, raw?.length)
         return []
       }
 
