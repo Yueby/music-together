@@ -2,9 +2,8 @@ import { useCallback, useEffect, useRef, useState } from 'react'
 import { EVENTS, type MusicSource, type Playlist, type Track } from '@music-together/shared'
 import { useSocketContext } from '@/providers/SocketProvider'
 import { useRoomStore } from '@/stores/roomStore'
+import { useSettingsStore } from '@/stores/settingsStore'
 import { SERVER_URL } from '@/lib/config'
-
-const PAGE_SIZE = 100
 
 /** Build the playlist API URL with all query parameters */
 function buildPlaylistUrl(
@@ -76,6 +75,7 @@ export function parsePlaylistInput(input: string, source: MusicSource): string |
 
 export function usePlaylist() {
   const { socket } = useSocketContext()
+  const playlistLoadLimit = useSettingsStore((s) => s.playlistLoadLimit)
   const [myPlaylists, setMyPlaylists] = useState<Record<MusicSource, Playlist[]>>({
     netease: [],
     tencent: [],
@@ -138,7 +138,7 @@ export function usePlaylist() {
       offsetRef.current = 0
 
       try {
-        const url = buildPlaylistUrl(source, playlistId, PAGE_SIZE, 0, {
+        const url = buildPlaylistUrl(source, playlistId, playlistLoadLimit, 0, {
           total: trackCount,
           roomId: useRoomStore.getState().room?.id,
           type,
@@ -189,7 +189,7 @@ export function usePlaylist() {
 
     try {
       const offset = offsetRef.current
-      const url = buildPlaylistUrl(ctx.source, ctx.id, PAGE_SIZE, offset, {
+      const url = buildPlaylistUrl(ctx.source, ctx.id, playlistLoadLimit, offset, {
         total: playlistTotal,
         roomId: useRoomStore.getState().room?.id,
         type: ctx.type,

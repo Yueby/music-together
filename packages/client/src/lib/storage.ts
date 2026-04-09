@@ -85,6 +85,7 @@ export const SETTING_DEFAULTS = {
   bgFps: 30,
   bgFlowSpeed: 2,
   bgRenderScale: 0.5,
+  playlistLoadLimit: 100,
 } satisfies Record<string, unknown>
 
 export const storage = {
@@ -172,6 +173,13 @@ export const storage = {
     return [0.25, 0.5, 0.75, 1].includes(scale) ? scale : SETTING_DEFAULTS.bgRenderScale
   },
   setBgRenderScale: (v: number) => safeSet('bgRenderScale', String(v)),
+
+  // Playlist settings
+  getPlaylistLoadLimit: () => {
+    const limit = safeInt('playlistLoadLimit', SETTING_DEFAULTS.playlistLoadLimit)
+    return Math.max(20, Math.min(1000, limit))
+  },
+  setPlaylistLoadLimit: (v: number) => safeSet('playlistLoadLimit', String(v)),
 
   // Auth cookie persistence
   getAuthCookies: (): StoredCookie[] => safeGetJSON<StoredCookie[]>('auth-cookies') ?? [],

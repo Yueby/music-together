@@ -64,6 +64,27 @@ export function AppearanceSection() {
           </Select>
         </SettingRow>
       </div>
+
+      {/* ---- 数据加载 ---- */}
+      <div>
+        <h3 className="text-base font-semibold">数据加载</h3>
+        <Separator className="mt-2 mb-4" />
+
+        <SettingRow
+          label="歌单默认加载数"
+          description={`当前: ${s.playlistLoadLimit}首 (影响搜索和收藏歌单)`}
+          onReset={s.playlistLoadLimit !== s.playlistLoadLimitDefault ? s.resetPlaylistLoadLimit : undefined}
+        >
+          <Slider
+            value={[s.playlistLoadLimit]}
+            min={50}
+            max={500}
+            step={50}
+            onValueChange={(v) => s.setPlaylistLoadLimit(v[0])}
+            className="w-32"
+          />
+        </SettingRow>
+      </div>
     </div>
   )
 }
