@@ -1,0 +1,25 @@
+{
+    "name": "@types/earcut",
+    "version": "2.1.4",
+    "description": "TypeScript definitions for earcut",
+    "homepage": "https://github.com/DefinitelyTyped/DefinitelyTyped/tree/master/types/earcut",
+    "license": "MIT",
+    "contributors": [
+        {
+            "name": "Adrian Leonhard",
+            "githubUsername": "NaridaL",
+            "url": "https://github.com/NaridaL"
+        }
+    ],
+    "main": "",
+    "types": "index.d.ts",
+    "repository": {
+        "type": "git",
+        "url": "https://github.com/DefinitelyTyped/DefinitelyTyped.git",
+        "directory": "types/earcut"
+    },
+    "scripts": {},
+    "dependencies": {},
+    "typesPublisherContentHash": "f18d2ca8b1c48564f6a04700333034eedffa8ee069836cdd3fa2e3652e78a5f7",
+    "typeScriptVersion": "4.5"
+}

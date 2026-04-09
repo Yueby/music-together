@@ -1,0 +1,24 @@
+import * as interpreters from './interpreters';
+export declare const allInterpreters: {
+    in: import("./types").JsInterpreter<import("@ucast/core").FieldCondition<unknown[]>, unknown>;
+    or: import("./types").JsInterpreter<import("@ucast/core").CompoundCondition>;
+    nor: typeof interpreters.or;
+    and: import("./types").JsInterpreter<import("@ucast/core").CompoundCondition>;
+    not: import("./types").JsInterpreter<import("@ucast/core").CompoundCondition>;
+    eq: import("./types").JsInterpreter<import("@ucast/core").FieldCondition>;
+    ne: typeof interpreters.eq;
+    lte: import("./types").JsInterpreter<import("@ucast/core").FieldCondition<import("@ucast/core").Comparable>, import("@ucast/core").Comparable | import("./utils").AnyObject>;
+    lt: import("./types").JsInterpreter<import("@ucast/core").FieldCondition<import("@ucast/core").Comparable>, import("@ucast/core").Comparable | import("./utils").AnyObject>;
+    gt: import("./types").JsInterpreter<import("@ucast/core").FieldCondition<import("@ucast/core").Comparable>, import("@ucast/core").Comparable | import("./utils").AnyObject>;
+    gte: import("./types").JsInterpreter<import("@ucast/core").FieldCondition<import("@ucast/core").Comparable>, import("@ucast/core").Comparable | import("./utils").AnyObject>;
+    exists: import("./types").JsInterpreter<import("@ucast/core").FieldCondition<boolean>>;
+    mod: import("./types").JsInterpreter<import("@ucast/core").FieldCondition<[number, number]>, number | import("./utils").AnyObject>;
+    size: import("./types").JsInterpreter<import("@ucast/core").FieldCondition<number>, import("./utils").AnyObject | unknown[]>;
+    regex: import("./types").JsInterpreter<import("@ucast/core").FieldCondition<RegExp>, string | import("./utils").AnyObject>;
+    within: import("./types").JsInterpreter<import("@ucast/core").FieldCondition<unknown[]>, unknown>;
+    nin: typeof interpreters.within;
+    all: import("./types").JsInterpreter<import("@ucast/core").FieldCondition<unknown[]>>;
+    elemMatch: import("./types").JsInterpreter<import("@ucast/core").FieldCondition<import("@ucast/core").Condition>>;
+    where: import("./types").JsInterpreter<import("@ucast/core").DocumentCondition<(this: import("./utils").AnyObject) => boolean>, import("./utils").AnyObject>;
+};
+export declare const interpret: (...args: [condition: import("@ucast/core").Condition<unknown>, value: any] | [condition: import("@ucast/core").Condition<unknown>, value: import("@ucast/core").Comparable | import("./utils").AnyObject] | [condition: import("@ucast/core").Condition<unknown>, value: number | import("./utils").AnyObject] | [condition: import("@ucast/core").Condition<unknown>, value: unknown[] | import("./utils").AnyObject] | [condition: import("@ucast/core").Condition<unknown>, value: string | import("./utils").AnyObject] | [condition: import("@ucast/core").Condition<unknown>, value: unknown] | [condition: import("@ucast/core").Condition<unknown>, value: import("./utils").AnyObject]) => boolean;

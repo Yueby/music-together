@@ -1,0 +1,66 @@
+"use strict";
+Object.defineProperty(exports, "__esModule", { value: true });
+const tslib_1 = require("tslib");
+const request_promise_1 = tslib_1.__importDefault(require("request-promise"));
+const krc_decode_1 = require("./krc-decode");
+const kugouRp = request_promise_1.default.defaults({
+    baseUrl: 'http://lyrics.kugou.com/',
+});
+var Format;
+(function (Format) {
+    Format["lrc"] = "lrc";
+    Format["krc"] = "krc";
+})(Format = exports.Format || (exports.Format = {}));
+function search(params) {
+    return tslib_1.__awaiter(this, void 0, void 0, function* () {
+        const qs = {
+            ver: 1,
+            man: 'yes',
+            client: 'pc',
+            duration: undefined,
+            keyword: undefined,
+            hash: undefined,
+        };
+        if (params.milliseconds) {
+            qs.duration = params.milliseconds;
+            qs.keyword = params.keyword;
+        }
+        else {
+            qs.hash = params.hash;
+        }
+        const { candidates } = yield kugouRp({
+            method: 'GET',
+            uri: '/search',
+            qs,
+            json: true,
+        });
+        return candidates;
+    });
+}
+exports.search = search;
+function download(_a) {
+    var { fmt: inputFmt = Format.krc } = _a, option = tslib_1.__rest(_a, ["fmt"]);
+    return tslib_1.__awaiter(this, void 0, void 0, function* () {
+        const { fmt, content } = yield kugouRp({
+            method: 'GET',
+            uri: '/download',
+            qs: Object.assign({ ver: 1, client: 'pc', charset: 'utf8' }, option, { fmt: inputFmt }),
+            json: true,
+        });
+        if (fmt !== Format.lrc && fmt !== Format.krc) {
+            throw new Error('unknown fmt');
+        }
+        if (!content) {
+            throw new Error('empty content');
+        }
+        const buf = Buffer.from(content, 'base64');
+        if (fmt === Format.krc) {
+            const buffer = yield krc_decode_1.decodeKrc(buf);
+            return buffer.toString();
+        }
+        return buf.toString();
+    });
+}
+exports.download = download;
+
+//# sourceMappingURL=index.js.map

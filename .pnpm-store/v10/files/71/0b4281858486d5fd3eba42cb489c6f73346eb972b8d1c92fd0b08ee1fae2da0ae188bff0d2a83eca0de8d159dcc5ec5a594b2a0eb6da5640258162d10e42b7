@@ -1,0 +1,21 @@
+"use strict";
+Object.defineProperty(exports, "__esModule", { value: true });
+const tslib_1 = require("tslib");
+const util_1 = require("util");
+const zlib_1 = require("zlib");
+const unzip = util_1.promisify(zlib_1.unzip);
+const KRC_ENCODE_KEY = Buffer.from(Uint8Array.from([64, 71, 97, 119, 94, 50, 116, 71, 81, 54, 49, 45, 206, 210, 110, 105]));
+// https://github.com/kangkang520/kugou-lyric/blob/master/src/util.ts#L23-L31
+function decodeKrc(content) {
+    return tslib_1.__awaiter(this, void 0, void 0, function* () {
+        const buffer = Buffer.alloc(content.length - 4);
+        for (let i = 4; i < content.length; i += 1) {
+            // eslint-disable-next-line no-bitwise
+            buffer[i - 4] = content[i] ^ KRC_ENCODE_KEY[(i - 4) % 16];
+        }
+        return unzip(buffer);
+    });
+}
+exports.decodeKrc = decodeKrc;
+
+//# sourceMappingURL=krc-decode.js.map

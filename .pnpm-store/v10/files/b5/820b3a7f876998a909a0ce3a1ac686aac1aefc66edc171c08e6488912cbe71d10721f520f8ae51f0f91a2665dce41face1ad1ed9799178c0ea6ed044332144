@@ -1,0 +1,3 @@
+/// <reference types="node" />
+declare function decodeKrc(content: Buffer): Promise<Buffer>;
+export { decodeKrc };

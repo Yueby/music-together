@@ -41,9 +41,14 @@ function validated<T>(
 router.get(
   '/search',
   validated(searchQuerySchema, 'Search', async (data, _req, res) => {
-    const { source, keyword, limit: pageSize, page: pageNum } = data
-    const tracks = await musicProvider.search(source, keyword, pageSize, pageNum)
-    res.json({ tracks, page: pageNum, hasMore: tracks.length >= pageSize })
+    const { source, keyword, limit: pageSize, page: pageNum, type } = data
+    if (type === 'album') {
+      const albums = await musicProvider.searchAlbum(source, keyword, pageSize, pageNum)
+      res.json({ tracks: albums, page: pageNum, hasMore: albums.length >= pageSize })
+    } else {
+      const tracks = await musicProvider.search(source, keyword, pageSize, pageNum)
+      res.json({ tracks, page: pageNum, hasMore: tracks.length >= pageSize })
+    }
   }),
 )
 
@@ -77,7 +82,7 @@ router.get(
 router.get(
   '/playlist',
   validated(playlistQuerySchema, 'Get playlist', async (data, _req, res) => {
-    const { source, id, limit, offset, total, roomId } = data
+    const { source, id, limit, offset, total, roomId, type } = data
 
     let cookie: string | null = null
     if (roomId) {
@@ -94,7 +99,7 @@ router.get(
       cookie = authService.getUserCookie(identityUserId, source, roomId)
     }
 
-    const result = await musicProvider.getPlaylistPage(source, id, limit, offset, total, cookie)
+    const result = await musicProvider.getPlaylistPage(source, id, limit, offset, total, cookie, type)
     res.json({ tracks: result.tracks, total: result.total, offset, hasMore: result.hasMore })
   }),
 )

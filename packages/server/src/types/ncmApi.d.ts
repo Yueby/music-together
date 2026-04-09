@@ -86,6 +86,13 @@ declare module '@neteasecloudmusicapienhanced/api' {
         [key: string]: unknown
       }
     }>
+    album(params: Record<string, unknown>): Promise<{
+      body: {
+        code?: number
+        songs?: Record<string, unknown>[]
+        [key: string]: unknown
+      }
+    }>
   }
 
   const ncmApi: NcmApiInstance

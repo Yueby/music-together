@@ -1,0 +1,15 @@
+interface KrcWord {
+    duration: number;
+    offset: number;
+    word: string;
+}
+export interface KrcInfo {
+    ti?: string;
+    ar?: string;
+    al?: string;
+    by?: string;
+    offset?: string;
+    items: KrcWord[][];
+}
+declare function parseKrc(content: string): KrcInfo;
+export { parseKrc };

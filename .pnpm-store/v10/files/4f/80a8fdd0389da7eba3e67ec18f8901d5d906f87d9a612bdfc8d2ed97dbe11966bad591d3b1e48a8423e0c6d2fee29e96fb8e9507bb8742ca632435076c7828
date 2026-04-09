@@ -1,0 +1,29 @@
+{
+  "name": "@neteasecloudmusicapienhanced/unblockmusic-utils",
+  "version": "0.2.2",
+  "description": "⚙️A unlock music tool for NeteaseCloudMusicApiEnhanced.",
+  "main": "index.js",
+  "keywords": [
+    "netease",
+    "music",
+    "unblock",
+    "api"
+  ],
+  "bin": "index.js",
+  "author": "unblockmusic-utils",
+  "license": "MIT",
+  "dependencies": {
+    "@unblockneteasemusic/server": "^0.28.0",
+    "axios": "^1.13.5",
+    "express": "^4.22.1",
+    "https": "^1.0.0"
+  },
+  "devDependencies": {
+    "nodemon": "^3.1.11"
+  },
+  "scripts": {
+    "start": "node index.js",
+    "dev": "nodemon index.js",
+    "test": "node test.js"
+  }
+}

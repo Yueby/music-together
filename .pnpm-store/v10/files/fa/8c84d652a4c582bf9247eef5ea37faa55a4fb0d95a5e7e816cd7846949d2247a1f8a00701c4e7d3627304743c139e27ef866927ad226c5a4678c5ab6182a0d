@@ -1,0 +1,41 @@
+{
+  "name": "kill-port",
+  "version": "2.0.1",
+  "description": "Kill process running on given port",
+  "license": "MIT",
+  "main": "index.js",
+  "repository": {
+    "type": "git",
+    "url": "https://github.com/tiaanduplessis/kill-port.git"
+  },
+  "homepage": "https://github.com/tiaanduplessis/kill-port",
+  "bugs": "https://github.com/tiaanduplessis/kill-port/issues",
+  "author": "Tiaan du Plessis",
+  "bin": {
+    "kill-port": "cli.js"
+  },
+  "keywords": [
+    "port",
+    "process",
+    "kill",
+    "kill-port",
+    "port"
+  ],
+  "dependencies": {
+    "get-them-args": "1.3.2",
+    "shell-exec": "1.0.2"
+  },
+  "devDependencies": {
+    "jest": "28.1.0",
+    "npm-check": "^5.9.2",
+    "standard": "17.0.0"
+  },
+  "scripts": {
+    "start": "npm run dev",
+    "pretest": "npm run lint",
+    "test": "jest --env=node",
+    "lint": "standard --fix",
+    "precommit": "npm test",
+    "check": "npm-check -u"
+  }
+}

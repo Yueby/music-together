@@ -1,0 +1,32 @@
+import { Format } from './download';
+import { KrcInfo } from './parser/krc';
+import { LrcInfo } from './parser/lrc';
+declare function get(params: {
+    keyword: string;
+    milliseconds: number;
+    fmt: Format.krc;
+}): Promise<KrcInfo>;
+declare function get(params: {
+    keyword: string;
+    milliseconds: number;
+    fmt: Format.lrc;
+}): Promise<LrcInfo>;
+declare function get(params: {
+    hash: string;
+    fmt: Format.krc;
+}): Promise<KrcInfo>;
+declare function get(params: {
+    hash: string;
+    fmt: Format.lrc;
+}): Promise<LrcInfo>;
+declare function get(params: {
+    keyword: string;
+    milliseconds: number;
+}): Promise<KrcInfo>;
+declare function get(params: {
+    hash: string;
+}): Promise<KrcInfo>;
+export { get };
+export { download, LrcDownloadOption, Format, search, KugouLrc } from './download';
+export { parseKrc, KrcInfo } from './parser/krc';
+export { parseLrc, LrcInfo } from './parser/lrc';

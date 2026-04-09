@@ -1,0 +1,26 @@
+export declare enum Format {
+    lrc = "lrc",
+    krc = "krc"
+}
+export interface KugouLrc {
+    id: string;
+    accesskey: string;
+    duration: number;
+    uid: string;
+    song: string;
+    singer: string;
+}
+export interface LrcDownloadOption {
+    id: string;
+    accesskey: string;
+    fmt?: Format;
+}
+declare function search(params: {
+    keyword: string;
+    milliseconds: number;
+}): Promise<KugouLrc[]>;
+declare function search(params: {
+    hash: string;
+}): Promise<KugouLrc[]>;
+declare function download({ fmt: inputFmt, ...option }: LrcDownloadOption): Promise<string>;
+export { search, download };

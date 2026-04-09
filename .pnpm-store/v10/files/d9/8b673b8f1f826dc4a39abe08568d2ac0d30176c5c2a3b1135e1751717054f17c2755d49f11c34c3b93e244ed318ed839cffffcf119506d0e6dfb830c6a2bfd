@@ -1,0 +1,27 @@
+import { Condition } from './Condition';
+export declare type Named<T, Name extends string = string> = T & {
+    name: Name;
+};
+export declare type Parse<T = any> = (query: T, ...args: any[]) => Condition;
+export declare type ParsingContext<T extends {}> = T & {
+    parse: Parse;
+};
+export interface ParsingInstruction<T = unknown, Context extends {} = {}> {
+    type: string;
+    validate?(instruction: Named<this>, value: T): void;
+    parse?(instruction: Named<this>, value: T, context: ParsingContext<Context>): Condition;
+}
+export interface CompoundInstruction<T = unknown, C extends {} = {}> extends ParsingInstruction<T, C> {
+    type: 'compound';
+}
+export interface DocumentInstruction<T = unknown, C extends {} = {}> extends ParsingInstruction<T, C> {
+    type: 'document';
+}
+export interface FieldParsingContext {
+    field: string;
+}
+export interface FieldInstruction<T = unknown, C extends FieldParsingContext = FieldParsingContext> extends ParsingInstruction<T, C> {
+    type: 'field';
+}
+export declare type NamedInstruction<T extends string = string> = Named<ParsingInstruction, T>;
+export declare type Comparable = number | string | Date;

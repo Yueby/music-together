@@ -117,6 +117,7 @@ export const searchQuerySchema = z.object({
   keyword: z.string().min(1).max(LIMITS.SEARCH_KEYWORD_MAX_LENGTH),
   limit: z.coerce.number().int().min(1).max(LIMITS.SEARCH_PAGE_SIZE_MAX).default(20),
   page: z.coerce.number().int().min(1).max(LIMITS.SEARCH_PAGE_MAX).default(1),
+  type: z.enum(['song', 'album']).optional().default('song'),
 })
 
 export const urlQuerySchema = z.object({
@@ -143,6 +144,7 @@ export const playlistQuerySchema = z.object({
   offset: z.coerce.number().int().min(0).default(0),
   total: z.coerce.number().int().min(0).optional(),
   roomId: z.string().min(1).max(10).optional(),
+  type: z.enum(['playlist', 'album']).optional().default('playlist'),
 })
 
 // ---------------------------------------------------------------------------

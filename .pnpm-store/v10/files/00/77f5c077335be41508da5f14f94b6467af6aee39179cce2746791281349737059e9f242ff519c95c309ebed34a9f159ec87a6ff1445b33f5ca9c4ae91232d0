@@ -1,0 +1,32 @@
+"use strict";
+Object.defineProperty(exports, "__esModule", { value: true });
+const tslib_1 = require("tslib");
+const download_1 = require("./download");
+const krc_1 = require("./parser/krc");
+const lrc_1 = require("./parser/lrc");
+function get(params) {
+    return tslib_1.__awaiter(this, void 0, void 0, function* () {
+        const list = yield download_1.search(params);
+        if (!list.length) {
+            throw new Error('no lrc');
+        }
+        const { fmt } = params;
+        const [{ id, accesskey }] = list;
+        const str = yield download_1.download({ id, accesskey, fmt });
+        if (fmt === download_1.Format.krc) {
+            return krc_1.parseKrc(str);
+        }
+        return lrc_1.parseLrc(str);
+    });
+}
+exports.get = get;
+var download_2 = require("./download");
+exports.download = download_2.download;
+exports.Format = download_2.Format;
+exports.search = download_2.search;
+var krc_2 = require("./parser/krc");
+exports.parseKrc = krc_2.parseKrc;
+var lrc_2 = require("./parser/lrc");
+exports.parseLrc = lrc_2.parseLrc;
+
+//# sourceMappingURL=index.js.map

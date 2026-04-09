@@ -1,0 +1,10 @@
+import { ITSELF } from '@ucast/core';
+import { GetField } from './utils';
+import { JsInterpretationOptions, JsInterpreter } from './types';
+type Field = string | typeof ITSELF;
+export declare function getObjectFieldCursor<T extends {}>(object: T, path: string, get: GetField): readonly [T, string];
+export declare function getObjectField(object: unknown, field: Field, get?: GetField): any;
+export declare function createGetter<T extends GetField>(get: T): (object: Parameters<T>[0], field: Parameters<T>[1]) => any;
+export declare function compare<T>(a: T, b: T): 0 | 1 | -1;
+export declare function createJsInterpreter<T extends JsInterpreter<any>, O extends Partial<JsInterpretationOptions>>(operators: Record<string, T>, options?: O): (...args: T extends (a: any, c: any) => any ? [condition: import("@ucast/core").Condition<unknown>] : T extends (a: any, b: any, c: any) => any ? [condition: import("@ucast/core").Condition<unknown>, value: Parameters<T>[1]] : [condition: import("@ucast/core").Condition<unknown>, value: Parameters<T>[1], options: Parameters<T>[2], ...args: unknown[]]) => ReturnType<T>;
+export {};

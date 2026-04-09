@@ -1,0 +1,253 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <meta http-equiv="X-UA-Compatible" content="IE=edge">
+  <title>UnblockNeteaseMusic Utils</title>
+  <style>
+    :root {
+      --fg: #333;
+      --muted: #666;
+      --border: #ddd;
+      --bg: #f5f5f5;
+      --panel: #ffffff;
+      --accent: #c20c0c;
+      --accent-hover: #a00808;
+    }
+    * { box-sizing: border-box; }
+    html, body { height: 100%; }
+    body { margin: 0; font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif; color: var(--fg); background: var(--bg); line-height: 1.6; }
+    .container { max-width: 960px; margin: 40px auto; padding: 0 20px; }
+    header.site-header { margin-bottom: 24px; }
+    header.site-header h1 { font-size: 28px; font-weight: 600; margin: 0; }
+    .badge { display: inline-block; margin-left: 8px; padding: 4px 10px; border: 1px solid var(--border); border-radius: 12px; font-size: 12px; color: var(--muted); }
+    .badge.version { background: #e8f5e9; border-color: #c8e6c9; color: #2e7d32; }
+    .sub { margin-top: 8px; color: var(--muted); font-size: 14px; }
+    .block { background: var(--panel); border: 1px solid var(--border); border-radius: 12px; padding: 20px; margin-bottom: 16px; box-shadow: 0 2px 8px rgba(0, 0, 0, 0.05); }
+    .block h2 { margin: 0 0 12px; font-size: 18px; font-weight: 600; }
+    .kvs { display: grid; grid-template-columns: 140px 1fr; gap: 8px 16px; align-items: center; }
+    .kvs div:first-child { color: var(--muted); }
+    ul.links { list-style: none; padding: 0; margin: 0; }
+    ul.links li { margin: 8px 0; }
+    ul.links a { color: var(--fg); text-decoration: none; border-bottom: 1px dotted var(--border); transition: all 0.2s ease; }
+    ul.links a:hover { color: var(--accent); border-bottom-color: var(--accent); }
+    pre { margin: 0; background: #f9f9f9; border: 1px solid var(--border); border-radius: 6px; padding: 12px; overflow: auto; }
+    code { font-family: 'Courier New', monospace; font-size: 13px; }
+    .source-tag { display: inline-block; padding: 2px 8px; border-radius: 4px; font-size: 11px; background: #e3f2fd; color: #1565c0; margin-right: 6px; }
+    footer.site-footer { margin-top: 24px; padding-top: 12px; border-top: 1px solid var(--border); color: var(--muted); text-align: center; }
+    footer.site-footer a { color: var(--fg); text-decoration: none; transition: color 0.2s ease; }
+    footer.site-footer a:hover { color: var(--accent); }
+    .test-form { display: flex; gap: 8px; flex-wrap: wrap; align-items: center; }
+    .test-form input[type="text"] { flex: 1; min-width: 200px; padding: 8px 12px; border: 1px solid var(--border); border-radius: 6px; font-size: 14px; }
+    .test-form select { padding: 8px 12px; border: 1px solid var(--border); border-radius: 6px; font-size: 14px; background: white; }
+    .test-form button { padding: 8px 20px; background: var(--accent); color: white; border: none; border-radius: 6px; font-size: 14px; cursor: pointer; transition: background 0.2s ease; }
+    .test-form button:hover { background: var(--accent-hover); }
+    .test-result { margin-top: 12px; padding: 12px; background: #f5f5f5; border-radius: 6px; font-size: 13px; }
+    .test-result .url { word-break: break-all; color: var(--accent); margin-bottom: 8px; }
+    .test-result .source { color: var(--muted); font-size: 12px; margin-bottom: 8px; }
+    .test-result audio { width: 100%; margin-top: 8px; }
+    .test-result .copy-btn { display: inline-block; padding: 4px 12px; background: var(--fg); color: white; border: none; border-radius: 4px; font-size: 12px; cursor: pointer; transition: background 0.2s ease; margin-top: 8px; }
+    .test-result .copy-btn:hover { background: var(--accent); }
+  </style>
+</head>
+<body>
+  <main class="container">
+    <header class="site-header">
+      <h1>UnblockNeteaseMusic Utils <span id="version" class="badge version"></span></h1>
+      <p class="sub">⚙️ 网易云音乐解灰工具 || 基于 Express.js 的 RESTful API 服务 || 自动尝试多个音源直到找到可用链接</p>
+    </header>
+
+    <section class="block">
+      <h2>服务器状态</h2>
+      <div class="kvs">
+        <div>Base URL</div><div id="base-url">—</div>
+        <div>当前页</div><div id="current-url">—</div>
+      </div>
+    </section>
+
+    <section class="block">
+      <h2>在线测试</h2>
+      <p>输入网易云音乐歌曲 ID 进行测试：</p>
+      <div class="test-form">
+        <input type="text" id="song-id" placeholder="歌曲 ID，如：2756058128" />
+        <select id="source-select">
+          <option value="">自动选择音源</option>
+        </select>
+        <button onclick="testMatch()">测试</button>
+      </div>
+      <div id="test-result" class="test-result" style="display: none;"></div>
+    </section>
+
+    <section class="block">
+      <h2>API 接口</h2>
+      <ul class="links">
+        <li><a href="/match?id=2756058128" target="_blank">GET /match - 获取音乐链接（自动音源）</a></li>
+        <li><a id="api-example-link" href="/match?id=2756058128&source=" target="_blank">GET /match?source=[模块名] - 指定音源</a></li>
+      </ul>
+      <h3 style="margin: 16px 0 8px; font-size: 15px; font-weight: 600;">POST 请求示例：</h3>
+      <pre><code>curl -X POST {origin}/match \
+  -H "Content-Type: application/json" \
+  -d '{"id": "2756058128", "source": "[模块名]"}</code></pre>
+    </section>
+
+    <section class="block">
+      <h2>可用音源模块</h2>
+      <ul class="links">
+        <li><span style="color: var(--muted);">正在加载模块列表...</span></li>
+      </ul>
+      <p style="margin-top: 12px; color: var(--muted); font-size: 13px;">系统会自动尝试所有可用模块，直到找到可用的音乐链接。</p>
+    </section>
+
+    <section class="block">
+      <h2>使用方式</h2>
+      <h3 style="margin: 16px 0 8px; font-size: 15px; font-weight: 600;">命令行运行：</h3>
+      <pre><code># 使用默认端口 3000
+npx @neteasecloudmusicapienhanced/unblockmusic-utils
+
+# 指定端口
+npx @neteasecloudmusicapienhanced/unblockmusic-utils --port 8080
+
+# 本地运行
+npm start</code></pre>
+      <h3 style="margin: 16px 0 8px; font-size: 15px; font-weight: 600;">作为模块使用：</h3>
+      <pre><code>const { matchID } = require('@neteasecloudmusicapienhanced/unblockmusic-utils');
+
+const result = await matchID('歌曲ID', '音源模块名（可选）');</code></pre>
+    </section>
+
+    <footer class="site-footer">
+      <a href="https://github.com/NeteaseCloudMusicApiEnhanced/UnblockNeteaseMusic-utils" target="_blank">GitHub</a>
+      <span style="margin: 0 8px;">·</span>
+      <a href="https://www.npmjs.com/package/@neteasecloudmusicapienhanced/unblockmusic-utils" target="_blank">NPM</a>
+    </footer>
+  </main>
+
+  <script>
+    var origin = window.location.origin;
+
+    function updateStatus() {
+      document.getElementById('base-url').textContent = origin;
+      document.getElementById('current-url').textContent = window.location.href;
+
+      // 从API获取版本号
+      fetch('/inner/version')
+        .then(function(r) { return r.json(); })
+        .then(function(data) {
+          var v = data && data.data && data.data.version;
+          if (v) {
+            document.getElementById('version').textContent = 'v' + v;
+          }
+        })
+        .catch(function() {
+          document.getElementById('version').textContent = 'v0.1.4';
+        });
+
+      // 从API获取可用模块列表
+      fetch('/inner/modules')
+        .then(function(r) { return r.json(); })
+        .then(function(data) {
+          var modules = data && data.data && data.data.modules;
+          if (modules && modules.length > 0) {
+            populateModules(modules);
+          }
+        })
+        .catch(function() {
+          console.warn('Failed to load modules list');
+        });
+
+      var pres = document.querySelectorAll('pre code');
+      pres.forEach(function(pre) {
+        pre.textContent = pre.textContent.replace(/\{origin\}/g, origin);
+      });
+    }
+
+    function populateModules(modules) {
+      // 更新测试表单的下拉选择框
+      var select = document.getElementById('source-select');
+      var firstOption = select.querySelector('option[value=""]');
+      select.innerHTML = '';
+      select.appendChild(firstOption);
+      modules.forEach(function(module) {
+        var option = document.createElement('option');
+        option.value = module;
+        option.textContent = module.charAt(0).toUpperCase() + module.slice(1);
+        select.appendChild(option);
+      });
+
+      // 更新可用音源模块列表
+      var modulesList = document.querySelector('.block:nth-of-type(4) ul.links');
+      if (modulesList) {
+        modulesList.innerHTML = '';
+        modules.forEach(function(module) {
+          var li = document.createElement('li');
+          li.innerHTML = '<span class="source-tag">' + module + '</span>' + module.charAt(0).toUpperCase() + module.slice(1) + ' 音源服务';
+          modulesList.appendChild(li);
+        });
+      }
+
+      // 更新API示例链接
+      var apiExampleLink = document.getElementById('api-example-link');
+      if (apiExampleLink && modules.length > 0) {
+        var firstModule = modules[0];
+        apiExampleLink.href = '/match?id=2756058128&source=' + firstModule;
+        apiExampleLink.textContent = 'GET /match?source=' + firstModule + ' - 指定 ' + firstModule.charAt(0).toUpperCase() + firstModule.slice(1) + ' 音源';
+      }
+    }
+
+    function testMatch() {
+      var songId = document.getElementById('song-id').value.trim();
+      var source = document.getElementById('source-select').value;
+      var resultDiv = document.getElementById('test-result');
+
+      if (!songId) {
+        resultDiv.innerHTML = '<span style="color: var(--accent);">请输入歌曲 ID</span>';
+        resultDiv.style.display = 'block';
+        return;
+      }
+
+      resultDiv.innerHTML = '<span style="color: var(--muted);">正在匹配...</span>';
+      resultDiv.style.display = 'block';
+
+      var url = '/match?id=' + encodeURIComponent(songId);
+      if (source) {
+        url += '&source=' + encodeURIComponent(source);
+      }
+
+      fetch(url)
+        .then(function(r) { return r.json(); })
+        .then(function(data) {
+          if (data.code === 200 && data.data && data.data.url) {
+            var audioUrl = data.data.url;
+            var sourceName = data.data.source || '自动选择';
+            resultDiv.innerHTML = 
+              '<div class="url">🎵 ' + audioUrl + '</div>' +
+              '<div class="source">音源: ' + sourceName + '</div>' +
+              '<audio controls autoplay>' +
+                '<source src="' + audioUrl + '" type="audio/mpeg">' +
+                '<source src="' + audioUrl + '" type="audio/flac">' +
+                '您的浏览器不支持音频播放' +
+              '</audio>' +
+              '<button class="copy-btn" onclick="copyToClipboard(\'' + audioUrl + '\')">复制链接</button>';
+          } else {
+            var errorMsg = data.message || '未找到可用的音乐链接';
+            resultDiv.innerHTML = '<span style="color: var(--accent);">' + errorMsg + '</span>';
+          }
+        })
+        .catch(function(err) {
+          resultDiv.innerHTML = '<span style="color: var(--accent);">请求失败: ' + err.message + '</span>';
+        });
+    }
+
+    function copyToClipboard(text) {
+      navigator.clipboard.writeText(text).then(function() {
+        alert('链接已复制到剪贴板');
+      }).catch(function(err) {
+        prompt('复制失败，请手动复制：', text);
+      });
+    }
+
+    document.addEventListener('DOMContentLoaded', updateStatus);
+  </script>
+</body>
+</html>

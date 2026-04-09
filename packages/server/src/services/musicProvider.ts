@@ -368,6 +368,101 @@ class MusicProvider {
    * Search for tracks. Uses format(false) to get raw API data including duration,
    * then batch-resolves cover URLs.
    */
+  
+  /**
+   * Search for albums. Returns a list of Playlist objects.
+   */
+  async searchAlbum(source: MusicSource, keyword: string, limit = 20, page = 1): Promise<import('@music-together/shared').Playlist[]> {
+    if (!keyword.trim()) return []
+
+    try {
+      if (source === 'tencent') {
+        const url = 'https://u.y.qq.com/cgi-bin/musicu.fcg'
+        const payload = {
+          comm: { ct: '6', cv: '80600', tmeAppID: 'qqmusic' },
+          'music.search.SearchCgiService.DoSearchForQQMusicDesktop': {
+            module: 'music.search.SearchCgiService',
+            method: 'DoSearchForQQMusicDesktop',
+            param: { num_per_page: limit, page_num: page, search_type: 2, query: keyword, grp: 1 },
+          },
+        }
+
+        const response = await withTimeout(
+          fetch(url, {
+            method: 'POST',
+            headers: {
+              'Content-Type': 'application/json',
+              Referer: 'https://y.qq.com',
+              'User-Agent': 'QQ%E9%9F%B3%E4%B9%90/73222',
+            },
+            body: JSON.stringify(payload),
+          }).then((res) => res.json())
+        )
+
+        if (!response) return []
+
+        const result = response['music.search.SearchCgiService.DoSearchForQQMusicDesktop']
+        if (result?.code !== 0 || !result?.data?.body?.album?.list) return []
+
+        return result.data.body.album.list.map((album: any) => ({
+          id: String(album.albumMID || album.albumID),
+          name: album.albumName || 'Unknown Album',
+          cover: album.albumPic || '',
+          trackCount: album.song_count || 0,
+          source: 'tencent',
+          creator: album.singerName || '',
+        }))
+      }
+
+      if (source === 'kugou') {
+        const url = `http://mobilecdn.kugou.com/api/v3/search/album?api_ver=1&area_code=1&correct=1&pagesize=${limit}&plat=2&tag=1&sver=5&showtype=10&page=${page}&keyword=${encodeURIComponent(keyword)}&version=8990`
+        const response = await withTimeout(fetch(url).then(res => res.json()))
+        
+        if (!response || response.errcode !== 0 || !response.data?.info) return []
+        
+        return response.data.info.map((album: any) => ({
+          id: String(album.albumid),
+          name: album.albumname || 'Unknown Album',
+          cover: (album.imgurl || '').replace('{size}', '400'),
+          trackCount: album.songcount || 0,
+          source: 'kugou',
+          creator: album.singername || '',
+        }))
+      }
+
+      if (source === 'netease') {
+        const meting = new Meting('netease')
+        meting.format(false) // Important: don't format because format expects songs
+        const raw = await withTimeout(meting.search(keyword, { limit, page, type: 10 } as any))
+        if (!raw) return []
+
+        let data: any
+        try {
+          data = JSON.parse(raw as string)
+        } catch {
+          return []
+        }
+
+        const albums = data?.result?.albums
+        if (!Array.isArray(albums)) return []
+
+        return albums.map((album: any) => ({
+          id: String(album.id),
+          name: album.name || 'Unknown Album',
+          cover: album.picUrl || album.blurPicUrl || '',
+          trackCount: album.size || 0,
+          source: 'netease',
+          creator: album.artist?.name || '',
+        }))
+      }
+
+      return []
+    } catch (err) {
+      logger.error(`Search album failed for ${source}:`, err)
+      return []
+    }
+  }
+
   async search(source: MusicSource, keyword: string, limit = 20, page = 1): Promise<Track[]> {
     const cacheKey = `${source}:${keyword}:${limit}:${page}`
 
@@ -636,6 +731,7 @@ class MusicProvider {
     playlistId: string,
     playlistTotal?: number,
     cookie?: string | null,
+    type: 'playlist' | 'album' = 'playlist'
   ): Promise<{ ids: string[]; total: number }> {
     const cacheKey = `${source}:${playlistId}`
 
@@ -653,12 +749,18 @@ class MusicProvider {
 
     // Netease: use ncmApi.playlist_track_all to bypass Meting's 1000-track limit
     if (source === 'netease') {
+      if (type === 'album') {
+        return this.fetchNeteaseAlbum(playlistId, cacheKey)
+      }
       return this.fetchNeteasePlaylist(playlistId, cacheKey, playlistTotal, cookie)
     }
 
     // Kugou: try native API (works with global_collection_id from user playlists)
     // Falls back to Meting for public playlists / special IDs
     if (source === 'kugou') {
+      if (type === 'album') {
+        return this.fetchMetingPlaylist(source, playlistId, cacheKey, type)
+      }
       const result = await this.fetchKugouPlaylist(playlistId, cacheKey, cookie)
       if (result.total > 0) return result
       logger.info(`Kugou native API returned empty for ${playlistId}, falling back to Meting`)
@@ -666,19 +768,56 @@ class MusicProvider {
 
     // Tencent: use new native API (supports fav & custom lists)
     if (source === 'tencent') {
+      if (type === 'album') {
+        return this.fetchMetingPlaylist(source, playlistId, cacheKey, type)
+      }
       const result = await this.fetchTencentPlaylist(playlistId, cacheKey, cookie)
       if (result.total > 0) return result
       logger.info(`Tencent native API returned empty for ${playlistId}, falling back to Meting`)
     }
 
     // Fallback: use Meting raw mode
-    return this.fetchMetingPlaylist(source, playlistId, cacheKey)
+    return this.fetchMetingPlaylist(source, playlistId, cacheKey, type)
   }
 
   /**
    * Fetch full Netease playlist via ncmApi.playlist_track_all.
    * No 1000-track limit; returns full song data including duration/album/artist.
    */
+  
+  /** Fetch Netease album using ncmApi.album */
+  private async fetchNeteaseAlbum(
+    albumId: string,
+    cacheKey: string,
+  ): Promise<{ ids: string[]; total: number }> {
+    try {
+      const res = await withTimeout(ncmApi.album({ id: albumId, timestamp: Date.now() }), 30_000)
+      if (res === null) {
+        logger.warn(`Netease album timeout: ${albumId}`)
+        return { ids: [], total: 0 }
+      }
+
+      const songs = res?.body?.songs
+      if (!Array.isArray(songs) || songs.length === 0) {
+        return { ids: [], total: 0 }
+      }
+
+      const allTracks = songs.map((song: any) => this.rawToTrack(song, 'netease'))
+      
+      for (const t of allTracks) this.enrichFromRegistry(t)
+      this.registerTracks(allTracks)
+
+      const ids = allTracks.map((t) => t.sourceId)
+      this.playlistIndex.set(cacheKey, { source: 'netease', ids })
+
+      logger.info(`Netease album ${albumId}: ${ids.length} tracks`)
+      return { ids, total: ids.length }
+    } catch (err) {
+      logger.error(`Netease album failed: ${albumId}`, err)
+      return { ids: [], total: 0 }
+    }
+  }
+
   private async fetchNeteasePlaylist(
     playlistId: string,
     cacheKey: string,
@@ -885,10 +1024,11 @@ class MusicProvider {
     source: MusicSource,
     playlistId: string,
     cacheKey: string,
+    type: 'playlist' | 'album' = 'playlist'
   ): Promise<{ ids: string[]; total: number }> {
     try {
       const meting = new Meting(source)
-      const raw = await withTimeout(meting.playlist(playlistId), 30_000)
+      const raw = await withTimeout(type === 'album' ? meting.album(playlistId) : meting.playlist(playlistId), 30_000)
       if (raw === null) {
         logger.warn(`Playlist fetch timeout for ${source}: ${playlistId}`)
         return { ids: [], total: 0 }
@@ -902,7 +1042,13 @@ class MusicProvider {
         return { ids: [], total: 0 }
       }
 
-      const songs = this.navigatePath(rawData, PLAYLIST_PATHS[source])
+      // For Tencent album, the path is data.getSongInfo, for Kugou it's data.info
+      let path = PLAYLIST_PATHS[source]
+      if (type === 'album') {
+        if (source === 'tencent') path = 'data.getSongInfo'
+        if (source === 'kugou') path = 'data.info'
+      }
+      const songs = this.navigatePath(rawData, path)
       if (!Array.isArray(songs) || songs.length === 0) return { ids: [], total: 0 }
 
       const tracks = songs.map((song: MetingJson) => this.rawToTrack(song, source))
@@ -932,8 +1078,9 @@ class MusicProvider {
     offset: number,
     playlistTotal?: number,
     cookie?: string | null,
+    type: 'playlist' | 'album' = 'playlist'
   ): Promise<{ tracks: Track[]; total: number; hasMore: boolean }> {
-    const { ids, total } = await this.fetchFullPlaylist(source, playlistId, playlistTotal, cookie)
+    const { ids, total } = await this.fetchFullPlaylist(source, playlistId, playlistTotal, cookie, type)
     if (total === 0) return { tracks: [], total: 0, hasMore: false }
 
     const pageIds = ids.slice(offset, offset + limit)

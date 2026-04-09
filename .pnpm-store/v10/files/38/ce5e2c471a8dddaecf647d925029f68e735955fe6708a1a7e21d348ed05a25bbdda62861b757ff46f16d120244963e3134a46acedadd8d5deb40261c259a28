@@ -1,0 +1,100 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <meta http-equiv="X-UA-Compatible" content="IE=edge">
+  <title>网易云音乐 API Enhanced</title>
+  <style>
+    :root {
+      --fg: #333;
+      --muted: #666;
+      --border: #ddd;
+      --bg: #f5f5f5;
+      --panel: #ffffff;
+      --accent: #333;
+    }
+    * { box-sizing: border-box; }
+    html, body { height: 100%; }
+    body { margin: 0; font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif; color: var(--fg); background: var(--bg); line-height: 1.6; }
+    .container { max-width: 960px; margin: 40px auto; padding: 0 20px; }
+    header.site-header { margin-bottom: 24px; }
+    header.site-header h1 { font-size: 28px; font-weight: 600; margin: 0; }
+    .badge { display: inline-block; margin-left: 8px; padding: 4px 10px; border: 1px solid var(--border); border-radius: 12px; font-size: 12px; color: var(--muted); }
+    .sub { margin-top: 8px; color: var(--muted); font-size: 14px; }
+    .block { background: var(--panel); border: 1px solid var(--border); border-radius: 12px; padding: 20px; margin-bottom: 16px; box-shadow: 0 2px 8px rgba(0, 0, 0, 0.05); }
+    .block h2 { margin: 0 0 12px; font-size: 18px; font-weight: 600; }
+    .kvs { display: grid; grid-template-columns: 140px 1fr; gap: 8px 16px; align-items: center; }
+    .kvs div:first-child { color: var(--muted); }
+    ul.links { list-style: none; padding: 0; margin: 0; }
+    ul.links li { margin: 8px 0; }
+    ul.links a { color: var(--fg); text-decoration: none; border-bottom: 1px dotted var(--border); transition: all 0.2s ease; }
+    ul.links a:hover { color: var(--accent); border-bottom-color: var(--accent); }
+    pre { margin: 0; background: #f9f9f9; border: 1px solid var(--border); border-radius: 6px; padding: 12px; overflow: auto; }
+    code { font-family: 'Courier New', monospace; font-size: 13px; }
+    footer.site-footer { margin-top: 24px; padding-top: 12px; border-top: 1px solid var(--border); color: var(--muted); text-align: center; }
+    footer.site-footer a { color: var(--fg); text-decoration: none; transition: color 0.2s ease; }
+    footer.site-footer a:hover { color: var(--accent); }
+  </style>
+</head>
+<body>
+  <main class="container">
+    <header class="site-header">
+      <h1>网易云音乐 API Enhanced <span id="api-version" class="badge"></span></h1>
+      <p class="sub">🔍 A revival project for NeteaseCloudMusicApi Node.js Api Services || 网易云音乐 API 备份 + 增强 || 本项目自原版v4.28.0版本后开始自行维护</p>
+    </header>
+
+    <section class="block">
+      <h2>状态</h2>
+      <div class="kvs">
+        <div>Base URL</div><div id="base-url">—</div>
+        <div>当前页</div><div id="current-url">—</div>
+      </div>
+    </section>
+
+    <section class="block">
+      <h2>文档</h2>
+      <p><a href="/docs" target="_blank">查看在线文档</a></p>
+    </section>
+
+    <section class="block">
+      <h2>常用接口</h2>
+      <ul class="links">
+        <li><a href="/search?keywords=妖精小姐的魔法邀约">搜索音乐: <code>GET /search</code></a></li>
+        <li><a href="/song/detail?ids=2756058128">获取音乐详情: <code>GET /song/detail</code></a></li>
+        <li><a href="/comment/music?id=2756058128&limit=1">获取音乐评论: <code>GET /comment/music</code></a></li>
+        <li><a href="/song/url/v1?id=2756058128&level=exhigh">获取音乐播放链接: <code>GET /song/url/v1</code></a></li>
+      </ul>
+    </section>
+
+    <section class="block">
+      <h2>调试部分</h2>
+      <pre><code>curl -s {origin}/inner/version
+curl -s {origin}/search?keywords=网易云</code></pre>
+      <p style="margin-top:10px"> · <a href="/api.html">交互式调试</a> · <a href="/qrlogin.html">二维码登录示例</a> · <a href="/unblock_test.html">解灰测试</a></p> · <a href="/audio_match_demo/index.html">听歌识曲 Demo</a></p> · <a href="/cloud.html">云盘上传</a></p> · <a href="/playlist_import.html">歌单导入</a></p> · <a href="/eapi_decrypt.html">EAPI 解密</p> · <a href="/listen_together_host.html">一起听示例</p> · <a href="/playlist_cover_update.html">更新歌单封面示例</p> · <a href="/avatar_update.html">头像更新示例</p>
+    </section>
+
+    <footer class="site-footer">
+      <a href="https://github.com/neteasecloudmusicapienhanced/api-enhanced" target="_blank">GitHub</a>
+    </footer>
+  </main>
+
+  <script>
+    document.addEventListener('DOMContentLoaded', function () {
+      var origin = window.location.origin;
+      document.getElementById('base-url').textContent = origin;
+      document.getElementById('current-url').textContent = window.location.href;
+
+      fetch('/inner/version', { method: 'POST' })
+        .then(function (r) { return r.json(); })
+        .then(function (data) {
+          var v = data && data.data && data.data.version;
+          if (v) document.getElementById('api-version').textContent = 'v' + v;
+          var pre = document.querySelector('pre code');
+          if (pre) pre.textContent = pre.textContent.replace(/\{origin\}/g, origin);
+        })
+        .catch(function () {});
+    });
+  </script>
+</body>
+</html>

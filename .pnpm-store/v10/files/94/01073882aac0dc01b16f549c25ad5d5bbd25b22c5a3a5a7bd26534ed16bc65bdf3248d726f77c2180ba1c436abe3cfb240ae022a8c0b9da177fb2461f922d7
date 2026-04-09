@@ -1,0 +1,9 @@
+declare function splitLine(content: string): string[];
+declare const baseInfoRegExpMap: {
+    ti: RegExp;
+    ar: RegExp;
+    al: RegExp;
+    by: RegExp;
+    offset: RegExp;
+};
+export { splitLine, baseInfoRegExpMap };

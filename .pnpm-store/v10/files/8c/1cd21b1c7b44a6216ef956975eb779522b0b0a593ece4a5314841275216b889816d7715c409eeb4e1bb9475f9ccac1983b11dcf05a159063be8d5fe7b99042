@@ -1,0 +1,23 @@
+"use strict";
+Object.defineProperty(exports, "__esModule", { value: true });
+function splitLine(content) {
+    return content
+        .split(/[\r\n]/)
+        .map((s) => {
+        return s.trim();
+    })
+        .filter((s) => {
+        return !!s;
+    });
+}
+exports.splitLine = splitLine;
+const baseInfoRegExpMap = {
+    ti: /^\[ti:([\s\S]*?)\]/,
+    ar: /^\[ar:([\s\S]*?)\]/,
+    al: /^\[al:([\s\S]*?)\]/,
+    by: /^\[by:([\s\S]*?)\]/,
+    offset: /^\[offset:([\s\S]*?)\]/,
+};
+exports.baseInfoRegExpMap = baseInfoRegExpMap;
+
+//# sourceMappingURL=helper.js.map

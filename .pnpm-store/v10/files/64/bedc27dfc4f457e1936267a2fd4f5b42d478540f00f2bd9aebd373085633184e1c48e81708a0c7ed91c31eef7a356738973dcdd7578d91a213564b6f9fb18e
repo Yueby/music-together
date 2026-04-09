@@ -1,0 +1,48 @@
+{
+  "name": "jss-plugin-extend",
+  "description": "JSS plugin that enables mixing in styles.",
+  "version": "10.10.0",
+  "license": "MIT",
+  "homepage": "https://cssinjs.org/jss-extend",
+  "main": "dist/jss-plugin-extend.cjs.js",
+  "module": "dist/jss-plugin-extend.esm.js",
+  "unpkg": "dist/jss-plugin-extend.bundle.js",
+  "sideEffects": false,
+  "typings": "./src/index.d.ts",
+  "author": "JSS Team",
+  "repository": {
+    "type": "git",
+    "url": "https://github.com/cssinjs/jss.git",
+    "directory": "packages/jss-plugin-extend"
+  },
+  "bugs": {
+    "url": "https://github.com/cssinjs/jss/issues/new?title=[jss-plugin-extend]"
+  },
+  "files": [
+    "dist",
+    "src",
+    "!*.test.*"
+  ],
+  "keywords": [
+    "jss",
+    "plugin",
+    "extend",
+    "css-in-js",
+    "cssinjs",
+    "css in js"
+  ],
+  "scripts": {
+    "build": "node ../../scripts/build.js",
+    "check-snapshot": "node ../../scripts/match-snapshot.js"
+  },
+  "devDependencies": {
+    "jss-plugin-expand": "10.10.0",
+    "jss-plugin-nested": "10.10.0",
+    "jss-plugin-rule-value-function": "10.10.0"
+  },
+  "dependencies": {
+    "@babel/runtime": "^7.3.1",
+    "jss": "10.10.0",
+    "tiny-warning": "^1.0.2"
+  }
+}

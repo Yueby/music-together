@@ -1,0 +1,70 @@
+{
+  "version": "4.0.0-beta.2",
+  "name": "gl-matrix",
+  "description": "Javascript Matrix and Vector library for High Performance 3D web apps",
+  "private": false,
+  "sideEffects": false,
+  "type": "module",
+  "main": "./dist/esm/index.js",
+  "module": "./dist/esm/index.js",
+  "exports": {
+    ".": "./dist/esm/index.js",
+    "./common": "./dist/esm/common.js",
+    "./mat2": "./dist/esm/mat2.js",
+    "./mat2d": "./dist/esm/mat2d.js",
+    "./mat3": "./dist/esm/mat3.js",
+    "./mat4": "./dist/esm/mat4.js",
+    "./quat": "./dist/esm/quat.js",
+    "./quat2": "./dist/esm/quat2.js",
+    "./vec2": "./dist/esm/vec2.js",
+    "./vec3": "./dist/esm/vec3.js",
+    "./vec4": "./dist/esm/vec4.js",
+    "./f64": "./dist/esm/f64/index.js",
+    "./f64/common": "./dist/esm/f64/common.js",
+    "./f64/mat2": "./dist/esm/f64/mat2.js",
+    "./f64/mat2d": "./dist/esm/f64/mat2d.js",
+    "./f64/mat3": "./dist/esm/f64/mat3.js",
+    "./f64/mat4": "./dist/esm/f64/mat4.js",
+    "./f64/quat": "./dist/esm/f64/quat.js",
+    "./f64/quat2": "./dist/esm/f64/quat2.js",
+    "./f64/vec2": "./dist/esm/f64/vec2.js",
+    "./f64/vec3": "./dist/esm/f64/vec3.js",
+    "./f64/vec4": "./dist/esm/f64/vec4.js"
+  },
+  "types": "./dist/esm/index.d.ts",
+  "homepage": "http://glmatrix.net",
+  "license": "MIT",
+  "bugs": {
+    "url": "https://github.com/toji/gl-matrix/issues"
+  },
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/toji/gl-matrix.git"
+  },
+  "contributors": [
+    {
+      "name": "Brandon Jones",
+      "email": "tojiro@gmail.com"
+    },
+    {
+      "name": "Colin MacKenzie IV",
+      "email": "sinisterchipmunk@gmail.com"
+    }
+  ],
+  "scripts": {
+    "build": "tsc",
+    "build-docs": "typedoc src/index.ts",
+    "gen64": "node scripts/gen-f64.mjs",
+    "build64": "npm run gen64 && tsc --project tsconfig64.json",
+    "bundle": "node scripts/bundle.mjs",
+    "build-all": "npm run build && npm run build64 && npm run build-docs && npm run bundle",
+    "watch": "tsc --watch",
+    "test": "npm run gen64 && vitest run"
+  },
+  "devDependencies": {
+    "esbuild": "^0.15.15",
+    "typedoc": "^0.23.21",
+    "typescript": "^5.0.0",
+    "vitest": "^0.25.8"
+  }
+}

@@ -1,0 +1,14 @@
+export interface LrcInfo {
+    ti?: string;
+    ar?: string;
+    al?: string;
+    by?: string;
+    offset?: string;
+    items: {
+        duration: number;
+        offset: number;
+        line: string;
+    }[];
+}
+declare function parseLrc(content: string): LrcInfo;
+export { parseLrc };

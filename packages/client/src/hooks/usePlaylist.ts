@@ -12,7 +12,7 @@ function buildPlaylistUrl(
   id: string,
   limit: number,
   offset: number,
-  options?: { total?: number; roomId?: string },
+  options?: { total?: number; roomId?: string; type?: 'playlist' | 'album' },
 ): string {
   const params = new URLSearchParams({
     source,
@@ -22,6 +22,7 @@ function buildPlaylistUrl(
   })
   if (options?.total) params.set('total', String(options.total))
   if (options?.roomId) params.set('roomId', options.roomId)
+  if (options?.type) params.set('type', options.type)
   return `${SERVER_URL}/api/music/playlist?${params.toString()}`
 }
 
@@ -94,7 +95,7 @@ export function usePlaylist() {
   const [loadingMore, setLoadingMore] = useState(false)
 
   // Track current playlist context to prevent stale responses
-  const currentPlaylistRef = useRef<{ source: MusicSource; id: string } | null>(null)
+  const currentPlaylistRef = useRef<{ source: MusicSource; id: string; type?: 'playlist' | 'album' } | null>(null)
   const offsetRef = useRef(0)
   const loadingMoreRef = useRef(false)
 
@@ -123,7 +124,7 @@ export function usePlaylist() {
    * Resets all track state immediately to prevent stale data from flashing.
    */
   const fetchPlaylistTracks = useCallback(
-    async (source: MusicSource, playlistId: string, trackCount?: number): Promise<Track[]> => {
+    async (source: MusicSource, playlistId: string, trackCount?: number, type: 'playlist' | 'album' = 'playlist'): Promise<Track[]> => {
       // Reset state immediately — prevents flashing old data when switching playlists
       setPlaylistTracks([])
       setPlaylistTotal(0)
@@ -133,13 +134,14 @@ export function usePlaylist() {
       loadingMoreRef.current = false
 
       // Track current context for stale response detection
-      currentPlaylistRef.current = { source, id: playlistId }
+      currentPlaylistRef.current = { source, id: playlistId, type }
       offsetRef.current = 0
 
       try {
         const url = buildPlaylistUrl(source, playlistId, PAGE_SIZE, 0, {
           total: trackCount,
           roomId: useRoomStore.getState().room?.id,
+          type,
         })
         const res = await fetch(url, { credentials: 'include' })
         if (!res.ok) {
@@ -188,7 +190,9 @@ export function usePlaylist() {
     try {
       const offset = offsetRef.current
       const url = buildPlaylistUrl(ctx.source, ctx.id, PAGE_SIZE, offset, {
+        total: playlistTotal,
         roomId: useRoomStore.getState().room?.id,
+        type: ctx.type,
       })
       const res = await fetch(url, { credentials: 'include' })
       if (!res.ok) return
@@ -209,7 +213,7 @@ export function usePlaylist() {
       loadingMoreRef.current = false
       setLoadingMore(false)
     }
-  }, [hasMoreTracks])
+  }, [hasMoreTracks, playlistTotal])
 
   const addTrackToQueue = useCallback(
     (track: Track) => {

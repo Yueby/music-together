@@ -1,0 +1,36 @@
+{
+  "name": "get-them-args",
+  "version": "1.3.2",
+  "description": "Parse argument options",
+  "license": "MIT",
+  "repository": {
+    "type": "git",
+    "url": "https://github.com/tiaanduplessis/get-them-args.git"
+  },
+  "homepage": "https://github.com/tiaanduplessis/get-them-args",
+  "bugs": "https://github.com/tiaanduplessis/get-them-args/issues",
+  "author": "Tiaan du Plessis",
+  "scripts": {
+    "test": "jest",
+    "lint": "standard --fix",
+    "coverage": "jest --coverage"
+  },
+  "files": [
+    "index.js"
+  ],
+  "keywords": [
+    "args",
+    "get-them-args",
+    "parser",
+    "arguments"
+  ],
+  "devDependencies": {
+    "jest": "^23.4.1",
+    "standard": "^11.0.1"
+  },
+  "standard": {
+    "env": {
+      "jest": true
+    }
+  }
+}
