@@ -9,14 +9,21 @@ import { useEffect, useState } from 'react'
  */
 export function useHasHover() {
   const [hasHover, setHasHover] = useState(
-    () => typeof window !== 'undefined' && window.matchMedia('(hover: hover)').matches,
+    () =>
+      typeof window !== 'undefined' &&
+      (window.matchMedia('(any-hover: hover)').matches || window.matchMedia('(hover: hover)').matches),
   )
 
   useEffect(() => {
-    const mql = window.matchMedia('(hover: hover)')
-    const onChange = () => setHasHover(mql.matches)
-    mql.addEventListener('change', onChange)
-    return () => mql.removeEventListener('change', onChange)
+    const mqlAnyHover = window.matchMedia('(any-hover: hover)')
+    const mqlHover = window.matchMedia('(hover: hover)')
+    const onChange = () => setHasHover(mqlAnyHover.matches || mqlHover.matches)
+    mqlAnyHover.addEventListener('change', onChange)
+    mqlHover.addEventListener('change', onChange)
+    return () => {
+      mqlAnyHover.removeEventListener('change', onChange)
+      mqlHover.removeEventListener('change', onChange)
+    }
   }, [])
 
   return hasHover
