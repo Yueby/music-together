@@ -5,17 +5,7 @@ import { toast } from 'sonner'
 
 const PAGE_SIZE = 20
 
-interface UseSearchReturn {
-  results: Track[]
-  loading: boolean
-  loadingMore: boolean
-  hasMore: boolean
-  hasSearched: boolean
-  page: number
-  search: (keyword: string) => void
-  loadMore: () => void
-  resetState: () => void
-}
+// UseSearchReturn type removed
 
 /**
  * 搜索逻辑 hook — 管理搜索/翻页/abort/竞态保护。
@@ -25,7 +15,7 @@ export function useSearch<T extends 'song' | 'album' = 'song'>(
   source: MusicSource,
   type: T = 'song' as T,
 ) {
-  const [results, setResults] = useState<T extends 'album' ? import('@music-together/shared').Playlist[] : Track[]>([])
+  const [results, setResults] = useState<T extends 'album' ? import('@music-together/shared').Playlist[] : Track[]>(([] as any))
   const [loading, setLoading] = useState(false)
   const [loadingMore, setLoadingMore] = useState(false)
   const [page, setPage] = useState(1)
@@ -88,7 +78,7 @@ export function useSearch<T extends 'song' | 'album' = 'song'>(
           if (err instanceof DOMException && err.name === 'AbortError') return
           if (searchIdRef.current !== currentSearchId) return
           toast.error('搜索失败，请重试')
-          setResults([])
+          setResults([] as any)
           setHasMore(false)
         })
         .finally(() => {
@@ -132,7 +122,7 @@ export function useSearch<T extends 'song' | 'album' = 'song'>(
     abortRef.current?.abort()
     loadMoreAbortRef.current?.abort()
     searchIdRef.current++
-    setResults([])
+    setResults([] as any)
     setPage(1)
     setHasMore(false)
     setHasSearched(false)
