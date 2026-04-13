@@ -40,6 +40,11 @@ app.get('/api/health', (_req, res) => {
   res.json({ status: 'ok', timestamp: Date.now() })
 })
 
+// Version check (client polls on startup to detect updates)
+app.get('/api/version', (_req, res) => {
+  res.json({ version: config.version })
+})
+
 // --- Serve client SPA (条件挂载，仅当构建产物存在时) ---
 const __dirname = path.dirname(fileURLToPath(import.meta.url))
 const clientDist = path.resolve(__dirname, '../../client/dist')

@@ -13,6 +13,7 @@ import { storage } from '@/lib/storage'
 import { useSocketContext } from '@/providers/SocketProvider'
 import { useRoomStore } from '@/stores/roomStore'
 import { useChatStore } from '@/stores/chatStore'
+import { useVersionCheck } from '@/hooks/useVersionCheck'
 import { EVENTS, ERROR_CODE, type RoomListItem, type RoomState } from '@music-together/shared'
 import { Github, Headphones } from 'lucide-react'
 import { motion } from 'motion/react'
@@ -24,6 +25,7 @@ export default function HomePage() {
   const navigate = useNavigate()
   const { socket } = useSocketContext()
   const { rooms, isLoading, createRoom, joinRoom } = useLobby()
+  const hasUpdate = useVersionCheck()
 
   const [createDialogOpen, setCreateDialogOpen] = useState(false)
   const [passwordDialog, setPasswordDialog] = useState<{ open: boolean; room: RoomListItem | null }>({
@@ -271,9 +273,15 @@ export default function HomePage() {
               href="https://github.com/Yueby/music-together/blob/main/package.json"
               target="_blank"
               rel="noopener noreferrer"
-              className="transition-colors hover:text-foreground"
+              className="relative inline-flex items-center transition-colors hover:text-foreground"
             >
               v{__APP_VERSION__}
+              {hasUpdate && (
+                <span
+                  className="absolute -right-2 -top-1 h-2 w-2 rounded-full bg-red-500"
+                  title="有新版本可用，刷新页面以更新"
+                />
+              )}
             </a>
           </span>
           <a
