@@ -35,12 +35,7 @@ export function insertAfterCurrent(roomId: string, track: Track): boolean {
   if (room.queue.length >= LIMITS.QUEUE_MAX_SIZE) return false
 
   const currentId = room.currentTrack?.id
-  if (!currentId) {
-    room.queue.push(track)
-    return true
-  }
-
-  const currentIndex = room.queue.findIndex((t) => t.id === currentId)
+  const currentIndex = currentId ? room.queue.findIndex((t) => t.id === currentId) : -1
   const insertIndex = currentIndex >= 0 ? currentIndex + 1 : 0
   room.queue.splice(insertIndex, 0, track)
   return true
