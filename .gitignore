@@ -5,12 +5,9 @@ dist
 *.log
 .DS_Store
 Thumbs.db
-<<<<<<< Updated upstream
 .claude
 .spec-workflow
 .pnpm-store/
 .omc
 .trae
-=======
->>>>>>> Stashed changes
 /.sanshu-memory
