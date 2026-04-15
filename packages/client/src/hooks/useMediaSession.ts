@@ -1,5 +1,5 @@
 import { usePlayerStore } from '@/stores/playerStore'
-import { useCallback, useEffect, useRef } from 'react'
+import { useEffect, useRef } from 'react'
 
 interface MediaSessionControls {
   play: () => void
@@ -82,10 +82,32 @@ export function useMediaSession({ play, pause, next, prev, seek }: MediaSessionC
     navigator.mediaSession.playbackState = isPlaying ? 'playing' : 'paused'
   }, [isPlaying])
 
-  // Update position state for seek bar in OS media controls
-  const setPositionState = useCallback(() => {
+  // Update position state for seek bar in OS media controls.
+  // The browser interpolates progress automatically based on playbackRate,
+  // so we only sync on meaningful state changes: play/pause toggles,
+  // duration changes, and seeks (large position jumps).  Normal playback
+  // ticks do NOT need syncing — that would be wasteful overhead.
+  const prevIsPlayingRef = useRef(isPlaying)
+  const prevDurationRef = useRef(duration)
+  const prevPositionRef = useRef(currentTime)
+
+  useEffect(() => {
     if (!('mediaSession' in navigator)) return
     if (!duration || !isFinite(duration)) return
+
+    const playStateChanged = isPlaying !== prevIsPlayingRef.current
+    const durationChanged = duration !== prevDurationRef.current
+    // Detect a seek: position jumped by more than 2s from expected
+    const expectedDelta = prevIsPlayingRef.current ? (1.0) : 0
+    const isSeek = Math.abs(currentTime - prevPositionRef.current - expectedDelta) > 2
+
+    // Only sync on play-state change, duration change, or seek
+    if (!playStateChanged && !durationChanged && !isSeek) return
+
+    prevIsPlayingRef.current = isPlaying
+    prevDurationRef.current = duration
+    prevPositionRef.current = currentTime
+
     try {
       navigator.mediaSession.setPositionState({
         duration,
@@ -95,9 +117,5 @@ export function useMediaSession({ play, pause, next, prev, seek }: MediaSessionC
     } catch {
       // setPositionState throws if position > duration; ignore gracefully
     }
-  }, [currentTime, duration])
-
-  useEffect(() => {
-    setPositionState()
-  }, [setPositionState])
+  }, [isPlaying, duration, currentTime])
 }
