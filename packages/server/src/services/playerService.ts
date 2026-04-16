@@ -468,13 +468,19 @@ export async function syncPlaybackToSocket(
     if (isAloneInRoom && !room.playState.isPlaying) {
       room.playState = { ...room.playState, isPlaying: true, serverTimestamp: Date.now() }
     }
+
+    const snapshotCurrentTime = estimateCurrentTime(roomId)
+    const snapshotTimestamp = Date.now()
+    const scheduleTime = shouldAutoPlay ? getScheduleTime(roomId) : snapshotTimestamp
+    const delaySec = shouldAutoPlay ? Math.max(0, (scheduleTime - snapshotTimestamp) / 1000) : 0
+
     socket.emit(EVENTS.PLAYER_PLAY, {
       track: room.currentTrack,
       playState: {
         isPlaying: shouldAutoPlay,
-        currentTime: estimateCurrentTime(roomId),
-        serverTimestamp: Date.now(),
-        serverTimeToExecute: Date.now(),
+        currentTime: snapshotCurrentTime + delaySec,
+        serverTimestamp: scheduleTime,
+        serverTimeToExecute: scheduleTime,
       },
     })
   } else if (isAloneInRoom && room.queue.length > 0) {

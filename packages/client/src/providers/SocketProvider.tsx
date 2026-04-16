@@ -1,4 +1,4 @@
-import { connectSocket, type TypedSocket } from '@/lib/socket'
+import { getSocket, type TypedSocket } from '@/lib/socket'
 import { SERVER_URL } from '@/lib/config'
 import { storage } from '@/lib/storage'
 import { createContext, useContext, useEffect, useMemo, useRef, useState, type ReactNode } from 'react'
@@ -15,7 +15,7 @@ const SocketContext = createContext<SocketContextValue | null>(null)
 const DISCONNECT_TOAST_ID = 'socket-disconnect'
 
 export function SocketProvider({ children }: { children: ReactNode }) {
-  const socketRef = useRef<TypedSocket>(connectSocket())
+  const socketRef = useRef<TypedSocket>(getSocket())
   const hasDisconnectedRef = useRef(false)
   const [isConnected, setIsConnected] = useState(socketRef.current.connected)
 

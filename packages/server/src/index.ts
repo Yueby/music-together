@@ -87,7 +87,6 @@ const io = new Server<ClientToServerEvents, ServerToClientEvents, Record<string,
     methods: ['GET', 'POST'],
     credentials: true,
   },
-  transports: ['websocket'],
 })
 
 attachSocketIdentity(io)
