@@ -10,7 +10,7 @@ const router: RouterType = Router()
  */
 router.post('/identity/bootstrap', (req: Request, res: Response) => {
   const hasExistingIdentity = typeof req.identityUserId === 'string' && req.identityUserId.length > 0
-  const issued = issueIdentityCookie(res, req.identityUserId)
+  const issued = issueIdentityCookie(req, res, req.identityUserId)
   req.identityUserId = issued.userId
   res.setHeader('Access-Control-Expose-Headers', 'X-Identity-UserId, X-Identity-Expires-At')
   res.setHeader('X-Identity-UserId', issued.userId)

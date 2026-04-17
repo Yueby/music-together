@@ -36,7 +36,7 @@ export function identityHttpMiddleware(req: Request, res: Response, next: NextFu
   const identity = getIdentityFromRequest(req)
   if (identity) {
     req.identityUserId = identity.userId
-    const issued = issueIdentityCookie(res, identity.userId)
+    const issued = issueIdentityCookie(req, res, identity.userId)
     if (shouldLogRenewal(identity.userId)) {
       logger.info('Identity cookie renewed', {
         userId: identity.userId,

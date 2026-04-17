@@ -10,7 +10,7 @@ const rootPkg = JSON.parse(readFileSync(resolve(__dirname, '../../../package.jso
 
 const envSchema = z.object({
   PORT: z.coerce.number().int().positive().default(3001),
-  CLIENT_URL: z.string().default('http://localhost:5173'),
+  CLIENT_URL: z.string().default(''),
   CORS_ORIGINS: z.string().default(''),
   IDENTITY_SECRET: z.string().min(16).default('dev-identity-secret-change-me'),
   IDENTITY_TTL_DAYS: z.coerce.number().int().positive().default(30),
@@ -21,22 +21,16 @@ const envSchema = z.object({
 
 const env = envSchema.parse(process.env)
 const isProd = process.env.NODE_ENV === 'production'
-
-// 同域部署或开发环境：CLIENT_URL 为默认值时允许所有来源（origin: true）
-// 显式设置 CLIENT_URL 时使用严格白名单
-const isDefaultClientUrl = env.CLIENT_URL === 'http://localhost:5173'
-
-// 当 CLIENT_URL 使用 HTTP 时（如局域网 IP 部署），不应设置 Secure cookie
-// 否则浏览器会拒绝接受，导致身份认证失败
-const isHttpClientUrl = env.CLIENT_URL.startsWith('http://')
+const explicitOrigins = [env.CLIENT_URL, ...env.CORS_ORIGINS.split(',')]
+  .map((origin) => origin.trim())
+  .filter(Boolean)
 
 export const config = {
   version: rootPkg.version as string,
   port: env.PORT,
-  clientUrl: env.CLIENT_URL,
-  corsOrigins: isDefaultClientUrl
-    ? (true as const)
-    : ([env.CLIENT_URL, ...env.CORS_ORIGINS.split(',').filter(Boolean)] as string[]),
+  isProd,
+  clientUrl: explicitOrigins[0] ?? 'auto',
+  explicitOrigins,
   room: {
     gracePeriodMs: TIMING.ROOM_GRACE_PERIOD_MS,
   },
@@ -46,7 +40,7 @@ export const config = {
   identity: {
     secret: env.IDENTITY_SECRET,
     ttlDays: env.IDENTITY_TTL_DAYS,
-    cookieSecure: env.IDENTITY_COOKIE_SECURE ? env.IDENTITY_COOKIE_SECURE === 'true' : isProd && !isHttpClientUrl,
+    cookieSecure: env.IDENTITY_COOKIE_SECURE ? env.IDENTITY_COOKIE_SECURE === 'true' : null,
   },
   rejoin: {
     ttlMs: env.REJOIN_TTL_MS,

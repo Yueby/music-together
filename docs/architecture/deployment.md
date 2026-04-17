@@ -26,8 +26,16 @@ Docker 容器 (:3001)
 
 ## CORS 策略
 
-- `CLIENT_URL` 未设置（默认值）→ `origin: true`（允许所有来源，适用于同域部署和本地开发）
+- `CLIENT_URL` 未设置 → 自动模式，允许所有来源访问（适用于单镜像同域部署、局域网、公网反代）
 - `CLIENT_URL` 显式设置 → 严格白名单模式（适用于前后端分离跨域部署）
+
+## Identity Cookie 策略
+
+- 未显式设置 `IDENTITY_COOKIE_SECURE` 时，服务端会根据当前请求协议自动决定是否添加 `Secure`
+- 局域网 HTTP 访问会下发非 Secure cookie
+- 公网 HTTPS / 反代 HTTPS 访问会下发 Secure cookie
+- 自动判断 HTTPS 依赖代理正确透传 `X-Forwarded-Proto`
+- 仅在需要强制行为时才手动设置 `IDENTITY_COOKIE_SECURE`
 
 ## 前端同域适配
 

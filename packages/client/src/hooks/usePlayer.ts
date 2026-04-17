@@ -85,6 +85,20 @@ export function usePlayer() {
       })
 
       const ct = data.playState.currentTime
+      const executeDelay = Math.max(
+        0,
+        data.playState.serverTimeToExecute - (isCalibrated() ? getServerTime() : Date.now()),
+      )
+
+      if (ct > 0 && data.playState.isPlaying && executeDelay > 0) {
+        if (playTimerRef.current) clearTimeout(playTimerRef.current)
+        playTimerRef.current = setTimeout(() => {
+          playTimerRef.current = null
+          loadTrack(data.track, ct, data.playState.isPlaying)
+          fetchLyric(data.track)
+        }, executeDelay)
+        return
+      }
 
       if (ct === 0 && data.playState.serverTimeToExecute) {
         // New track from position 0: schedule load so playback begins at

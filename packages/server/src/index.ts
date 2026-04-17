@@ -20,10 +20,14 @@ import { logger } from './utils/logger.js'
 const app = express()
 const httpServer = createServer(app)
 
-// CORS
+// HTTP API CORS: in auto mode we allow the browser-reported origin and rely on
+// the cookie / same-host socket checks for deployment safety. This keeps local
+// dev (localhost) and LAN access working consistently.
 app.use(
   cors({
-    origin: config.corsOrigins,
+    origin: config.explicitOrigins.length > 0
+      ? config.explicitOrigins
+      : (true as const),
     credentials: true,
   }),
 )
@@ -83,7 +87,7 @@ if (fs.existsSync(indexHtml)) {
 // Socket.IO with typed events
 const io = new Server<ClientToServerEvents, ServerToClientEvents, Record<string, never>, SocketData>(httpServer, {
   cors: {
-    origin: config.corsOrigins,
+    origin: config.explicitOrigins.length > 0 ? config.explicitOrigins : true,
     methods: ['GET', 'POST'],
     credentials: true,
   },
@@ -102,7 +106,11 @@ httpServer.on('error', (err: NodeJS.ErrnoException) => {
 
 httpServer.listen(config.port, () => {
   logger.info(`Server running on http://localhost:${config.port}`)
-  logger.info(`Accepting connections from ${config.clientUrl}`)
+  logger.info(
+    config.explicitOrigins.length > 0
+      ? `Accepting connections from explicit origins: ${config.explicitOrigins.join(', ')}`
+      : 'Accepting connections from all origins (auto mode)',
+  )
 })
 
 // Graceful shutdown

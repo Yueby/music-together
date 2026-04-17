@@ -68,8 +68,8 @@ export function SocketProvider({ children }: { children: ReactNode }) {
     }
 
     const ensureIdentityAndConnect = async (showError = true): Promise<void> => {
-      await bootstrapIdentity(showError)
-      if (!cancelled && !socket.connected) {
+      const ok = await bootstrapIdentity(showError)
+      if (ok && !cancelled && !socket.connected) {
         socket.connect()
       }
     }

@@ -471,7 +471,10 @@ export async function syncPlaybackToSocket(
 
     const snapshotCurrentTime = estimateCurrentTime(roomId)
     const snapshotTimestamp = Date.now()
-    const scheduleTime = shouldAutoPlay ? getScheduleTime(roomId) : snapshotTimestamp
+    const joinCalibrationDelayMs = NTP.INITIAL_INTERVAL_MS * NTP.MAX_INITIAL_SAMPLES + 100
+    const scheduleTime = shouldAutoPlay
+      ? Math.max(getScheduleTime(roomId), snapshotTimestamp + joinCalibrationDelayMs)
+      : snapshotTimestamp
     const delaySec = shouldAutoPlay ? Math.max(0, (scheduleTime - snapshotTimestamp) / 1000) : 0
 
     socket.emit(EVENTS.PLAYER_PLAY, {

@@ -44,11 +44,19 @@ function parseCookies(cookieHeader?: string): Record<string, string> {
   return result
 }
 
-function serializeIdentityCookie(token: string): string {
+function isSecureRequest(req: Request): boolean {
+  if (req.secure) return true
+
+  const forwardedProto = req.headers['x-forwarded-proto']
+  const proto = Array.isArray(forwardedProto) ? forwardedProto[0] : forwardedProto
+  return typeof proto === 'string' && proto.split(',')[0].trim().toLowerCase() === 'https'
+}
+
+function serializeIdentityCookie(token: string, secure: boolean): string {
   const maxAgeSec = config.identity.ttlDays * 24 * 60 * 60
   const attrs = [`${IDENTITY_COOKIE_NAME}=${encodeURIComponent(token)}`, 'Path=/', 'HttpOnly', `Max-Age=${maxAgeSec}`]
   attrs.push('SameSite=Lax')
-  if (config.identity.cookieSecure) attrs.push('Secure')
+  if (secure) attrs.push('Secure')
   return attrs.join('; ')
 }
 
@@ -70,10 +78,11 @@ export function generateIdentityUserId(): string {
   return nanoid(20)
 }
 
-export function issueIdentityCookie(res: Response, userId?: string): { userId: string; expiresAt: number } {
+export function issueIdentityCookie(req: Request, res: Response, userId?: string): { userId: string; expiresAt: number } {
   const uid = userId ?? generateIdentityUserId()
   const { token, payload } = issueToken(uid)
-  res.setHeader('Set-Cookie', serializeIdentityCookie(token))
+  const secure = config.identity.cookieSecure ?? (config.isProd && isSecureRequest(req))
+  res.setHeader('Set-Cookie', serializeIdentityCookie(token, secure))
   return { userId: uid, expiresAt: payload.exp }
 }
 

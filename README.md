@@ -88,7 +88,9 @@ docker run -d --name music-together --restart unless-stopped \
   -p 80:3001 ghcr.io/Yueby/music-together:latest
 ```
 
-**局域网部署（其他设备可访问）：**
+默认自动模式下，前端会按当前访问地址自动连接后端；服务端默认开放所有来源访问，并根据当前请求协议自动决定 cookie 是否带 `Secure`。
+
+**需要显式限制来源时，再配置 `CLIENT_URL`：**
 
 ```bash
 docker run -d --name music-together --restart unless-stopped \
@@ -97,7 +99,9 @@ docker run -d --name music-together --restart unless-stopped \
   ghcr.io/Yueby/music-together:latest
 ```
 
-> 将 `192.168.1.100` 替换为你的机器实际局域网 IP。设置 `CLIENT_URL` 后服务会自动以 HTTP 模式运行（不启用 Secure cookie）。
+> `CLIENT_URL` 现在主要用于显式白名单模式或前后端分离部署；默认自动模式下通常不再需要手动设置。
+>
+> 如果你通过 Nginx / Caddy / 1Panel / Lucky 等反向代理暴露 HTTPS，请确保代理正确透传 `X-Forwarded-Proto`，否则服务端无法自动判断应该下发 Secure cookie。
 
 push 到 main 后 GitHub Actions 自动构建镜像。详见 [架构文档](docs/PROJECT_ARCHITECTURE.md)。
 
