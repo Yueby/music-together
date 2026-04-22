@@ -9,6 +9,7 @@ import { EVENTS } from '@music-together/shared'
 import { useCallback, useEffect, useRef } from 'react'
 import { useHowl } from './useHowl'
 import { useLyric } from './useLyric'
+import { useMediaSession } from './useMediaSession'
 import { usePlayerSync } from './usePlayerSync'
 
 /**
@@ -227,6 +228,10 @@ export function usePlayer() {
   )
 
   const prev = useCallback(() => socket.emit(EVENTS.PLAYER_PREV), [socket])
+
+  // MediaSession: hardware media keys + OS media notification bar.
+  // Permission-aware: mirrors PlayerControls fallback-to-vote behaviour.
+  useMediaSession({ play, pause, next, prev, seek })
 
   return { play, pause, seek, next, prev }
 }
