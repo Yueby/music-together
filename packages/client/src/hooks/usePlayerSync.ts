@@ -197,6 +197,7 @@ export function usePlayerSync(howlRef: RefObject<Howl | null>, soundIdRef: RefOb
       ++actionIdRef.current // invalidate any pending stale callbacks
       rateDisabledRef.current = false
       rateOverrideCountRef.current = 0
+      hardSeekCountRef.current = 0
       smoothedDriftRef.current = 0
       emaColdStartRef.current = true
       trackStartTimeRef.current = Date.now()
