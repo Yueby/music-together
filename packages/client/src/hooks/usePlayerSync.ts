@@ -1,4 +1,4 @@
-import { getServerTime, isCalibrated } from '@/lib/clockSync'
+import { getServerTime, isCalibrated, getMedianRTT } from '@/lib/clockSync'
 import {
   DRIFT_SEEK_THRESHOLD_MS,
   DRIFT_DEAD_ZONE_MS,
@@ -12,6 +12,8 @@ import {
   MAX_NETWORK_DELAY_S,
   SYNC_REQUEST_INTERVAL_MS,
   DRIFT_GRACE_PERIOD_MS,
+  DRIFT_SEEK_RTT_MARGIN_MS,
+  HARD_SEEK_CONFIRM_COUNT,
 } from '@/lib/constants'
 import { storage } from '@/lib/storage'
 import { useSocketContext } from '@/providers/SocketProvider'
@@ -83,6 +85,8 @@ export function usePlayerSync(howlRef: RefObject<Howl | null>, soundIdRef: RefOb
   const emaColdStartRef = useRef(true)
   // Timestamp when the current track started playing (for adaptive conductor reporting)
   const trackStartTimeRef = useRef(0)
+  // Consecutive hard-seek triggers — require HARD_SEEK_CONFIRM_COUNT before actually seeking
+  const hardSeekCountRef = useRef(0)
 
   const clearScheduled = () => {
     if (scheduledTimerRef.current) {
@@ -240,14 +244,22 @@ export function usePlayerSync(howlRef: RefObject<Howl | null>, soundIdRef: RefOb
       // Update store with smoothed value so UI shows stable drift reading
       usePlayerStore.getState().setSyncDrift(sd)
 
-      // When rate correction is disabled (plugin detected), use a lower
-      // seek threshold so drifts don't go uncorrected.
+      // Adaptive hard-seek threshold: on high-latency links the NTP offset
+      // error (asymmetric routing) and extrapolation jitter can easily reach
+      // the static 200ms threshold, triggering repeated backward jumps.
+      // Raising the threshold proportionally to the observed RTT avoids this.
+      const rttBasedThreshold = (getMedianRTT() + DRIFT_SEEK_RTT_MARGIN_MS) / 1000
       const hardSeekThreshold = rateDisabledRef.current
         ? DRIFT_PLUGIN_SEEK_THRESHOLD_MS / 1000
-        : DRIFT_SEEK_THRESHOLD_MS / 1000
+        : Math.max(DRIFT_SEEK_THRESHOLD_MS / 1000, rttBasedThreshold)
 
       if (absDrift > hardSeekThreshold) {
-        // Large drift (or any noticeable drift when rate is disabled): hard seek
+        // Require HARD_SEEK_CONFIRM_COUNT consecutive triggers to avoid
+        // acting on a single noisy measurement.
+        hardSeekCountRef.current++
+        if (hardSeekCountRef.current < HARD_SEEK_CONFIRM_COUNT) return
+        // Confirmed: large sustained drift — hard seek
+        hardSeekCountRef.current = 0
         howlRef.current.seek(expectedTime)
         if (howlRef.current.rate() !== 1) howlRef.current.rate(1)
         smoothedDriftRef.current = 0
@@ -284,6 +296,7 @@ export function usePlayerSync(howlRef: RefObject<Howl | null>, soundIdRef: RefOb
         }, 50)
       } else {
         // Within dead zone: ensure normal playback rate
+        hardSeekCountRef.current = 0
         if (howlRef.current.rate() !== 1) howlRef.current.rate(1)
       }
     }
