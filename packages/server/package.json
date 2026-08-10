@@ -30,7 +30,7 @@
     "@types/cors": "^2.8.19",
     "@types/escape-html": "^1.0.4",
     "@types/express": "^5.0.6",
-    "@types/node": "^22.20.1",
+    "@types/node": "^26.1.2",
     "@types/qrcode": "^1.5.6",
     "@typescript/native": "npm:typescript@~7.0.2",
     "pino-pretty": "^13.1.3",
