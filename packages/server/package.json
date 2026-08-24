@@ -11,7 +11,7 @@
   "dependencies": {
     "@meting/core": "^1.6.1",
     "@music-together/shared": "workspace:*",
-    "@neteasecloudmusicapienhanced/api": "^4.40.0",
+    "@neteasecloudmusicapienhanced/api": "^4.40.1",
     "cors": "^2.8.6",
     "dotenv": "^17.4.2",
     "escape-html": "^1.0.3",
