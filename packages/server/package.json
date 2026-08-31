@@ -11,7 +11,7 @@
   "dependencies": {
     "@meting/core": "^1.6.1",
     "@music-together/shared": "workspace:*",
-    "@neteasecloudmusicapienhanced/api": "^4.40.0",
+    "@neteasecloudmusicapienhanced/api": "^4.40.1",
     "cors": "^2.8.6",
     "dotenv": "^17.4.2",
     "escape-html": "^1.0.3",
@@ -30,7 +30,7 @@
     "@types/cors": "^2.8.19",
     "@types/escape-html": "^1.0.4",
     "@types/express": "^5.0.6",
-    "@types/node": "^26.2.0",
+    "@types/node": "^26.4.0",
     "@types/qrcode": "^1.5.6",
     "@typescript/native": "npm:typescript@~7.0.2",
     "pino-pretty": "^13.1.3",

@@ -22,10 +22,10 @@
     "pnpm": ">=11"
   },
   "devDependencies": {
-    "concurrently": "^10.0.4",
+    "concurrently": "^10.0.5",
     "kill-port": "^2.0.1",
     "prettier": "^3.9.6",
-    "vitest": "^4.1.10"
+    "vitest": "^4.1.11"
   },
   "workspaces": [
     "packages/*"
