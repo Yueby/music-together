@@ -24,13 +24,13 @@
     "qrcode": "^1.5.4",
     "rate-limiter-flexible": "^11.2.0",
     "socket.io": "^4.8.3",
-    "zod": "^4.5.4"
+    "zod": "^4.6.2"
   },
   "devDependencies": {
     "@types/cors": "^2.8.19",
     "@types/escape-html": "^1.0.4",
     "@types/express": "^5.0.6",
-    "@types/node": "^26.4.1",
+    "@types/node": "^26.5.1",
     "@types/qrcode": "^1.5.6",
     "@typescript/native": "npm:typescript@~7.0.2",
     "pino-pretty": "^13.1.3",
