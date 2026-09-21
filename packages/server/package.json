@@ -13,7 +13,7 @@
     "@music-together/shared": "workspace:*",
     "@neteasecloudmusicapienhanced/api": "^4.40.1",
     "cors": "^2.8.6",
-    "dotenv": "^17.4.2",
+    "dotenv": "^18.0.0",
     "escape-html": "^1.0.3",
     "express": "^5.2.1",
     "express-rate-limit": "^8.7.0",
@@ -22,15 +22,15 @@
     "p-limit": "^7.3.2",
     "pino": "^10.3.1",
     "qrcode": "^1.5.4",
-    "rate-limiter-flexible": "^11.2.0",
+    "rate-limiter-flexible": "^11.2.1",
     "socket.io": "^4.8.3",
-    "zod": "^4.5.4"
+    "zod": "^4.6.5"
   },
   "devDependencies": {
     "@types/cors": "^2.8.19",
     "@types/escape-html": "^1.0.4",
     "@types/express": "^5.0.6",
-    "@types/node": "^26.4.1",
+    "@types/node": "^26.6.1",
     "@types/qrcode": "^1.5.6",
     "@typescript/native": "npm:typescript@~7.0.2",
     "pino-pretty": "^13.1.3",
