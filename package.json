@@ -24,8 +24,8 @@
   "devDependencies": {
     "concurrently": "^10.0.5",
     "kill-port": "^2.0.1",
-    "prettier": "^3.9.6",
-    "vitest": "^5.0.0"
+    "prettier": "^3.9.9",
+    "vitest": "^5.0.2"
   },
   "workspaces": [
     "packages/*"
