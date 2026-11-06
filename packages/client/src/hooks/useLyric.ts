@@ -1,4 +1,5 @@
 import { SERVER_URL } from '@/lib/config'
+import { findClosestLyricLine } from '@/lib/lyricMatching'
 import { usePlayerStore } from '@/stores/playerStore'
 import { useSettingsStore } from '@/stores/settingsStore'
 import type { LyricLine } from '@applemusic-like-lyrics/core'
@@ -26,7 +27,7 @@ function mergeAuxiliaryLyrics(
   return lines.map((line) => {
     if (line[field]) return line
 
-    const auxiliary = auxiliaryLines.find((candidate) => Math.abs(candidate.startTime - line.startTime) <= 500)
+    const auxiliary = findClosestLyricLine(auxiliaryLines, line.startTime)
     if (!auxiliary) return line
 
     return {

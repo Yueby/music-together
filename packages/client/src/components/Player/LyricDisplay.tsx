@@ -1,3 +1,4 @@
+import { findClosestLyricLine } from '@/lib/lyricMatching'
 import { lyricPlayerBridge } from '@/lib/lyricPlayerBridge'
 import { usePlayerStore } from '@/stores/playerStore'
 import { useSettingsStore } from '@/stores/settingsStore'
@@ -14,7 +15,7 @@ function mergeTranslatedLyrics(lines: LyricLine[], translatedLrc: string): Lyric
 
   const translations = parseLrc(translatedLrc)
   return lines.map((line) => {
-    const translation = translations.find((candidate) => Math.abs(candidate.startTime - line.startTime) <= 500)
+    const translation = findClosestLyricLine(translations, line.startTime)
     if (!translation) return line
 
     return {

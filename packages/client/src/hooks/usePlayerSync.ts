@@ -126,17 +126,8 @@ export function usePlayerSync(
     // -- SEEK ---------------------------------------------------------------
     const onSeek = (data: { playState: ScheduledPlayState }) => {
       if (isStaleAction(data.playState)) return
-      if (data.playState.isPlaying) {
-        setScheduledPlayback(() =>
-          getScheduledPlaybackPosition(
-            data.playState.currentTime,
-            data.playState.serverTimeToExecute,
-            isCalibrated() ? getServerTime() : Date.now(),
-          ),
-        )
-      } else {
-        setDesiredPlayback(false)
-      }
+      // Keep an in-flight load paused until this action's execution time.
+      setDesiredPlayback(false)
       cancelScheduledPlay()
       clearScheduled()
       const id = ++actionIdRef.current
@@ -144,14 +135,15 @@ export function usePlayerSync(
 
       scheduledTimerRef.current = setTimeout(() => {
         if (actionIdRef.current !== id) return // stale callback
-        const targetTime = data.playState.isPlaying
-          ? getScheduledPlaybackPosition(
-              data.playState.currentTime,
-              data.playState.serverTimeToExecute,
-              isCalibrated() ? getServerTime() : Date.now(),
-            )
-          : data.playState.currentTime
-        if (howlRef.current) {
+        const getSeekTime = () => getScheduledPlaybackPosition(
+          data.playState.currentTime,
+          data.playState.serverTimeToExecute,
+          isCalibrated() ? getServerTime() : Date.now(),
+        )
+        if (data.playState.isPlaying) setScheduledPlayback(getSeekTime)
+        const targetTime = data.playState.isPlaying ? getSeekTime() : data.playState.currentTime
+        // A late load starts once from onload, using the elapsed position.
+        if (howlRef.current && (!data.playState.isPlaying || howlRef.current.state() === 'loaded')) {
           setHowlPosition(howlRef.current, targetTime, soundIdRef.current)
           if (howlRef.current.rate() !== 1) howlRef.current.rate(1)
           if (data.playState.isPlaying) {
@@ -220,13 +212,7 @@ export function usePlayerSync(
     // -- RESUME -------------------------------------------------------------
     const onResume = (data: { playState: ScheduledPlayState }) => {
       if (isStaleAction(data.playState)) return
-      setScheduledPlayback(() =>
-        getScheduledPlaybackPosition(
-          data.playState.currentTime,
-          data.playState.serverTimeToExecute,
-          isCalibrated() ? getServerTime() : Date.now(),
-        ),
-      )
+      setDesiredPlayback(false)
       cancelScheduledPlay()
       clearScheduled()
       const id = ++actionIdRef.current
@@ -234,23 +220,27 @@ export function usePlayerSync(
 
       scheduledTimerRef.current = setTimeout(() => {
         if (actionIdRef.current !== id) return // stale callback
-        if (!howlRef.current) return
-        const targetTime = getScheduledPlaybackPosition(
+        const getSeekTime = () => getScheduledPlaybackPosition(
           data.playState.currentTime,
           data.playState.serverTimeToExecute,
           isCalibrated() ? getServerTime() : Date.now(),
         )
-        setHowlPosition(howlRef.current, targetTime, soundIdRef.current)
+        setScheduledPlayback(getSeekTime)
+        if (!howlRef.current) return
+        const targetTime = getSeekTime()
+        if (howlRef.current.state() === 'loaded') {
+          setHowlPosition(howlRef.current, targetTime, soundIdRef.current)
+          if (howlRef.current.rate() !== 1) howlRef.current.rate(1)
+          if (soundIdRef.current !== undefined) {
+            howlRef.current.play(soundIdRef.current)
+          } else {
+            soundIdRef.current = howlRef.current.play()
+          }
+        }
         setCurrentTime(targetTime)
         lyricPlayerBridge.seek(targetTime)
-        if (howlRef.current.rate() !== 1) howlRef.current.rate(1)
         smoothedDriftRef.current = 0
         emaColdStartRef.current = true
-        if (soundIdRef.current !== undefined) {
-          howlRef.current.play(soundIdRef.current)
-        } else {
-          soundIdRef.current = howlRef.current.play()
-        }
         // Keep roomStore.playState in sync for recovery effect
         useRoomStore.getState().updateRoom({
           playState: {

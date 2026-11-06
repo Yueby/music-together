@@ -83,7 +83,7 @@ pnpm exec shadcn add <component-name>
 - 不得记录 Cookie、musickey、token 或完整外部响应中的敏感字段。
 - QQ 音乐搜索使用带 `zzc` 签名的 `musics.fcg` Desktop 请求。
 - 酷狗 KRC 使用内置 `kugouLyricService`，包含 `/search`、`/download`、XOR 解密和压缩解码。
-- 客户端直接使用最新版 AMLL `parseLrc` / `parseTTML` / `parseYrc` 返回的 `LyricLine`，不维护旧版类型转换层。
+- 客户端直接使用最新版 AMLL `parseLrc` / `parseTTML` / `parseYrc` 返回的 `LyricLine`，不维护旧版类型转换层；合并辅助与翻译歌词时统一在 500ms 窗口内按时间差最小对齐主歌词行（同距离稳定取首个候选），避免相邻短句错配。
 - AMLL 设置支持隐藏已播放行、底栏、敏感词遮罩、逐词渐变、Pixi/网格背景、静态模式及 80–120Hz 低频律动，统一由 `settingsStore` 持久化；歌词布局弹簧保持 AMLL 各轴官方默认值，避免覆盖后产生行距漂移。歌词行本身不提供点击跳转，避免绕过多人房间的权限和同步调度。
 - 播放过程中由 `lyricPlayerBridge` 每帧直接调用 AMLL 官方 `setCurrentTime()`；Zustand 的 `currentTime` 只以较低频率更新进度条等 React UI，避免通过 React 重渲染驱动歌词动画。进度跳转依次执行 `resetScroll()`、`setCurrentTime(ms, true)`、`calcLayout('seek')`，使用 AMLL 0.6 的布局原因参数。
 - 外部协议变化应添加脱敏 fixture 或 mock 回归测试。
