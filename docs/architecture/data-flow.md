@@ -168,6 +168,7 @@ interface ChatMessage {
 - **已提交状态与待执行状态分离**：`room.playState/currentTrack` 只保存已经实际生效的播放状态；未来的 play/pause/resume/seek/stop 存放在 `room.pendingPlayback`，到 `serverTimeToExecute` 才一次性提交。新动作会取消旧 pending timer，避免 join、sync request 和 conductor 上报提前观察到未来状态
 - **revision 边界**：每次计划动作以 `max(committedRevision, pendingRevision) + 1` 生成唯一单调递增 revision；pending timer 还按 payload 对象身份校验，防止执行边界上的旧 callback 提交。客户端也拒绝低于当前 revision 的迟到动作。Conductor 上报必须同时匹配当前已提交的 `revision + trackId`，且仅由房间唯一的 `conductorSocketId` 提交；同一身份的其他标签页无写权限
 - Scheduled action（seek/pause/resume）执行时自动重置 `rate(1)`，SEEK 同时应用 payload 中的最终 `isPlaying`，避免 PAUSE/RESUME 被后续 SEEK 取消后出现客户端与服务端播放状态相反；执行后同步更新 `roomStore.playState`（不含 `serverTimeToExecute`），确保 recovery effect 读到最新状态
+- **加载与执行边界**：收到 RESUME 或播放态 SEEK 时，加载中的音轨保持暂停，直到受 action ID 保护的执行回调才启用期望播放目标。若到点仍未加载完成，不向 Howler 排队 seek/play，由 `onload` 根据当时的服务端时间计算补偿位置并只启动一次；已在播放的 SEEK 则持续播放到执行时间后再定位，不重复启动。
 - **NTP 未校准保护**：`scheduleDelay()` 和 `usePlayer` 的 PLAYER_PLAY 调度在 NTP 未校准完成前退化为 0（立即执行），避免本地时钟偏差导致离谱的调度延迟
 - **Action ID 与跨 Hook 取消**：seek/pause/resume 使用单调递增 action ID 防止 stale callback；客户端另通过 `scheduledPlayback` bridge 让较新的控制动作取消 `usePlayer` 中尚未执行的 PLAYER_PLAY timer。Howl 加载阶段记录最新期望播放状态，确保加载较慢时后到的 pause 不会被旧 `autoPlay=true` 覆盖；Socket 断线时同时卸载实际 Howl，而不只是清空 store
 
