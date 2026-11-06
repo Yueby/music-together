@@ -18,6 +18,6 @@ export const lyricPlayerBridge = {
     if (!player) return
     player.resetScroll()
     player.setCurrentTime(Math.round(timeSeconds * 1000), true)
-    void player.calcLayout(true, true)
+    player.calcLayout('seek')
   },
 }
