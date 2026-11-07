@@ -3,6 +3,7 @@ FROM node:26-alpine AS deps
 RUN npm install --global pnpm@11.21.0
 WORKDIR /app
 COPY pnpm-lock.yaml pnpm-workspace.yaml package.json ./
+COPY patches/ patches/
 COPY packages/shared/package.json packages/shared/
 COPY packages/server/package.json packages/server/
 COPY packages/client/package.json packages/client/
@@ -22,8 +23,9 @@ FROM node:26-alpine AS production
 RUN npm install --global pnpm@11.21.0
 WORKDIR /app
 
-# 复制所有 workspace 包的 package.json（pnpm workspace 需要完整结构）
+# 复制 workspace 清单与锁定依赖补丁
 COPY pnpm-lock.yaml pnpm-workspace.yaml package.json ./
+COPY patches/ patches/
 COPY packages/shared/package.json packages/shared/
 COPY packages/server/package.json packages/server/
 COPY packages/client/package.json packages/client/

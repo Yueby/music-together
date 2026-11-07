@@ -9,6 +9,7 @@ import { getKrcByHash, type KrcInfo } from './kugouLyricService.js'
 import * as tencentAuth from './tencentAuthService.js'
 import { logger } from '../utils/logger.js'
 import { getStreamUrlCacheTtl, isStreamUrlExpired } from './streamUrlLifetime.js'
+import { getNeteasePlaybackUrl } from './neteasePlayback.js'
 
 /** AMLL LyricLine 格式（与 @applemusic-like-lyrics/core 一致，避免引入 client 依赖） */
 interface AmllLyricLine {
@@ -716,11 +717,12 @@ class MusicProvider {
 
   /**
    * Get stream URL for a track. Optionally inject a cookie for VIP access.
-   * When cookie is provided, a fresh Meting instance is created to avoid
-   * polluting the shared cached instance — and the result is NOT cached
-   * because VIP URLs are user-specific.
+   * Authenticated NetEase playback uses the normal SDK endpoint; other platforms
+   * get a fresh Meting instance. Account-specific URLs are never cached.
    */
   async getStreamUrl(source: MusicSource, urlId: string, bitrate = 320, cookie?: string): Promise<string | null> {
+    if (source === 'netease' && cookie) return getNeteasePlaybackUrl(urlId, bitrate, cookie)
+
     // Skip cache when cookie is provided (VIP URLs are user-specific)
     if (!cookie) {
       const cacheKey = `${source}:${urlId}:${bitrate}`

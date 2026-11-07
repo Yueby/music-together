@@ -1,7 +1,10 @@
-import { afterEach, describe, expect, it, vi } from 'vitest'
+import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import Meting from '@meting/core'
 import { LRUCache } from 'lru-cache'
 import * as tencentAuth from './tencentAuthService.js'
+import { getNeteasePlaybackUrl } from './neteasePlayback.js'
+
+vi.mock('./neteasePlayback.js', () => ({ getNeteasePlaybackUrl: vi.fn() }))
 import {
   deriveThumbnailCoverUrl,
   musicProvider,
@@ -24,6 +27,10 @@ const tencentSong = {
   pay: { pay_down: 0, pay_month: 1, pay_play: 0, price_track: 0 },
   action: { msgpay: 0 },
 }
+
+beforeEach(() => {
+  vi.mocked(getNeteasePlaybackUrl).mockReset().mockResolvedValue(null)
+})
 
 afterEach(() => {
   vi.restoreAllMocks()
@@ -116,14 +123,12 @@ describe('stream URL lifetime caching', () => {
     expect(set).not.toHaveBeenCalledWith('netease:lifetime-expired-fixture:320', expect.anything(), expect.anything())
   })
 
-  it('keeps Cookie requests uncached and passes the Cookie to Meting', async () => {
+  it('routes Cookie requests to the SDK helper without sharing the anonymous cache', async () => {
     vi.spyOn(Date, 'now').mockReturnValue(now)
     const anonymous = signedUrl('20260720090000')
     const authorized = signedUrl('20260720100000')
-    const request = vi
-      .spyOn(Meting.prototype, 'url')
-      .mockResolvedValueOnce(JSON.stringify({ url: anonymous }))
-      .mockResolvedValue(JSON.stringify({ url: authorized }))
+    const request = vi.spyOn(Meting.prototype, 'url').mockResolvedValue(JSON.stringify({ url: anonymous }))
+    vi.mocked(getNeteasePlaybackUrl).mockResolvedValue(authorized)
     const cookie = vi.spyOn(Meting.prototype, 'cookie')
 
     await expect(musicProvider.getStreamUrl('netease', 'lifetime-cookie-fixture')).resolves.toBe(anonymous)
@@ -134,18 +139,43 @@ describe('stream URL lifetime caching', () => {
       authorized,
     )
     await expect(musicProvider.getStreamUrl('netease', 'lifetime-cookie-fixture')).resolves.toBe(anonymous)
-    expect(request).toHaveBeenCalledTimes(3)
-    expect(cookie).toHaveBeenCalledTimes(2)
-    expect(cookie).toHaveBeenNthCalledWith(1, 'fixture-cookie')
-    expect(cookie).toHaveBeenNthCalledWith(2, 'fixture-cookie')
+    expect(request).toHaveBeenCalledTimes(1)
+    expect(cookie).not.toHaveBeenCalled()
+    expect(getNeteasePlaybackUrl).toHaveBeenCalledTimes(2)
+    expect(getNeteasePlaybackUrl).toHaveBeenNthCalledWith(1, 'lifetime-cookie-fixture', 320, 'fixture-cookie')
+    expect(getNeteasePlaybackUrl).toHaveBeenNthCalledWith(2, 'lifetime-cookie-fixture', 320, 'fixture-cookie')
   })
 
-  it('also rejects expired URLs returned for Cookie requests', async () => {
-    vi.spyOn(Date, 'now').mockReturnValue(now)
-    vi.spyOn(Meting.prototype, 'url').mockResolvedValue(JSON.stringify({ url: signedUrl('20260719080000') }))
+  it('returns null when authenticated playback fails without falling back to Meting', async () => {
+    const request = vi.spyOn(Meting.prototype, 'url')
+    vi.mocked(getNeteasePlaybackUrl).mockResolvedValue(null)
     await expect(
       musicProvider.getStreamUrl('netease', 'lifetime-cookie-expired-fixture', 320, 'fixture-cookie'),
     ).resolves.toBeNull()
+    expect(getNeteasePlaybackUrl).toHaveBeenCalledWith('lifetime-cookie-expired-fixture', 320, 'fixture-cookie')
+    expect(request).not.toHaveBeenCalled()
+  })
+
+  it('resolves each Cookie request independently and preserves the helper URL verbatim', async () => {
+    const first = `${signedUrl('20260720090000')}?token=a%2Bb&x=1`
+    const second = `${signedUrl('20260720100000')}?token=c%2Bd&x=2`
+    vi.mocked(getNeteasePlaybackUrl).mockResolvedValueOnce(first).mockResolvedValueOnce(second)
+    const set = vi.spyOn(LRUCache.prototype, 'set')
+    await expect(musicProvider.getStreamUrl('netease', '110', 999, 'cookie-one')).resolves.toBe(first)
+    await expect(musicProvider.getStreamUrl('netease', '110', 999, 'cookie-two')).resolves.toBe(second)
+    expect(getNeteasePlaybackUrl).toHaveBeenNthCalledWith(1, '110', 999, 'cookie-one')
+    expect(getNeteasePlaybackUrl).toHaveBeenNthCalledWith(2, '110', 999, 'cookie-two')
+    expect(set).not.toHaveBeenCalled()
+  })
+
+  it.each(['tencent', 'kugou'] as const)('keeps authenticated %s playback on fresh Meting instances', async (source) => {
+    const url = 'https://fixture.example/audio.mp3'
+    const request = vi.spyOn(Meting.prototype, 'url').mockResolvedValue(JSON.stringify({ url }))
+    const cookie = vi.spyOn(Meting.prototype, 'cookie')
+    await expect(musicProvider.getStreamUrl(source, 'other-source-fixture', 192, 'fixture-cookie')).resolves.toBe(url)
+    expect(request).toHaveBeenCalledExactlyOnceWith('other-source-fixture', 192)
+    expect(cookie).toHaveBeenCalledExactlyOnceWith('fixture-cookie')
+    expect(getNeteasePlaybackUrl).not.toHaveBeenCalled()
   })
 
   it('uses five minutes for opaque NetEase URLs while preserving HTTPS normalization', async () => {
