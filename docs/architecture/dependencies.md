@@ -26,7 +26,7 @@
 | express | ^5.3.0 | HTTP API 和静态文件托管 |
 | socket.io | ^4.8.4 | 实时房间通信 |
 | @meting/core | ^1.6.2 | 多音源基础数据聚合 |
-| @neteasecloudmusicapienhanced/api | ^4.41.1 | 网易云登录、用户和歌单 API |
+| @neteasecloudmusicapienhanced/api | ^4.41.1 | 网易云登录、用户、歌单及登录态播放 URL API |
 | dotenv | ^18.0.9 | 环境变量加载 |
 | zod | ^4.6.7 | 运行时输入验证 |
 | pino | ^10.4.0 | 结构化日志 |
@@ -65,6 +65,8 @@ QQ 音乐搜索使用腾讯 `zzc` 签名访问 `musics.fcg`，避免未签名 `m
 | concurrently ^10.0.6 | root | 并行启动前后端 |
 
 核心依赖升级需核对 API 变化，并执行测试、类型检查、lint 和生产依赖安全审计；构建验证按需执行。
+
+`patches/@neteasecloudmusicapienhanced__api@4.41.1.patch` 通过 `pnpm-workspace.yaml` 的 `patchedDependencies` 锁定：接受官方验签后返回的有效 X25519 公钥及可选 `sk` 字段，保留响应验签和业务码检查；握手请求设 8s 超时；正常 XEAPI 请求重新读取原子更新的密钥缓存，失败日志仅保留状态和业务码。Docker 的依赖阶段和运行阶段均先复制 `patches/` 再执行 frozen install。升级该 SDK 时需重新运行补丁契约与播放适配回归测试。
 
 根 `pnpm-workspace.yaml` 对 shadcn CLI 的传递依赖锁定安全版本：`@modelcontextprotocol/sdk@1.30.0` 和 `@hono/node-server@2.0.12`。
 

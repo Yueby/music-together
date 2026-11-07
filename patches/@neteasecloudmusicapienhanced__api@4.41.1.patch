@@ -1,0 +1,67 @@
+diff --git a/module/register_xeapikey.js b/module/register_xeapikey.js
+index 0602e8750c7f2e6107cfba3731a41e3a97c007aa..f47563567112abf3fae1f2ad64e578c0ccb6b543 100644
+--- a/module/register_xeapikey.js
++++ b/module/register_xeapikey.js
+@@ -40,6 +40,7 @@ module.exports = async (query, request) => {
+     },
+     data: new URLSearchParams(data).toString(),
+     proxy: false,
++    timeout: 8000,
+   })
+ 
+   if (
+@@ -59,8 +60,13 @@ module.exports = async (query, request) => {
+   }
+ 
+   const publicKey = encrypt.xeapiDecryptPublicKey(res.data.data.encryptedData)
+-  if (!publicKey.sk) {
+-    throw new Error('xeapi public key response missing sk')
++  if (
++    typeof publicKey.publicKey !== 'string' ||
++    Buffer.from(publicKey.publicKey, 'base64').length !== 32 ||
++    !['string', 'number'].includes(typeof publicKey.version) ||
++    (publicKey.sk !== undefined && typeof publicKey.sk !== 'string')
++  ) {
++    throw new Error('xeapi public key response invalid')
+   }
+ 
+   return {
+diff --git a/util/request.js b/util/request.js
+index a0c90207ae675b631f11bcec65bb6a3ef37b3eac..70eab8b98b1cb599d5c8f0bfd67a583744bc8ff1 100644
+--- a/util/request.js
++++ b/util/request.js
+@@ -35,13 +35,14 @@ const anonymous_token = fs.readFileSync(
+ const xeapiPublicKeyPath = path.resolve(tmpPath, './xeapi_public_key')
+ let xeapi_public_key = null
+ const loadXeapiPublicKey = () => {
+-  if (!xeapi_public_key && fs.existsSync(xeapiPublicKeyPath)) {
++  xeapi_public_key = null
++  if (fs.existsSync(xeapiPublicKeyPath)) {
+     try {
+       xeapi_public_key = JSON.parse(
+         fs.readFileSync(xeapiPublicKeyPath, 'utf-8'),
+       )
+-    } catch (error) {
+-      console.log('[ERR]', error)
++    } catch {
++      xeapi_public_key = null
+     }
+   }
+   return xeapi_public_key
+@@ -598,14 +599,14 @@ const createRequest = async (uri, data, options) => {
+         if (answer.status === 200) {
+           resolve(answer)
+         } else {
+-          console.log('[ERR]', answer)
++          console.log('[ERR]', { status: answer.status, code: Number.isFinite(answer.body.code) ? answer.body.code : null })
+           reject(answer)
+         }
+       })
+       .catch((err) => {
+         answer.status = 502
+         answer.body = { code: 502, msg: err.message || err }
+-        console.log('[ERR]', answer)
++        console.log('[ERR]', { status: answer.status, code: 502 })
+         reject(answer)
+       })
+   })
