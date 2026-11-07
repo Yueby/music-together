@@ -8,6 +8,7 @@ import * as kugouAuth from './kugouAuthService.js'
 import { getKrcByHash, type KrcInfo } from './kugouLyricService.js'
 import * as tencentAuth from './tencentAuthService.js'
 import { logger } from '../utils/logger.js'
+import { getStreamUrlCacheTtl, isStreamUrlExpired } from './streamUrlLifetime.js'
 
 /** AMLL LyricLine 格式（与 @applemusic-like-lyrics/core 一致，避免引入 client 依赖） */
 interface AmllLyricLine {
@@ -725,8 +726,12 @@ class MusicProvider {
       const cacheKey = `${source}:${urlId}:${bitrate}`
       const cached = this.streamUrlCache.get(cacheKey)
       if (cached) {
-        logger.info(`Stream URL cache hit: ${source}/${urlId}`)
-        return cached
+        if (isStreamUrlExpired(source, cached)) {
+          this.streamUrlCache.delete(cacheKey)
+        } else {
+          logger.info(`Stream URL cache hit: ${source}/${urlId}`)
+          return cached
+        }
       }
     }
 
@@ -757,9 +762,12 @@ class MusicProvider {
         url = url.replace(/^http:\/\//, 'https://')
       }
 
+      const now = Date.now()
+      if (url && isStreamUrlExpired(source, url, now)) return null
+
       // Only cache non-cookie & successful results (null = transient failure, retry next time)
       if (!cookie && url) {
-        this.streamUrlCache.set(`${source}:${urlId}:${bitrate}`, url)
+        this.streamUrlCache.set(`${source}:${urlId}:${bitrate}`, url, { ttl: getStreamUrlCacheTtl(source, url, now) })
       }
 
       return url
