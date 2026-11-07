@@ -234,7 +234,7 @@ Conductor（当前 `hostId` 对应用户）**自适应频率**上报当前播放
 - 服务端 `playerService.playTrackInRoom()` 从 `room.audioQuality` 读取 bitrate，通过 `resolveStreamUrl()` 请求流 URL
 - **降级策略**：如果请求的 bitrate 获取不到（VIP 限制或平台不支持），自动逐级降低 bitrate 重试（999 → 320 → 192 → 128）
 - 三个平台（netease / tencent / kugou）统一使用同一 bitrate 参数，Meting 内部处理各平台差异
-- `musicProvider.streamUrlCache` 的 key 包含 bitrate，不同音质自动隔离缓存
+- `musicProvider.streamUrlCache` 的 key 包含 bitrate，不同音质自动隔离缓存。网易云已知 `music.126.net` CDN 路径时间按 UTC+8 严格解析为到期时间，预留 30s 获取/调度余量；缓存不得超过有效期，未知期限使用 5min，Cookie 请求继续不缓存。已过期的缓存或上游链接不会下发。
 
 ## 队列清空
 
@@ -245,7 +245,7 @@ Conductor（当前 `hostId` 对应用户）**自适应频率**上报当前播放
 ## 其他同步机制
 
 1. **暂停快照**：服务端 `pauseTrack()` 使用 `estimateCurrentTime()` 加上计划执行延迟，计算客户端真正暂停时的位置，避免在预定时刻向后跳；停止播放同样通过 `ScheduledPlayState` 在统一服务器时刻执行
-2. **恢复播放**：暂停后点击播放，服务端检测同一首歌时发 `player:resume`（所有客户端预定时刻恢复）
+2. **恢复播放**：暂停后点击播放，链接仍有效时发 `player:resume`；网易云签名链接已过期时先正常取新，再以既有 `player:play` 携带新链接和权威进度让全房间重载。过期链接上的 seek 同样先刷新并保留暂停/播放意图，异步等待期间由房间对象、曲目 ID、revision 和控制代次防止旧结果覆盖新控制。新加入者的 current/pending 链接若过期，只取得并发送新副本，不改其他客户端或既定提交对象；失败不下发旧链接。
 3. **自动续播**：房主独自重新加入时，若有歌曲暂停/排队中，自动恢复播放
 4. **加入房间补偿**：中途加入的客户端使用 `getServerTime()` 计算当前应处的播放位置；曲目立即静音预加载，在权威执行位置启动并恢复用户音量，不使用固定等待窗口
 5. **房间宽限期**：房间空置 60 秒 (`ROOM_GRACE_PERIOD_MS`) 后自动清理（重复调用 `scheduleDeletion` 不会创建重复 timer）

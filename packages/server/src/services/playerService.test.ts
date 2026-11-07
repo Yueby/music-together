@@ -3,16 +3,20 @@ import { afterEach, describe, expect, it, vi } from 'vitest'
 import { roomRepo } from '../repositories/roomRepository.js'
 import { toPublicRoomState } from '../utils/roomUtils.js'
 import type { RoomData } from '../repositories/types.js'
+import { musicProvider } from './musicProvider.js'
 import {
   autoPlayIfEmpty,
   cleanupRoom,
   pauseTrack,
   playNextTrackInRoom,
+  playTrackInRoom,
   playPrevTrackInRoom,
   resumeTrack,
   seekTrack,
   setCurrentTrack,
   stopPlayback,
+  stopPlaybackSafe,
+  updatePlayState,
   syncPlaybackToSocket,
   validateConductorReport,
 } from './playerService.js'
@@ -59,8 +63,10 @@ function ioMock() {
 }
 
 afterEach(() => {
-  roomRepo.delete('ROOM01')
   cleanupRoom('ROOM01')
+  roomRepo.delete('ROOM01')
+  roomRepo.deleteSocketMapping('socket')
+  vi.restoreAllMocks()
   vi.useRealTimers()
 })
 
@@ -315,4 +321,375 @@ describe('playerService state transitions', () => {
       }),
     )
   })
+})
+
+describe('playerService expired stream URLs', () => {
+  const expiredUrl = 'https://m801.music.126.net/20260101080000/token/song.mp3'
+  const freshUrl = 'https://m801.music.126.net/20260102080000/token/song.mp3'
+
+  function setup(paused = true) {
+    vi.useFakeTimers()
+    vi.setSystemTime(new Date('2026-01-01T00:00:10Z'))
+    const data = room()
+    data.currentTrack = { ...track, streamUrl: expiredUrl }
+    data.queue = [data.currentTrack, { ...track, id: 'track-2' }]
+    data.playState = { isPlaying: !paused, currentTime: 42, serverTimestamp: Date.now(), revision: 7 }
+    roomRepo.set('ROOM01', data)
+    roomRepo.setSocketMapping('socket', 'ROOM01', 'owner')
+    const stream = vi.spyOn(musicProvider, 'getStreamUrl').mockResolvedValue(freshUrl)
+    const { io, emit } = ioMock()
+    const socket = { id: 'socket', emit: vi.fn() }
+    return { data, stream, io, emit, socket }
+  }
+
+  function deferred<T>() {
+    let resolve!: (value: T) => void
+    let reject!: (reason: Error) => void
+    const promise = new Promise<T>((yes, no) => {
+      resolve = yes
+      reject = no
+    })
+    return { promise, resolve, reject }
+  }
+
+  const settle = () => vi.advanceTimersByTimeAsync(0)
+
+  it('re-resolves an expired supplied URL without mutating the queued track', async () => {
+    const { data, io, emit, stream } = setup()
+    const original = data.currentTrack!
+    expect(await playTrackInRoom(io as never, 'ROOM01', original)).toBe(true)
+    expect(stream).toHaveBeenCalledWith('netease', track.urlId, 320, undefined)
+    expect(original.streamUrl).toBe(expiredUrl)
+    expect(emit).toHaveBeenCalledWith(
+      'player:play',
+      expect.objectContaining({
+        track: expect.objectContaining({ id: track.id, streamUrl: freshUrl }),
+      }),
+    )
+    await vi.advanceTimersByTimeAsync(300)
+    expect(data.currentTrack?.streamUrl).toBe(freshUrl)
+  })
+
+  it('keeps a valid supplied URL and the synchronous resume/seek paths', async () => {
+    const { data, io, emit, stream } = setup()
+    setCurrentTrack('ROOM01', track)
+    expect(resumeTrack(io as never, 'ROOM01')).toBeUndefined()
+    expect(seekTrack(io as never, 'ROOM01', 60)).toBeUndefined()
+    expect(emit.mock.calls.map(([event]) => event)).toEqual(['player:resume', 'player:seek'])
+    expect(await playTrackInRoom(io as never, 'ROOM01', track)).toBe(true)
+    expect(data.pendingPlayback?.track?.streamUrl).toBe(track.streamUrl)
+    expect(stream).not.toHaveBeenCalled()
+  })
+
+  it('reloads a long-paused track at its authoritative position with a new revision', async () => {
+    const { data, io, emit, stream } = setup()
+    const request = deferred<string | null>()
+    stream.mockReturnValueOnce(request.promise)
+    data.playState.serverTimestamp -= 3_600_000
+    expect(resumeTrack(io as never, 'ROOM01')).toBeUndefined()
+    expect(emit).not.toHaveBeenCalled()
+    vi.advanceTimersByTime(10_000)
+    request.resolve(freshUrl)
+    await settle()
+    expect(data.pendingPlayback?.playState).toMatchObject({
+      isPlaying: true,
+      currentTime: 42,
+      revision: 8,
+      serverTimeToExecute: Date.now() + 300,
+    })
+    expect(emit).toHaveBeenCalledWith(
+      'player:play',
+      expect.objectContaining({
+        track: expect.objectContaining({ streamUrl: freshUrl }),
+      }),
+    )
+    expect(emit.mock.calls.some(([event]) => event === 'player:resume')).toBe(false)
+    await vi.advanceTimersByTimeAsync(300)
+    expect(data.currentTrack?.streamUrl).toBe(freshUrl)
+    expect(data.playState).toMatchObject({ currentTime: 42, isPlaying: true, revision: 8 })
+  })
+
+  it('uses the latest conductor position after refresh without invalidating it', async () => {
+    const { data, io, stream } = setup(false)
+    const request = deferred<string | null>()
+    stream.mockReturnValueOnce(request.promise)
+    resumeTrack(io as never, 'ROOM01')
+    vi.advanceTimersByTime(2_000)
+    updatePlayState('ROOM01', { currentTime: 70 })
+    request.resolve(freshUrl)
+    await settle()
+    expect(data.pendingPlayback?.playState.currentTime).toBeCloseTo(70.3)
+  })
+
+  it.each([true, false])('refreshes a seek while preserving paused=%s', async (paused) => {
+    const { data, io, emit } = setup(paused)
+    expect(seekTrack(io as never, 'ROOM01', 90)).toBeUndefined()
+    await settle()
+    expect(data.pendingPlayback?.playState).toMatchObject({ currentTime: 90, isPlaying: !paused, revision: 8 })
+    expect(emit).toHaveBeenCalledWith(
+      'player:play',
+      expect.objectContaining({
+        track: expect.objectContaining({ streamUrl: freshUrl }),
+      }),
+    )
+    expect(emit.mock.calls.some(([event]) => event === 'player:seek')).toBe(false)
+  })
+
+  it('does not resolve a URL for pause or an occupied auto-play', async () => {
+    const { data, io, stream } = setup()
+    const request = deferred<string | null>()
+    stream.mockReturnValueOnce(request.promise)
+    resumeTrack(io as never, 'ROOM01')
+    expect(await autoPlayIfEmpty(io as never, 'ROOM01', track)).toBe(false)
+    expect(stream).toHaveBeenCalledTimes(1)
+    request.resolve(freshUrl)
+    await settle()
+    expect(data.pendingPlayback?.track?.streamUrl).toBe(freshUrl)
+    pauseTrack(io as never, 'ROOM01')
+    expect(stream).toHaveBeenCalledTimes(1)
+  })
+
+  it.each(['empty', 'expired', 'reject'] as const)(
+    'reports %s refresh failure without emitting the old URL',
+    async (failure) => {
+      const { data, io, emit, stream } = setup()
+      if (failure === 'reject') stream.mockRejectedValue(new Error('failed'))
+      else stream.mockResolvedValue(failure === 'expired' ? expiredUrl : null)
+      resumeTrack(io as never, 'ROOM01')
+      await settle()
+      expect(emit).toHaveBeenCalledWith('room:error', expect.objectContaining({ code: expect.any(String) }))
+      expect(emit.mock.calls.some(([event]) => event === 'player:play' || event === 'player:resume')).toBe(false)
+      expect(data.pendingPlayback).toBeNull()
+      expect(data.currentTrack?.streamUrl).toBe(expiredUrl)
+    },
+  )
+
+  it.each([
+    'pause',
+    'seek',
+    'stop',
+    'safe-stop',
+    'play',
+    'next',
+    'prev',
+    'set',
+    'revision',
+    'delete',
+    'recreate',
+  ] as const)('discards a pending room refresh after %s', async (control) => {
+    const { data, io, emit, stream } = setup()
+    const request = deferred<string | null>()
+    stream.mockReturnValueOnce(request.promise)
+    resumeTrack(io as never, 'ROOM01')
+    switch (control) {
+      case 'pause':
+        pauseTrack(io as never, 'ROOM01')
+        break
+      case 'seek':
+        seekTrack(io as never, 'ROOM01', 100)
+        break
+      case 'stop':
+        stopPlayback(io as never, 'ROOM01')
+        break
+      case 'safe-stop':
+        await stopPlaybackSafe(io as never, 'ROOM01')
+        break
+      case 'play':
+        await playTrackInRoom(io as never, 'ROOM01', data.queue[1])
+        break
+      case 'next':
+        await playNextTrackInRoom(io as never, 'ROOM01', 'loop-all')
+        break
+      case 'prev':
+        await playPrevTrackInRoom(io as never, 'ROOM01')
+        break
+      case 'set':
+        setCurrentTrack('ROOM01', data.queue[1])
+        break
+      case 'revision':
+        data.playState.revision++
+        break
+      case 'delete':
+        cleanupRoom('ROOM01')
+        roomRepo.delete('ROOM01')
+        break
+      case 'recreate':
+        cleanupRoom('ROOM01')
+        roomRepo.set('ROOM01', room())
+        break
+    }
+    await settle()
+    const pending = data.pendingPlayback
+    emit.mockClear()
+    request.resolve(freshUrl)
+    await settle()
+    expect(emit).not.toHaveBeenCalled()
+    expect(data.pendingPlayback).toBe(pending)
+  })
+
+  it('does not report a stale rejected request as a stream failure', async () => {
+    const { io, emit, stream } = setup()
+    const request = deferred<string | null>()
+    stream.mockReturnValueOnce(request.promise)
+    resumeTrack(io as never, 'ROOM01')
+    pauseTrack(io as never, 'ROOM01')
+    emit.mockClear()
+    request.reject(new Error('failed'))
+    await settle()
+    expect(emit).not.toHaveBeenCalled()
+  })
+
+  it('prevents an in-flight initial play from overwriting a newer play', async () => {
+    const { data, io, emit, stream } = setup()
+    const request = deferred<string | null>()
+    stream.mockReturnValueOnce(request.promise)
+    const first = playTrackInRoom(io as never, 'ROOM01', data.queue[0])
+    await settle()
+    const second = playTrackInRoom(io as never, 'ROOM01', data.queue[1])
+    request.resolve(freshUrl)
+    expect(await first).toBe(false)
+    expect(await second).toBe(true)
+    expect(emit.mock.calls.filter(([event]) => event === 'player:play')).toHaveLength(1)
+    expect(data.pendingPlayback?.track?.id).toBe('track-2')
+  })
+
+  it('discards late artwork without invalidating an accepted next through a duplicate next', async () => {
+    const { data, io, emit, stream } = setup(false)
+    const firstTrack = { ...track, picId: 'artwork-fixture' }
+    const nextTrack = { ...track, id: 'track-2', cover: 'https://example.com/next.jpg' }
+    data.currentTrack = firstTrack
+    data.queue = [firstTrack, nextTrack]
+    const artwork = deferred<string>()
+    const getCover = vi.spyOn(musicProvider, 'getCover').mockReturnValueOnce(artwork.promise)
+    const first = playTrackInRoom(io as never, 'ROOM01', firstTrack)
+    await settle()
+    expect(getCover).toHaveBeenCalledOnce()
+    const next = playNextTrackInRoom(io as never, 'ROOM01', 'loop-all')
+    const duplicate = playNextTrackInRoom(io as never, 'ROOM01', 'loop-all')
+    artwork.resolve('https://example.com/old.jpg')
+    expect(await first).toBe(false)
+    await Promise.all([next, duplicate])
+    expect(stream).not.toHaveBeenCalled()
+    expect(emit.mock.calls.filter(([event]) => event === 'player:play')).toHaveLength(1)
+    expect(data.pendingPlayback?.track).toMatchObject({ id: 'track-2', cover: nextTrack.cover })
+  })
+
+  it('sends a fresh current-track copy only to a joining listener', async () => {
+    const { data, io, emit, socket } = setup(false)
+    data.users.push({ id: 'member', nickname: 'Member', role: 'member' })
+    await syncPlaybackToSocket(io as never, socket as never, 'ROOM01', data)
+    expect(socket.emit).toHaveBeenCalledWith(
+      'player:play',
+      expect.objectContaining({
+        track: expect.objectContaining({ streamUrl: freshUrl }),
+        playState: expect.objectContaining({ isPlaying: true, revision: 7 }),
+      }),
+    )
+    expect(emit).not.toHaveBeenCalled()
+    expect(data.currentTrack?.streamUrl).toBe(expiredUrl)
+  })
+
+  it.each(['pause', 'seek', 'resume', 'play'] as const)(
+    'refreshes a pending %s snapshot without changing its commit track',
+    async (type) => {
+      const { data, io, socket } = setup(false)
+      pauseTrack(io as never, 'ROOM01')
+      data.pendingPlayback!.type = type
+      const originalPending = data.pendingPlayback!
+      await syncPlaybackToSocket(io as never, socket as never, 'ROOM01', data)
+      expect(socket.emit).toHaveBeenCalledWith('player:play', {
+        track: expect.objectContaining({ streamUrl: freshUrl }),
+        playState: originalPending.playState,
+      })
+      if (type !== 'play')
+        expect(socket.emit).toHaveBeenCalledWith('player:' + type, { playState: originalPending.playState })
+      expect(data.pendingPlayback).toBe(originalPending)
+      expect(data.pendingPlayback?.track?.streamUrl).toBe(expiredUrl)
+      await vi.advanceTimersByTimeAsync(300)
+      expect(data.currentTrack?.streamUrl).toBe(expiredUrl)
+      resumeTrack(io as never, 'ROOM01')
+      await settle()
+      expect(data.pendingPlayback?.track?.streamUrl).toBe(freshUrl)
+    },
+  )
+
+  it('takes a new snapshot when pending playback commits during a join refresh', async () => {
+    const { data, io, socket, stream } = setup(false)
+    pauseTrack(io as never, 'ROOM01')
+    data.users.push({ id: 'member', nickname: 'Member', role: 'member' })
+    const request = deferred<string | null>()
+    stream.mockReturnValueOnce(request.promise)
+    const joining = syncPlaybackToSocket(io as never, socket as never, 'ROOM01', data)
+    await vi.advanceTimersByTimeAsync(300)
+    request.resolve(freshUrl)
+    await joining
+    expect(socket.emit).toHaveBeenCalledWith(
+      'player:play',
+      expect.objectContaining({
+        track: expect.objectContaining({ streamUrl: freshUrl }),
+        playState: expect.objectContaining({ isPlaying: false, revision: 8 }),
+      }),
+    )
+    expect(data.currentTrack?.streamUrl).toBe(expiredUrl)
+  })
+
+  it('delegates an alone paused join to a single room-wide refresh', async () => {
+    const { data, io, emit, socket, stream } = setup()
+    await syncPlaybackToSocket(io as never, socket as never, 'ROOM01', data)
+    await settle()
+    expect(stream).toHaveBeenCalledTimes(1)
+    expect(socket.emit).not.toHaveBeenCalled()
+    expect(emit).toHaveBeenCalledWith(
+      'player:play',
+      expect.objectContaining({
+        track: expect.objectContaining({ streamUrl: freshUrl }),
+      }),
+    )
+  })
+
+  it('sends pending pause even when a joining listener refresh fails', async () => {
+    const { data, io, socket, stream } = setup(false)
+    pauseTrack(io as never, 'ROOM01')
+    stream.mockResolvedValue(null)
+    await syncPlaybackToSocket(io as never, socket as never, 'ROOM01', data)
+    expect(socket.emit.mock.calls.map(([event]) => event)).toEqual(['room:error', 'player:pause'])
+  })
+
+  it.each(['leave', 'pause', 'play', 'set', 'revision', 'delete', 'recreate'] as const)(
+    'does not send a join snapshot after %s during refresh',
+    async (change) => {
+      const { data, io, socket, stream } = setup(false)
+      const request = deferred<string | null>()
+      stream.mockReturnValueOnce(request.promise)
+      const joining = syncPlaybackToSocket(io as never, socket as never, 'ROOM01', data)
+      switch (change) {
+        case 'leave':
+          roomRepo.deleteSocketMapping('socket')
+          break
+        case 'pause':
+          pauseTrack(io as never, 'ROOM01')
+          break
+        case 'play':
+          await playTrackInRoom(io as never, 'ROOM01', data.queue[1])
+          break
+        case 'set':
+          setCurrentTrack('ROOM01', data.queue[1])
+          break
+        case 'revision':
+          data.playState.revision++
+          break
+        case 'delete':
+          cleanupRoom('ROOM01')
+          roomRepo.delete('ROOM01')
+          break
+        case 'recreate':
+          cleanupRoom('ROOM01')
+          roomRepo.set('ROOM01', room())
+          break
+      }
+      request.resolve(freshUrl)
+      await joining
+      expect(socket.emit).not.toHaveBeenCalled()
+    },
+  )
 })
