@@ -9,6 +9,9 @@ overrides:
   '@hono/node-server': 2.0.12
   get-uri@6>basic-ftp: 6.2.1
 
+patchedDependencies:
+  '@neteasecloudmusicapienhanced/api@4.41.1': 2f6f5f2b0a3e5e9f94d65c9996bc4e7c52d40ddb61498c564856f8063c8107f1
+
 importers:
 
   .:
@@ -230,7 +233,7 @@ importers:
         version: link:../shared
       '@neteasecloudmusicapienhanced/api':
         specifier: ^4.41.1
-        version: 4.41.1(debug@4.4.3(supports-color@10.2.2))(supports-color@10.2.2)
+        version: 4.41.1(patch_hash=2f6f5f2b0a3e5e9f94d65c9996bc4e7c52d40ddb61498c564856f8063c8107f1)(debug@4.4.3(supports-color@10.2.2))(supports-color@10.2.2)
       cors:
         specifier: ^2.8.6
         version: 2.8.6
@@ -5815,7 +5818,7 @@ snapshots:
       '@modelcontextprotocol/core': 2.4.0
       zod: 4.6.7
 
-  '@neteasecloudmusicapienhanced/api@4.41.1(debug@4.4.3(supports-color@10.2.2))(supports-color@10.2.2)':
+  '@neteasecloudmusicapienhanced/api@4.41.1(patch_hash=2f6f5f2b0a3e5e9f94d65c9996bc4e7c52d40ddb61498c564856f8063c8107f1)(debug@4.4.3(supports-color@10.2.2))(supports-color@10.2.2)':
     dependencies:
       '@neteasecloudmusicapienhanced/unblockmusic-utils': 0.4.5(debug@4.4.3(supports-color@10.2.2))(supports-color@10.2.2)
       axios: 1.21.0(debug@4.4.3(supports-color@10.2.2))(supports-color@10.2.2)

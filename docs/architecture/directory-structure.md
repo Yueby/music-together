@@ -186,7 +186,9 @@ src/
 ├── services/                   # 服务层：业务逻辑
 │   ├── roomService.ts          #   房间 CRUD + 角色管理 + 加入校验（validateJoinRequest）
 │   ├── roomLifecycleService.ts #   房间生命周期定时器（空置删除）+ 防抖广播
-│   ├── playerService.ts        #   已提交/待执行播放状态 + revision 边界 + 流 URL 解析 + 切歌防抖 + 加入播放同步
+│   ├── playerService.ts        #   已提交/待执行播放状态 + revision 边界 + 流 URL 解析/过期刷新 + 切歌防抖 + 加入播放同步
+│   ├── streamUrlLifetime.ts    #   网易云 CDN 签名有效期解析、调度余量与按链接 TTL
+│   ├── neteasePlayback.ts      #   登录态正常 v1 取链、官方公钥缓存与有界媒体可用性验证
 │   ├── queueService.ts         #   队列操作（reorder 保留未包含曲目防丢歌，getNextTrack 支持 4 种播放模式，clearQueue 清空，addBatchTracks 批量添加）
 │   ├── chatService.ts          #   聊天消息处理 + HTML 转义（含系统消息）
 │   ├── syncService.ts          #   播放位置估算工具（estimateCurrentTime）

@@ -13,3 +13,6 @@ allowBuilds:
   '@swc/core': false
   esbuild: true
   msw: false
+
+patchedDependencies:
+  '@neteasecloudmusicapienhanced/api@4.41.1': patches/@neteasecloudmusicapienhanced__api@4.41.1.patch

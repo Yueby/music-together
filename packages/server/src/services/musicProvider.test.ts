@@ -1,6 +1,16 @@
-import { afterEach, describe, expect, it, vi } from 'vitest'
+import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
+import Meting from '@meting/core'
+import { LRUCache } from 'lru-cache'
 import * as tencentAuth from './tencentAuthService.js'
-import { deriveThumbnailCoverUrl, musicProvider, normalizeKugouTemplateCoverUrl, normalizeNeteaseCoverUrl } from './musicProvider.js'
+import { getNeteasePlaybackUrl } from './neteasePlayback.js'
+
+vi.mock('./neteasePlayback.js', () => ({ getNeteasePlaybackUrl: vi.fn() }))
+import {
+  deriveThumbnailCoverUrl,
+  musicProvider,
+  normalizeKugouTemplateCoverUrl,
+  normalizeNeteaseCoverUrl,
+} from './musicProvider.js'
 
 const tencentSong = {
   id: 410316279,
@@ -17,6 +27,10 @@ const tencentSong = {
   pay: { pay_down: 0, pay_month: 1, pay_play: 0, price_track: 0 },
   action: { msgpay: 0 },
 }
+
+beforeEach(() => {
+  vi.mocked(getNeteasePlaybackUrl).mockReset().mockResolvedValue(null)
+})
 
 afterEach(() => {
   vi.restoreAllMocks()
@@ -68,6 +82,118 @@ describe('Tencent music search', () => {
   })
 })
 
+describe('stream URL lifetime caching', () => {
+  const now = Date.parse('2026-07-20T00:00:00Z')
+  const signedUrl = (timestamp: string) =>
+    `https://m801.music.126.net/${timestamp}/fixture-signature/ymusic/fixture.mp3`
+
+  it('re-fetches an expired cache hit normally and applies per-entry TTL', async () => {
+    const clock = vi.spyOn(Date, 'now').mockReturnValue(now)
+    const first = signedUrl('20260720081000')
+    const fresh = signedUrl('20260720090000')
+    const request = vi
+      .spyOn(Meting.prototype, 'url')
+      .mockResolvedValueOnce(JSON.stringify({ url: first }))
+      .mockResolvedValueOnce(JSON.stringify({ url: fresh }))
+    const set = vi.spyOn(LRUCache.prototype, 'set')
+
+    await expect(musicProvider.getStreamUrl('netease', 'lifetime-cache-fixture')).resolves.toBe(first)
+    expect(set).toHaveBeenCalledWith('netease:lifetime-cache-fixture:320', first, { ttl: 570_000 })
+    await expect(musicProvider.getStreamUrl('netease', 'lifetime-cache-fixture')).resolves.toBe(first)
+    expect(request).toHaveBeenCalledTimes(1)
+
+    // Change wall time only: the LRU entry is still present, so the explicit expiry guard must evict it.
+    clock.mockReturnValue(now + 570_000)
+    await expect(musicProvider.getStreamUrl('netease', 'lifetime-cache-fixture')).resolves.toBe(fresh)
+    expect(request).toHaveBeenCalledTimes(2)
+    expect(request).toHaveBeenLastCalledWith('lifetime-cache-fixture', 320)
+  })
+
+  it('rejects expired upstream URLs and leaves them uncached', async () => {
+    vi.spyOn(Date, 'now').mockReturnValue(now)
+    const request = vi
+      .spyOn(Meting.prototype, 'url')
+      .mockResolvedValueOnce(JSON.stringify({ url: signedUrl('20260719080000') }))
+      .mockResolvedValueOnce(JSON.stringify({ url: signedUrl('20260720080030') }))
+    const set = vi.spyOn(LRUCache.prototype, 'set')
+
+    await expect(musicProvider.getStreamUrl('netease', 'lifetime-expired-fixture')).resolves.toBeNull()
+    await expect(musicProvider.getStreamUrl('netease', 'lifetime-expired-fixture')).resolves.toBeNull()
+    expect(request).toHaveBeenCalledTimes(2)
+    expect(set).not.toHaveBeenCalledWith('netease:lifetime-expired-fixture:320', expect.anything(), expect.anything())
+  })
+
+  it('routes Cookie requests to the SDK helper without sharing the anonymous cache', async () => {
+    vi.spyOn(Date, 'now').mockReturnValue(now)
+    const anonymous = signedUrl('20260720090000')
+    const authorized = signedUrl('20260720100000')
+    const request = vi.spyOn(Meting.prototype, 'url').mockResolvedValue(JSON.stringify({ url: anonymous }))
+    vi.mocked(getNeteasePlaybackUrl).mockResolvedValue(authorized)
+    const cookie = vi.spyOn(Meting.prototype, 'cookie')
+
+    await expect(musicProvider.getStreamUrl('netease', 'lifetime-cookie-fixture')).resolves.toBe(anonymous)
+    await expect(musicProvider.getStreamUrl('netease', 'lifetime-cookie-fixture', 320, 'fixture-cookie')).resolves.toBe(
+      authorized,
+    )
+    await expect(musicProvider.getStreamUrl('netease', 'lifetime-cookie-fixture', 320, 'fixture-cookie')).resolves.toBe(
+      authorized,
+    )
+    await expect(musicProvider.getStreamUrl('netease', 'lifetime-cookie-fixture')).resolves.toBe(anonymous)
+    expect(request).toHaveBeenCalledTimes(1)
+    expect(cookie).not.toHaveBeenCalled()
+    expect(getNeteasePlaybackUrl).toHaveBeenCalledTimes(2)
+    expect(getNeteasePlaybackUrl).toHaveBeenNthCalledWith(1, 'lifetime-cookie-fixture', 320, 'fixture-cookie')
+    expect(getNeteasePlaybackUrl).toHaveBeenNthCalledWith(2, 'lifetime-cookie-fixture', 320, 'fixture-cookie')
+  })
+
+  it('returns null when authenticated playback fails without falling back to Meting', async () => {
+    const request = vi.spyOn(Meting.prototype, 'url')
+    vi.mocked(getNeteasePlaybackUrl).mockResolvedValue(null)
+    await expect(
+      musicProvider.getStreamUrl('netease', 'lifetime-cookie-expired-fixture', 320, 'fixture-cookie'),
+    ).resolves.toBeNull()
+    expect(getNeteasePlaybackUrl).toHaveBeenCalledWith('lifetime-cookie-expired-fixture', 320, 'fixture-cookie')
+    expect(request).not.toHaveBeenCalled()
+  })
+
+  it('resolves each Cookie request independently and preserves the helper URL verbatim', async () => {
+    const first = `${signedUrl('20260720090000')}?token=a%2Bb&x=1`
+    const second = `${signedUrl('20260720100000')}?token=c%2Bd&x=2`
+    vi.mocked(getNeteasePlaybackUrl).mockResolvedValueOnce(first).mockResolvedValueOnce(second)
+    const set = vi.spyOn(LRUCache.prototype, 'set')
+    await expect(musicProvider.getStreamUrl('netease', '110', 999, 'cookie-one')).resolves.toBe(first)
+    await expect(musicProvider.getStreamUrl('netease', '110', 999, 'cookie-two')).resolves.toBe(second)
+    expect(getNeteasePlaybackUrl).toHaveBeenNthCalledWith(1, '110', 999, 'cookie-one')
+    expect(getNeteasePlaybackUrl).toHaveBeenNthCalledWith(2, '110', 999, 'cookie-two')
+    expect(set).not.toHaveBeenCalled()
+  })
+
+  it.each(['tencent', 'kugou'] as const)('keeps authenticated %s playback on fresh Meting instances', async (source) => {
+    const url = 'https://fixture.example/audio.mp3'
+    const request = vi.spyOn(Meting.prototype, 'url').mockResolvedValue(JSON.stringify({ url }))
+    const cookie = vi.spyOn(Meting.prototype, 'cookie')
+    await expect(musicProvider.getStreamUrl(source, 'other-source-fixture', 192, 'fixture-cookie')).resolves.toBe(url)
+    expect(request).toHaveBeenCalledExactlyOnceWith('other-source-fixture', 192)
+    expect(cookie).toHaveBeenCalledExactlyOnceWith('fixture-cookie')
+    expect(getNeteasePlaybackUrl).not.toHaveBeenCalled()
+  })
+
+  it('uses five minutes for opaque NetEase URLs while preserving HTTPS normalization', async () => {
+    vi.spyOn(Meting.prototype, 'url').mockResolvedValue(
+      JSON.stringify({ url: 'http://music.126.net/ymusic/fixture.mp3' }),
+    )
+    const set = vi.spyOn(LRUCache.prototype, 'set')
+    await expect(musicProvider.getStreamUrl('netease', 'lifetime-opaque-fixture')).resolves.toBe(
+      'https://music.126.net/ymusic/fixture.mp3',
+    )
+    expect(set).toHaveBeenCalledWith(
+      'netease:lifetime-opaque-fixture:320',
+      'https://music.126.net/ymusic/fixture.mp3',
+      { ttl: 300_000 },
+    )
+  })
+})
+
 describe('provider cover URL normalization', () => {
   it('removes NetEase size params while preserving other query parameters', () => {
     expect(normalizeNeteaseCoverUrl('https://music.163.com/a.jpg?foo=bar&param=100y100&param=200y200')).toBe(
@@ -77,7 +203,9 @@ describe('provider cover URL normalization', () => {
   })
 
   it('converts documented Kugou size templates to the CDN-safe maximum request', () => {
-    expect(normalizeKugouTemplateCoverUrl('http://img.kugou.com/{size}/abc.jpg')).toBe('http://img.kugou.com/5000/abc.jpg')
+    expect(normalizeKugouTemplateCoverUrl('http://img.kugou.com/{size}/abc.jpg')).toBe(
+      'http://img.kugou.com/5000/abc.jpg',
+    )
     expect(normalizeKugouTemplateCoverUrl('http://img.kugou.com/400/abc.jpg')).toBe('http://img.kugou.com/400/abc.jpg')
   })
 
@@ -88,7 +216,11 @@ describe('provider cover URL normalization', () => {
     expect(deriveThumbnailCoverUrl('tencent', 'https://y.gtimg.cn/music/photo_new/T002R800x800M000abc.jpg')).toBe(
       'https://y.gtimg.cn/music/photo_new/T002R120x120M000abc.jpg',
     )
-    expect(deriveThumbnailCoverUrl('kugou', 'http://img.kugou.com/{size}/abc.jpg')).toBe('http://img.kugou.com/120/abc.jpg')
-    expect(deriveThumbnailCoverUrl('kugou', 'https://example.com/5000/abc.jpg')).toBe('https://example.com/5000/abc.jpg')
+    expect(deriveThumbnailCoverUrl('kugou', 'http://img.kugou.com/{size}/abc.jpg')).toBe(
+      'http://img.kugou.com/120/abc.jpg',
+    )
+    expect(deriveThumbnailCoverUrl('kugou', 'https://example.com/5000/abc.jpg')).toBe(
+      'https://example.com/5000/abc.jpg',
+    )
   })
 })

@@ -67,6 +67,18 @@ declare module '@neteasecloudmusicapienhanced/api' {
       params: { uid: number; limit: number; offset: number } & RequestBaseConfig,
     ): Promise<{ body: UserPlaylistResponse }>
 
+    /** 正常 XEAPI 公钥注册；响应由播放适配层继续校验。 */
+    register_xeapikey(params: { timeout: number }): Promise<{ status: number; body: unknown }>
+
+    /** 使用现有账号权益获取完整播放链接。 */
+    song_url_v1(params: {
+      id: string
+      level: string
+      cookie: string
+      timeout: number
+      randomCNIP: false
+    }): Promise<{ status: number; body: unknown }>
+
     /** 获取歌词（含逐词 YRC） */
     lyric_new(params: { id: string | number } & RequestBaseConfig): Promise<{
       body: {
