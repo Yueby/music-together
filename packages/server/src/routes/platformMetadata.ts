@@ -1,13 +1,8 @@
 import { Router, type Request, type RequestHandler, type Response, type Router as RouterType } from 'express'
-import {
-  MAPP_COVER_MAX_BYTES,
-  MAPP_METADATA_MAX_BYTES,
-  MAPP_METADATA_TARGETS,
-  parseMappMetadataRequest,
-} from '@music-together/shared'
+import { MAPP_METADATA_MAX_BYTES, MAPP_METADATA_TARGETS, parseMappMetadataRequest } from '@music-together/shared'
 import { getMusicLyricMetadata, searchMusicMetadata } from '../controllers/musicMetadataController.js'
 import { coverProxyRateLimit, musicApiRateLimit } from '../middleware/httpRateLimiter.js'
-import { fetchCoverImage, type CoverResult } from '../services/coverProxy.js'
+import { fetchPlatformCover, type CoverResult } from '../services/coverProxy.js'
 import { withTimeout } from '../utils/withTimeout.js'
 
 export interface MusicMetadataIdentityInput {
@@ -90,7 +85,7 @@ export function createPlatformMetadataRouter(options: Options): RouterType {
   }
   const search = options.search ?? searchMusicMetadata
   const lyric = options.lyric ?? getMusicLyricMetadata
-  const cover = options.cover ?? ((url: string) => fetchCoverImage(url, MAPP_COVER_MAX_BYTES))
+  const cover = options.cover ?? ((url: string) => fetchPlatformCover(url))
   const searchLimit = options.rateLimit ?? musicApiRateLimit
   const coverLimit = options.coverRateLimit ?? coverProxyRateLimit
   const router = Router()

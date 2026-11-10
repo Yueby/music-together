@@ -1,3 +1,5 @@
+import { MAPP_COVER_MAX_BYTES } from '@music-together/shared'
+
 /**
  * Cover image fetching shared by the Web `/api/music/cover-proxy` route and the platform adapter.
  * Only the music CDNs below are ever contacted.
@@ -12,6 +14,25 @@ export const ALLOWED_COVER_HOSTS = [
 ]
 
 export const MAX_WEB_COVER_BYTES = 10 * 1024 * 1024
+
+const NETEASE_COVER_HOST = /^p[1-4]\.music\.126\.net$/
+/** Player-sized artwork: ~0.5 MB instead of the multi-megabyte original. */
+const PLATFORM_COVER_SIZE = '600y600'
+
+/**
+ * NetEase serves the multi-megabyte original unless asked for a size. Request a player-sized image
+ * unless the caller already chose one (list thumbnails carry `param=120y120`). Other hosts are untouched.
+ */
+export function limitCoverSize(imageUrl: string): string {
+  try {
+    const parsed = new URL(imageUrl)
+    if (!NETEASE_COVER_HOST.test(parsed.hostname) || parsed.searchParams.has('param')) return imageUrl
+    parsed.searchParams.set('param', PLATFORM_COVER_SIZE)
+    return parsed.toString()
+  } catch {
+    return imageUrl
+  }
+}
 
 export type CoverResult = { ok: true; contentType: string; body: Buffer } | { ok: false; status: number; error: string }
 
@@ -61,4 +82,9 @@ export async function fetchCoverImage(
   const body = await readBounded(response, maxBytes)
   if (!body) return { ok: false, status: 413, error: 'Image too large' }
   return { ok: true, contentType, body }
+}
+
+/** Cover for mini-app clients: size-limited upstream request and the platform response cap. */
+export function fetchPlatformCover(imageUrl: string, fetcher: typeof fetch = fetch): Promise<CoverResult> {
+  return fetchCoverImage(limitCoverSize(imageUrl), MAPP_COVER_MAX_BYTES, fetcher)
 }

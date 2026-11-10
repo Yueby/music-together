@@ -1,5 +1,12 @@
 import { describe, expect, it, vi } from 'vitest'
-import { ALLOWED_COVER_HOSTS, MAX_WEB_COVER_BYTES, fetchCoverImage } from './coverProxy.js'
+import { MAPP_COVER_MAX_BYTES } from '@music-together/shared'
+import {
+  ALLOWED_COVER_HOSTS,
+  MAX_WEB_COVER_BYTES,
+  fetchCoverImage,
+  fetchPlatformCover,
+  limitCoverSize,
+} from './coverProxy.js'
 
 const url = 'https://p1.music.126.net/cover.jpg'
 const png = Buffer.from([0x89, 0x50, 0x4e, 0x47])
@@ -90,5 +97,60 @@ describe('fetchCoverImage', () => {
       ok: true,
       body: Buffer.alloc(0),
     })
+  })
+})
+
+describe('limitCoverSize', () => {
+  it.each(['p1', 'p2', 'p3', 'p4'])('asks NetEase %s for a player-sized image instead of the original', (host) => {
+    expect(limitCoverSize(`https://${host}.music.126.net/abc==/123.jpg`)).toBe(
+      `https://${host}.music.126.net/abc==/123.jpg?param=600y600`,
+    )
+  })
+
+  it('keeps a size the caller already chose, such as list thumbnails', () => {
+    const thumbnail = 'https://p3.music.126.net/abc==/123.jpg?param=120y120'
+    expect(limitCoverSize(thumbnail)).toBe(thumbnail)
+  })
+
+  it('keeps other query parameters when adding the size', () => {
+    expect(limitCoverSize('https://p1.music.126.net/a.jpg?x=1')).toBe(
+      'https://p1.music.126.net/a.jpg?x=1&param=600y600',
+    )
+  })
+
+  it.each(['https://y.gtimg.cn/music/photo_new/T002R300x300M000x.jpg', 'https://imgessl.kugou.com/a.jpg', 'not a url'])(
+    'leaves %s untouched',
+    (target) => {
+      expect(limitCoverSize(target)).toBe(target)
+    },
+  )
+})
+
+describe('fetchPlatformCover', () => {
+  it('requests the size-limited URL and enforces the platform byte cap', async () => {
+    const fetch = fetcher(image())
+    await expect(fetchPlatformCover('https://p3.music.126.net/abc==/1.jpg', fetch)).resolves.toMatchObject({
+      ok: true,
+      contentType: 'image/png',
+    })
+    expect(fetch).toHaveBeenCalledExactlyOnceWith(
+      'https://p3.music.126.net/abc==/1.jpg?param=600y600',
+      expect.anything(),
+    )
+
+    const big = fetcher(image(Buffer.alloc(MAPP_COVER_MAX_BYTES + 1)))
+    await expect(fetchPlatformCover('https://p3.music.126.net/abc==/1.jpg', big)).resolves.toMatchObject({
+      ok: false,
+      status: 413,
+    })
+  })
+
+  it('still refuses hosts outside the allowlist without contacting them', async () => {
+    const fetch = fetcher(image())
+    await expect(fetchPlatformCover('https://evil.test/a.png', fetch)).resolves.toMatchObject({
+      ok: false,
+      status: 403,
+    })
+    expect(fetch).not.toHaveBeenCalled()
   })
 })
