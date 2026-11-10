@@ -7,6 +7,8 @@ COPY patches/ patches/
 COPY packages/shared/package.json packages/shared/
 COPY packages/server/package.json packages/server/
 COPY packages/client/package.json packages/client/
+# 前端的微应用入口（src/platform）直接引用 packages/mapp/src，类型检查需要 mapp 的依赖链接
+COPY packages/mapp/package.json packages/mapp/
 # server 依赖固定在 vendor/ 的官方微应用 SDK（file: 依赖，安装前必须存在）
 COPY vendor/ vendor/
 RUN pnpm install --frozen-lockfile
@@ -16,6 +18,7 @@ FROM deps AS build
 COPY packages/shared/ packages/shared/
 COPY packages/server/ packages/server/
 COPY packages/client/ packages/client/
+COPY packages/mapp/ packages/mapp/
 RUN pnpm --filter @music-together/shared run build
 RUN pnpm --filter @music-together/server run build
 RUN pnpm --filter @music-together/client run build
