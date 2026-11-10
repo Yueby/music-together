@@ -106,10 +106,11 @@ export class WebAudioPlayer {
   /** Unlock without starting a source; invoke directly from a user gesture. */
   async unlock(): Promise<boolean> {
     this.assertOpen()
-    const generation = this.generation
     const context = this.getContext()
     await context.resume()
-    if (generation !== this.generation) return false
+    // Unlocking is about the AudioContext, not the current track: loading, pausing or seeking while resume() was
+    // pending bumps the track generation but must not turn a running context into a failed unlock.
+    if (this.status === 'closed') return false
     if (context.state !== 'running') throw new Error('AUDIO_CONTEXT_NOT_RUNNING')
     this.notify()
     return true

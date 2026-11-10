@@ -1,5 +1,4 @@
 import { SERVER_URL } from '@/lib/config'
-import { hostRuntime } from '@/lib/hostRuntime'
 import { metadataFetch } from '@/lib/metadataFetch'
 import type { Artist, MusicSource, Playlist, Track } from '@music-together/shared'
 import { useCallback, useEffect, useRef, useState } from 'react'
@@ -88,10 +87,6 @@ export function useArtist() {
   const load = useCallback(
     async (source: MusicSource, id: string, hint?: Artist) => {
       reset()
-      if (!hostRuntime.collections) {
-        setError('unsupported')
-        return
-      }
       const controller = new AbortController()
       abortRef.current = controller
       const generation = generationRef.current

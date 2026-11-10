@@ -54,6 +54,42 @@ describe('reviewed Mapp metadata reads', () => {
     expect((await import('./metadataFetch')).createMappMetadataFetch).toBeTypeOf('function')
   })
 
+  it.each([
+    ['/api/music/artist?source=netease&id=3684', 'musicArtist', { source: 'netease', id: '3684' }],
+    [
+      '/api/music/artist/songs?source=netease&id=3684&offset=50',
+      'musicArtistSongs',
+      { source: 'netease', id: '3684', offset: '50', limit: '30' },
+    ],
+    [
+      '/api/music/artist/albums?source=netease&id=3684',
+      'musicArtistAlbums',
+      { source: 'netease', id: '3684', offset: '0', limit: '30' },
+    ],
+    [
+      '/api/music/playlist?source=netease&id=77&type=album&total=12&limit=200',
+      'musicPlaylist',
+      { source: 'netease', id: '77', type: 'album', total: '12', limit: '200', offset: '0' },
+    ],
+  ])('reads %s through the reviewed %s endpoint with every query key present', async (path, endpoint, query) => {
+    const f = fixture()
+    await f.fetchMetadata(`${origin}${path}`)
+    expect(f.request).toHaveBeenCalledExactlyOnceWith(
+      endpoint,
+      expect.objectContaining({ method: 'GET', query, responseType: 'bytes' }),
+    )
+  })
+
+  it.each([
+    '/api/music/playlist?source=netease&id=1&roomId=ABC123',
+    '/api/music/playlist?source=netease&id=1&limit=201',
+    '/api/music/artist?source=netease',
+  ])('refuses %s before any SDK call', async (path) => {
+    const f = fixture()
+    await expect(f.fetchMetadata(`${origin}${path}`)).rejects.toThrow('METADATA_TARGET_REJECTED')
+    expect(f.request).not.toHaveBeenCalled()
+  })
+
   it('parses approved metadata queries under the sandbox dynamic-code restriction', async () => {
     const f = fixture()
     const compile = vi.spyOn(globalThis, 'Function').mockImplementation(() => {

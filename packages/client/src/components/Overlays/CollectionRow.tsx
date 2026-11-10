@@ -1,13 +1,13 @@
-import { hostRuntime } from '@/lib/hostRuntime'
+import { useArtworkUrl } from '@/hooks/useArtworkUrl'
 import { cn } from '@/lib/utils'
 import type { ReactNode } from 'react'
 
 interface CollectionRowProps {
   title: string
   subtitle?: string
-  /** Artwork URL; hosts that cannot load remote images show `fallback` instead. */
+  /** Artwork URL. Hosts that cannot show remote images read the bytes through their own loader (`useArtworkUrl`). */
   cover?: string
-  /** Placeholder shown without artwork. */
+  /** Placeholder shown until (or without) artwork. */
   fallback: ReactNode
   /** Round artwork for people (artists), rounded square for albums and playlists. */
   round?: boolean
@@ -17,6 +17,7 @@ interface CollectionRowProps {
 
 /** One tappable result row (album, playlist or artist): artwork, title and a single line of detail. */
 export function CollectionRow({ title, subtitle, cover, fallback, round, onClick, disabled }: CollectionRowProps) {
+  const src = useArtworkUrl(cover)
   const shape = round ? 'rounded-full' : 'rounded-md'
   return (
     <button
@@ -25,8 +26,8 @@ export function CollectionRow({ title, subtitle, cover, fallback, round, onClick
       onClick={onClick}
       disabled={disabled}
     >
-      {hostRuntime.remoteArtwork && cover ? (
-        <img src={cover} alt={title} className={cn('h-12 w-12 shrink-0 object-cover', shape)} loading="lazy" />
+      {src ? (
+        <img src={src} alt={title} className={cn('h-12 w-12 shrink-0 object-cover', shape)} loading="lazy" />
       ) : (
         <div className={cn('bg-muted flex h-12 w-12 shrink-0 items-center justify-center', shape)}>{fallback}</div>
       )}

@@ -1,5 +1,12 @@
 import { z } from 'zod'
-import { searchQuerySchema, lyricQuerySchema, ttmlQuerySchema } from './schemas.js'
+import {
+  searchQuerySchema,
+  lyricQuerySchema,
+  ttmlQuerySchema,
+  artistQuerySchema,
+  artistPageQuerySchema,
+  playlistQuerySchema,
+} from './schemas.js'
 
 import { MAPP_METADATA_TARGETS } from './mappMetadataTargets.js'
 export {
@@ -12,21 +19,66 @@ export {
 export const mappMetadataSearchQuerySchema = searchQuerySchema.strict()
 export const mappMetadataLyricQuerySchema = lyricQuerySchema.strict()
 export const mappMetadataTtmlQuerySchema = ttmlQuerySchema.strict()
+export const mappMetadataArtistQuerySchema = artistQuerySchema.strict()
+export const mappMetadataArtistPageQuerySchema = artistPageQuerySchema.strict()
+
+/** Most tracks one playlist/album page may carry: keeps the JSON (≈0.5 KB per track) far below the 1 MiB budget. */
+export const MAPP_PLAYLIST_PAGE_MAX = 200
+
+/**
+ * Public playlist / album pages. The platform signs the exact set of query keys, so every key is always present
+ * (`total` defaults to 0 = unknown). Personal playlists need an account and do not use this target.
+ */
+export const mappMetadataPlaylistQuerySchema = playlistQuerySchema
+  .omit({ roomId: true, limit: true, total: true })
+  .extend({
+    limit: z.coerce.number().int().min(1).max(MAPP_PLAYLIST_PAGE_MAX).default(100),
+    total: z.coerce.number().int().min(0).default(0),
+  })
+  .strict()
 
 /** Absolute https URL without credentials, fragment or whitespace. The host allowlist is enforced by the server. */
 function isPlainHttpsUrl(value: string): boolean {
   if (/[\s\x00-\x1f\x7f#]/.test(value)) return false
   try {
     const url = new URL(value)
-    return url.protocol === 'https:' && !url.username && !url.password
+    return url.protocol === 'https:' && !url.username && !url.password && url.port === ''
   } catch {
     return false
   }
 }
 export const mappMetadataCoverQuerySchema = z.strictObject({ url: z.string().max(2048).refine(isPlainHttpsUrl) })
 
+/**
+ * The query schema of every reviewed target, keyed like `MAPP_METADATA_TARGETS`. This is the single table behind the
+ * parser, the SDK client, the server adapter and (through `queryKeys`) the manifest endpoint declarations: adding a
+ * target is one entry here, one in the targets file and one handler on the server. A test keeps `queryKeys` and the
+ * schema keys from drifting apart.
+ */
+export const MAPP_METADATA_SCHEMAS = {
+  search: mappMetadataSearchQuerySchema,
+  lyric: mappMetadataLyricQuerySchema,
+  ttml: mappMetadataTtmlQuerySchema,
+  cover: mappMetadataCoverQuerySchema,
+  artist: mappMetadataArtistQuerySchema,
+  artistSongs: mappMetadataArtistPageQuerySchema,
+  artistAlbums: mappMetadataArtistPageQuerySchema,
+  playlist: mappMetadataPlaylistQuerySchema,
+} as const satisfies Record<keyof typeof MAPP_METADATA_TARGETS, z.ZodType>
+
+export type MappMetadataKind = keyof typeof MAPP_METADATA_TARGETS
+export type MappMetadataRequest = {
+  [K in MappMetadataKind]: {
+    kind: K
+    target: (typeof MAPP_METADATA_TARGETS)[K]
+    query: z.infer<(typeof MAPP_METADATA_SCHEMAS)[K]>
+  }
+}[MappMetadataKind]
+
+const KINDS = Object.keys(MAPP_METADATA_TARGETS) as MappMetadataKind[]
+
 /** One reviewed public-read contract shared by the SDK client and trusted server adapters. */
-export function parseMappMetadataRequest(rawUrl: string) {
+export function parseMappMetadataRequest(rawUrl: string): MappMetadataRequest {
   if (
     typeof rawUrl !== 'string' ||
     rawUrl.length > 8192 ||
@@ -40,37 +92,17 @@ export function parseMappMetadataRequest(rawUrl: string) {
   const url = new URL(rawUrl, 'https://metadata.invalid')
   const rawPath = rawUrl.split('?')[0]
   if (rawPath !== url.pathname) throw new Error('METADATA_TARGET_REJECTED')
+  const kind = KINDS.find((candidate) => MAPP_METADATA_TARGETS[candidate].path === rawPath)
+  if (!kind) throw new Error('METADATA_TARGET_REJECTED')
+
   const entries = [...url.searchParams]
   if (new Set(entries.map(([key]) => key)).size !== entries.length) throw new Error('METADATA_QUERY_REJECTED')
-  for (const chunk of url.search.slice(1).split('&')) decodeURIComponent(chunk.replace(/\+/g, ' '))
-  const query = Object.fromEntries(entries)
-  if (rawPath === MAPP_METADATA_TARGETS.search.path) {
-    return {
-      kind: 'search' as const,
-      target: MAPP_METADATA_TARGETS.search,
-      query: mappMetadataSearchQuerySchema.parse(query, { jitless: true }),
-    }
+  try {
+    for (const chunk of url.search.slice(1).split('&')) decodeURIComponent(chunk.replace(/\+/g, ' '))
+  } catch {
+    // A malformed escape is a rejected query like any other, not a stray URIError for callers to special-case.
+    throw new Error('METADATA_QUERY_REJECTED')
   }
-  if (rawPath === MAPP_METADATA_TARGETS.lyric.path) {
-    return {
-      kind: 'lyric' as const,
-      target: MAPP_METADATA_TARGETS.lyric,
-      query: mappMetadataLyricQuerySchema.parse(query, { jitless: true }),
-    }
-  }
-  if (rawPath === MAPP_METADATA_TARGETS.ttml.path) {
-    return {
-      kind: 'ttml' as const,
-      target: MAPP_METADATA_TARGETS.ttml,
-      query: mappMetadataTtmlQuerySchema.parse(query, { jitless: true }),
-    }
-  }
-  if (rawPath === MAPP_METADATA_TARGETS.cover.path) {
-    return {
-      kind: 'cover' as const,
-      target: MAPP_METADATA_TARGETS.cover,
-      query: mappMetadataCoverQuerySchema.parse(query, { jitless: true }),
-    }
-  }
-  throw new Error('METADATA_TARGET_REJECTED')
+  const query = MAPP_METADATA_SCHEMAS[kind].parse(Object.fromEntries(entries), { jitless: true })
+  return { kind, target: MAPP_METADATA_TARGETS[kind], query } as MappMetadataRequest
 }

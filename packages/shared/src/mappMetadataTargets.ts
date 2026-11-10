@@ -10,6 +10,24 @@ export const MAPP_METADATA_TARGETS = {
   ttml: { path: '/api/music/ttml', endpoint: 'musicTtml', queryKeys: ['source', 'id'] },
   /** Binary response (an image), unlike the JSON search/lyric targets. */
   cover: { path: '/api/music/cover-proxy', endpoint: 'musicCover', queryKeys: ['url'] },
+  /** Artist home: profile plus the first page of songs and albums. */
+  artist: { path: '/api/music/artist', endpoint: 'musicArtist', queryKeys: ['source', 'id'] },
+  artistSongs: {
+    path: '/api/music/artist/songs',
+    endpoint: 'musicArtistSongs',
+    queryKeys: ['source', 'id', 'offset', 'limit'],
+  },
+  artistAlbums: {
+    path: '/api/music/artist/albums',
+    endpoint: 'musicArtistAlbums',
+    queryKeys: ['source', 'id', 'offset', 'limit'],
+  },
+  /** One page of a public playlist or album. */
+  playlist: {
+    path: '/api/music/playlist',
+    endpoint: 'musicPlaylist',
+    queryKeys: ['source', 'id', 'type', 'limit', 'offset', 'total'],
+  },
 } as const
 
 /** Music CDNs the cover endpoint (Web and platform) may fetch from, and the mini-app may ask for. One list for both. */

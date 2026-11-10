@@ -2,8 +2,8 @@ import { Avatar, AvatarFallback, AvatarImage } from '@/components/ui/avatar'
 import { Button } from '@/components/ui/button'
 import { Skeleton } from '@/components/ui/skeleton'
 import { Tabs, TabsList, TabsTrigger } from '@/components/ui/tabs'
+import { useArtworkUrl } from '@/hooks/useArtworkUrl'
 import type { ArtistLoadError } from '@/hooks/useArtist'
-import { hostRuntime } from '@/lib/hostRuntime'
 import type { Artist, Playlist, Track } from '@music-together/shared'
 import { ArrowLeft, Disc3, Loader2, User } from 'lucide-react'
 import { useState } from 'react'
@@ -39,6 +39,7 @@ interface ArtistDetailProps {
 
 function ArtistHeader({ artist, loading }: { artist: Artist | null; loading: boolean }) {
   const [expanded, setExpanded] = useState(false)
+  const avatar = useArtworkUrl(artist?.thumbnailCover ?? artist?.cover)
   const description = artist?.description
   const counts = [
     artist?.songCount != null ? `${artist.songCount} 首歌曲` : null,
@@ -47,7 +48,7 @@ function ArtistHeader({ artist, loading }: { artist: Artist | null; loading: boo
   return (
     <div className="flex shrink-0 gap-3 py-2">
       <Avatar className="size-14 sm:size-16">
-        {hostRuntime.remoteArtwork && artist?.cover ? <AvatarImage src={artist.thumbnailCover ?? artist.cover} alt={artist.name} /> : null}
+        {avatar ? <AvatarImage src={avatar} alt={artist?.name} /> : null}
         <AvatarFallback>
           <User className="h-6 w-6" />
         </AvatarFallback>

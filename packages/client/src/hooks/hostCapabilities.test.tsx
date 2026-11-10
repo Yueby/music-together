@@ -16,10 +16,8 @@ const fixture = vi.hoisted(() => ({
   runtime: {
     kind: 'mapp' as 'web' | 'mapp',
     platformAccounts: false,
-    collections: false,
     nativeMediaSession: false,
     versionCheck: false,
-    remoteArtwork: false,
     pixiBackground: false,
     clipboard: false,
     externalLinks: false,
@@ -88,7 +86,6 @@ describe('host capability guards on shared hooks', () => {
     Object.assign(fixture.runtime, {
       kind: 'mapp',
       platformAccounts: false,
-      collections: false,
       nativeMediaSession: false,
       versionCheck: false,
     })
@@ -141,7 +138,7 @@ describe('host capability guards on shared hooks', () => {
     })
   }
 
-  it('keeps accounts, collection fetches, browser media controls and version checks dormant for Mapp', async () => {
+  it('keeps accounts, browser media controls and version checks dormant for Mapp', async () => {
     await render()
     await act(async () => {
       auth.requestQrCode('netease')
@@ -149,8 +146,6 @@ describe('host capability guards on shared hooks', () => {
       auth.setCookie('netease', 'fixture-only-input')
       auth.logout('netease')
       playlists.fetchMyPlaylists('netease')
-      expect(await playlists.fetchPlaylistTracks('netease', 'fixture-list')).toEqual([])
-      await playlists.loadMoreTracks()
     })
     await fire(EVENTS.ROOM_STATE, room())
     await fire(EVENTS.ROOM_REJOIN_TOKEN, {
@@ -170,11 +165,33 @@ describe('host capability guards on shared hooks', () => {
     expect(listeners.has(EVENTS.AUTH_QR_GENERATED)).toBe(false)
   })
 
+  it('reads public playlists and albums through the metadata transport on Mapp too, without a room or credentials', async () => {
+    useRoomStore.setState({ room: room() })
+    await render()
+    await act(async () => {
+      await playlists.fetchPlaylistTracks('netease', 'fixture-public-list', 12, 'album')
+    })
+    const [url, init] = fixture.metadata.mock.calls.at(-1) as unknown as [string, RequestInit]
+    const query = new URL(url, 'https://music.test').searchParams
+    expect(new URL(url, 'https://music.test').pathname).toBe('/api/music/playlist')
+    expect(Object.fromEntries(query)).toEqual({
+      source: 'netease',
+      id: 'fixture-public-list',
+      limit: '200',
+      offset: '0',
+      total: '12',
+      type: 'album',
+    })
+    // The host has no music accounts: no room scope (and so no account cookie) is ever requested.
+    expect(query.has('roomId')).toBe(false)
+    expect(init).toBeDefined()
+    expect(globalThis.fetch).not.toHaveBeenCalled()
+  })
+
   it('retains Web status, credential recovery, collection requests and browser media behavior', async () => {
     Object.assign(fixture.runtime, {
       kind: 'web',
       platformAccounts: true,
-      collections: true,
       nativeMediaSession: true,
       versionCheck: true,
     })

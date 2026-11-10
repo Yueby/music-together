@@ -41,6 +41,23 @@ const REQUIRED_PERMISSIONS = ['network.websocket', 'user.read', 'network.request
 // The memory storage backend is module-scoped, so its owner must be module-scoped too.
 let activeHost = false
 
+/**
+ * Aborts when any input aborts. `AbortSignal.any` is missing from older WebViews (Safari < 17.4, Chrome < 116), and
+ * calling it there would throw synchronously past every promise handler, so fall back to a hand-built controller.
+ */
+export function anySignal(signals: AbortSignal[]): AbortSignal {
+  if (typeof AbortSignal.any === 'function') return AbortSignal.any(signals)
+  const controller = new AbortController()
+  for (const signal of signals) {
+    if (signal.aborted) {
+      controller.abort(signal.reason)
+      break
+    }
+    signal.addEventListener('abort', () => controller.abort(signal.reason), { once: true })
+  }
+  return controller.signal
+}
+
 /** The reviewed Socket.IO WSS URL and the HTTP metadata origin share one host. */
 function serverOriginFromSocket(value: string): string {
   const url = new URL(value)
@@ -93,15 +110,26 @@ export function createMappHost(options: MappHostOptions): MappHost {
       disposed = true
       unlocked = false
       lifetime.abort()
+      // Every resource gets its turn even if an earlier one fails to close (a half-closed websocket must not leak
+      // the cover Blob URLs or the AudioContext); the first failure is reported once everything has been attempted.
+      const failures: unknown[] = []
+      const attempt = async (close: () => unknown) => {
+        try {
+          await close()
+        } catch (error) {
+          failures.push(error)
+        }
+      }
       try {
-        session?.dispose()
-        covers?.dispose()
-        unloadCurrent()
-        await audioFactory?.dispose()
+        await attempt(() => session?.dispose())
+        await attempt(() => covers?.dispose())
+        await attempt(unloadCurrent)
+        await attempt(() => audioFactory?.dispose())
       } finally {
         clearMemoryStorage()
         activeHost = false
       }
+      if (failures.length > 0) throw failures[0]
     })()
     return disposal
   }
@@ -137,7 +165,7 @@ export function createMappHost(options: MappHostOptions): MappHost {
       roomCommands: createMappRoomCommands(roomSession),
       metadataFetch: (input, init) => {
         if (lifetime.signal.aborted) return Promise.reject(new DOMException('METADATA_CANCELLED', 'AbortError'))
-        const signal = init?.signal ? AbortSignal.any([init.signal, lifetime.signal]) : lifetime.signal
+        const signal = init?.signal ? anySignal([init.signal, lifetime.signal]) : lifetime.signal
         return metadata(input, { ...init, signal })
       },
       artworkLoader: coverLoader,

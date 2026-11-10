@@ -55,7 +55,7 @@ src/
 │   ├── Overlays/
 │   │   ├── QueueDrawer.tsx     #     播放队列抽屉（vaul Drawer，移动端底部/桌面端右侧）
 │   │   ├── SearchDialog.tsx    #     音乐搜索弹窗（单曲/歌手/专辑/歌单四个标签；VirtualTrackList 虚拟滚动 + 自动无限加载 + AbortController 竞态防护；歌手/专辑/歌单点进详情视图，专辑可叠在歌手主页之上并返回）
-│   │   ├── ArtistDetail.tsx    #     歌手主页（头像/简介/热门歌曲/专辑两个标签，网易云专用；由 `hostRuntime.collections` 门控）
+│   │   ├── ArtistDetail.tsx    #     歌手主页（头像/简介/热门歌曲/专辑两个标签，目前仅网易云有数据；网页端与微应用同一份代码）
 │   │   ├── CollectionRow.tsx   #     可点击的结果行（专辑/歌单方形封面，歌手圆形头像）
 │   │   ├── SettingsDialog.tsx  #     设置弹窗（壳，Tab 导航：房间/成员/外观/歌词，移动端 nav scrollbar-hide；不再包含账号）
 │   │   ├── AccountDialog.tsx   #     音乐账号弹窗（网易云/QQ/酷狗登录、VIP 状态、个人歌单导入，内容是 PlatformHub；入口在房间顶栏的"音乐账号"按钮，桌面为独立图标、移动端在"更多"菜单；`hostRuntime.platformAccounts` 为 false 的宿主不渲染）

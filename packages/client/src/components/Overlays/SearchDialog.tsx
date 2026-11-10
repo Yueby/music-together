@@ -11,7 +11,6 @@ import { Tabs, TabsList, TabsTrigger } from '@/components/ui/tabs'
 import { VirtualTrackList, type VirtualTrackListRef } from '@/components/VirtualTrackList'
 import { PLATFORM_ACTIVE, PLATFORM_TEXT } from '@/lib/platform'
 import { cn, trackKey } from '@/lib/utils'
-import { hostRuntime } from '@/lib/hostRuntime'
 import { useRoomStore } from '@/stores/roomStore'
 import { useSearch, type SearchType } from '@/hooks/useSearch'
 import { useArtist } from '@/hooks/useArtist'
@@ -61,7 +60,7 @@ export function SearchDialog({ open, onOpenChange, onAddToQueue, onInsertAfterCu
   const [artistOpen, setArtistOpen] = useState(false)
   const artistState = useArtist()
   const [selectedAlbum, setSelectedAlbum] = useState<Playlist | null>(null)
-  const supportsArtists = hostRuntime.collections && ARTIST_SOURCES.includes(source)
+  const supportsArtists = ARTIST_SOURCES.includes(source)
   const {
     playlistTracks,
     playlistTotal,
@@ -179,14 +178,12 @@ export function SearchDialog({ open, onOpenChange, onAddToQueue, onInsertAfterCu
   )
 
   const handleSelectAlbum = (album: Playlist, type: 'album' | 'playlist') => {
-    if (!hostRuntime.collections) return
     setSelectedAlbum(album)
     fetchPlaylistTracks(source, album.id, album.trackCount, type)
   }
 
   const { load: loadArtist } = artistState
   const handleSelectArtist = (artist: Artist) => {
-    if (!hostRuntime.collections) return
     setArtistOpen(true)
     void loadArtist(source, artist.id, artist)
   }
@@ -243,7 +240,7 @@ export function SearchDialog({ open, onOpenChange, onAddToQueue, onInsertAfterCu
         </ResponsiveDialogHeader>
 
         <ResponsiveDialogBody className="flex min-h-0 flex-1 flex-col gap-4 overflow-hidden">
-          {selectedAlbum && hostRuntime.collections ? (
+          {selectedAlbum ? (
             <PlaylistDetail
               playlist={selectedAlbum}
               tracks={playlistTracks}
@@ -257,7 +254,7 @@ export function SearchDialog({ open, onOpenChange, onAddToQueue, onInsertAfterCu
               onAddAll={handleAddBatch}
               onLoadMore={loadMoreTracks}
             />
-          ) : artistOpen && hostRuntime.collections ? (
+          ) : artistOpen ? (
             <ArtistDetail
               artist={artistState.artist}
               loading={artistState.loading}
@@ -287,7 +284,6 @@ export function SearchDialog({ open, onOpenChange, onAddToQueue, onInsertAfterCu
               <Tabs
                 value={searchType}
                 onValueChange={(v) => {
-                  if (!hostRuntime.collections && v !== 'song') return
                   setSearchType(v as SearchType)
                   resetState()
                   setAddedIds(new Set())
@@ -298,12 +294,8 @@ export function SearchDialog({ open, onOpenChange, onAddToQueue, onInsertAfterCu
                   {supportsArtists && (
                     <TabsTrigger value="artist" className="flex-1 text-xs sm:text-sm">歌手</TabsTrigger>
                   )}
-                  {hostRuntime.collections && (
-                    <>
-                      <TabsTrigger value="album" className="flex-1 text-xs sm:text-sm">专辑</TabsTrigger>
-                      <TabsTrigger value="playlist" className="flex-1 text-xs sm:text-sm">歌单</TabsTrigger>
-                    </>
-                  )}
+                  <TabsTrigger value="album" className="flex-1 text-xs sm:text-sm">专辑</TabsTrigger>
+                  <TabsTrigger value="playlist" className="flex-1 text-xs sm:text-sm">歌单</TabsTrigger>
                 </TabsList>
               </Tabs>
 
@@ -375,9 +367,7 @@ export function SearchDialog({ open, onOpenChange, onAddToQueue, onInsertAfterCu
                                   .join(' · ')}
                                 cover={artist.thumbnailCover ?? artist.cover}
                                 fallback={<User className="text-muted-foreground h-5 w-5" />}
-                                onClick={() => handleSelectArtist(artist)}
-                                disabled={!hostRuntime.collections}
-                              />
+                                onClick={() => handleSelectArtist(artist)}                              />
                             ))
                           : (results as Playlist[]).map((album, index) => (
                               <CollectionRow
@@ -386,9 +376,7 @@ export function SearchDialog({ open, onOpenChange, onAddToQueue, onInsertAfterCu
                                 subtitle={`${album.trackCount} 首${album.creator ? ` · ${album.creator}` : ''}`}
                                 cover={album.thumbnailCover ?? album.cover}
                                 fallback={<ListMusic className="text-muted-foreground h-5 w-5" />}
-                                onClick={() => handleSelectAlbum(album, searchType === 'album' ? 'album' : 'playlist')}
-                                disabled={!hostRuntime.collections}
-                              />
+                                onClick={() => handleSelectAlbum(album, searchType === 'album' ? 'album' : 'playlist')}                              />
                             ))}
                         {hasMore && (
                           <Button

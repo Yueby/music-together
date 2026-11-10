@@ -1,13 +1,15 @@
 import type { HostRuntime } from '../../../../client/src/lib/hostRuntime'
 
-/** The initial host surface uses approved room, audio, metadata and in-memory adapters. */
+/**
+ * Only what the sandbox makes impossible is switched off. Catalog browsing (search, artist pages, albums, playlists)
+ * and artwork work like on the Web, through the reviewed metadata endpoints.
+ */
 export const hostRuntime: HostRuntime = Object.freeze({
   kind: 'mapp',
+  // Music-platform login is not bridged through the platform connection yet.
   platformAccounts: false,
-  collections: false,
   nativeMediaSession: false,
   versionCheck: false,
-  remoteArtwork: false,
   // The platform CSP forbids eval, which PixiJS needs; the mesh renderer is plain WebGL.
   pixiBackground: false,
   clipboard: false,

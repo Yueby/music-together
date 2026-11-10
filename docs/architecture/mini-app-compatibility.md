@@ -104,9 +104,11 @@ SDK 0.3 的受控动态字节读取和 Web Audio 已在早期探针中实测（�
 
 ### 只读搜索、歌词与封面
 
-`shared/mappMetadata.ts` 集中固定 target、query allowlist、严格 schema 与 1MiB 预算。SDK 名称为 `musicSearch`、`musicLyric`、`musicTtml`、`musicCover`，分别对应 `GET /api/music/search`、`GET /api/music/lyric`、`GET /api/music/ttml`、`GET /api/music/cover-proxy`。查询拒绝未知和重复键；schema 解析显式采用 jitless，并沿用 Mapp 的 CSP 初始化策略。
+`shared/mappMetadata.ts` 集中固定 target、query allowlist、严格 schema 与 1MiB 预算。SDK 名称为 `musicSearch`、`musicLyric`、`musicTtml`、`musicCover`、`musicArtist`、`musicArtistSongs`、`musicArtistAlbums`、`musicPlaylist`，分别对应 `GET /api/music/search`、`/lyric`、`/ttml`、`/cover-proxy`、`/artist`、`/artist/songs`、`/artist/albums`、`/playlist`。查询拒绝未知和重复键（畸形转义同样报 `METADATA_QUERY_REJECTED`）；schema 解析显式采用 jitless，并沿用 Mapp 的 CSP 初始化策略。
 
-歌手搜索与歌手主页（`/api/music/artist*`，见 [数据流](data-flow.md)）目前只在网页端提供：客户端用 `hostRuntime.collections` 门控这些入口，微应用宿主该能力为 false，歌手标签和主页不会出现；后续要在微应用里启用，需要在 `mappMetadata.ts` 新增对应只读 target 并在 `platformMetadata.ts` 登记，同时重新评估 1MiB 预算（歌手主页首屏含 50 首歌曲 + 30 张专辑）。
+**新增一个只读接口只改三处，网页端与微应用同时生效**：① `mappMetadataTargets.ts` 加一条 target（路径、SDK 端点名、query 键）；② `mappMetadata.ts` 的 `MAPP_METADATA_SCHEMAS` 加对应严格 schema（`satisfies` 保证每个 target 都有 schema，并让解析结果类型随 target 变化）；③ `platformMetadata.ts` 的 `handlers` 表加处理函数（类型保证每个 JSON target 都有 handler）。manifest 的 endpoints 由 target 表自动生成，平台 JWT 的 `query_keys` 校验读同一张表，`mappMetadata.test.ts` 校验 `queryKeys` 与 schema 的键集合一致，所以不会各写一份而漂移。因为平台签名的是实际发出的键集合，每个 schema 都用默认值保证所有键总是出现（例如 `limit/offset/total`）。
+
+歌手搜索、歌手主页（`/api/music/artist*`，见 [数据流](data-flow.md)）与专辑/歌单详情在微应用里与网页端是同一套界面代码：客户端不再用宿主开关隐藏它们，请求经上面的 target 走 SDK。歌手主页首屏（50 首歌曲 + 30 张专辑）和歌单分页（`MAPP_PLAYLIST_PAGE_MAX = 200` 首/页，网页端同样按 200 分页，保证行为一致）都在 1MiB 预算内。
 
 Web 的 `metadataFetch` 默认原样委托 fetch；搜索、歌词 Hook 改用这一窄入口。`createMappMetadataFetch` 只调用 SDK bytes API，校验审核 origin、GET、JSON MIME、UTF-8、响应大小及 20 秒时限，传播取消并隔离晚结果。不会转发 credentials，也不会把任何外部 URL 当作网络目标。
 
@@ -122,7 +124,7 @@ TTML 逐词歌词走第四个只读端点 `musicTtml`（`GET /api/music/ttml?sou
 
 限流不再手写：验签通过后设置 `req.identityUserId`，复用 `httpRateLimiter.ts` 的 `musicApiRateLimit`（每分钟 120 次，按身份分桶），可通过 `rateLimit` 选项替换。因路由自带该限流器，正式装配时须挂在通用 `/api/music` 限流器之前，避免重复计数。未验证请求的洪泛防护交给 Cloudflare 等入口层。
 
-公共歌单详情仍需先核实并隔离授权缓存与 album/playlist 作用域；个人歌单和账号不进入此通道。平台权限不从网页任意 URL 路径推导：图片只经封面端点、TTML 只经 `musicTtml`，二者都由服务端固定上游。
+歌单缓存已按"类型 + 凭据"隔离（`playlistCacheKey`：专辑与歌单同号不再串，带账号 Cookie 取到的私有歌单只属于该 Cookie，Cookie 本身不进缓存键）；公共 `musicPlaylist` 端点始终匿名读取（不带 `roomId`，服务端传 `null` Cookie），私有歌单不可能经它泄漏。个人歌单和账号登录仍不进入此通道，见下节"账号"计划。平台权限不从网页任意 URL 路径推导：图片只经封面端点、TTML 只经 `musicTtml`，二者都由服务端固定上游。服务端对这些端点的失败一律以 503（不用 502/504）加固定 `code` 返回，避免 Cloudflare 把响应换成没有 CORS 头的页面。
 
 ### 宿主组合
 
@@ -136,7 +138,9 @@ TTML 逐词歌词走第四个只读端点 `musicTtml`（`GET /api/music/ttml?sou
 
 ## 宿主能力与独立产物
 
-Web hostRuntime 保留全部原能力。初始 Mapp profile 仅启用已接入的房间、SDK 音频和公开搜索/歌词：账号与集合详情、系统 MediaSession、版本轮询、剪贴板及外链按宿主策略关闭。封面不直连 CDN，而是经 `musicCover` 读字节转 Blob URL；封面读取失败时回退本地图标占位。现有 Web 导航、图片、账号与分享行为保留。
+Web hostRuntime 保留全部原能力。`hostRuntime` 只记录**宿主确实做不到的事**，不是功能开关："一次制作，到处打包"，功能不得因宿主而被隐藏。Mapp 现在关闭的只有：系统 MediaSession、版本轮询、剪贴板（无法复制房间号，只能显示）、外链、PixiJS 背景（禁止 eval），以及**尚未接通的音乐平台账号登录**（`platformAccounts`，后续在平台连接上桥接，见下）。搜索、歌手、专辑/歌单详情已与网页端一致。封面不直连 CDN，而是经 `musicCover` 读字节转 Blob URL（所有列表、歌手头像都走同一个 `useArtworkUrl`）；封面读取失败时回退本地图标占位。
+
+音乐平台账号（二维码/Cookie 登录、个人歌单）在微应用里的计划：沿用已有的 Socket.IO `auth:*` 事件而不是 REST，需要在平台连接的事件白名单里开放这些事件、按平台身份而非连接隔离 Cookie 池，并用宿主存储适配保存登录态；这一步会放开此前"账号不进入平台连接"的限制，需要补服务端身份与作用域校验及测试后再启用。
 
 ### 平台运行环境限制与兜底
 
@@ -151,7 +155,7 @@ Web hostRuntime 保留全部原能力。初始 Mapp profile 仅启用已接入�
 
 真实 JS 产物另经离线 DOM／模拟 SDK 冒烟：大厅成功挂载，原样 Engine.IO/Socket.IO 握手后请求房间列表，lifecycle.ready 只在 UI commit 后通知，pagehide 关闭 SDK 连接。在该测试中禁止原生网络发送、音频创建、Cookie/原生存储、eval/Function 与 innerHTML 写入，未触发这些调用；Socket.IO 的空 XHR 特性探测与请求发送分开处理。此测试不替代官方平台 VM、真实 JWT、设备音频或跨端同房现场验收。
 
-产物为 `dist/client-web`、`dist/client-package`。client manifest 仅 `user.read`、`audio.webAudio`、`network.websocket`、`network.request`，声明 roomSocket、roomAudio、musicSearch、musicLyric、musicTtml、musicCover；不含 remote_assets 或额外权限。打包继续由官方 SDK 校验（ZIP/单文件 32MiB、展开 128MiB）。共享纯 target 数据与 manifest 解析均独立于 CLI，避免打包入口循环加载。
+产物为 `dist/client-web`、`dist/client-package`。client manifest 仅 `user.read`、`audio.webAudio`、`network.websocket`、`network.request`，声明 roomSocket、roomAudio、musicSearch、musicLyric、musicTtml、musicCover、musicArtist、musicArtistSongs、musicArtistAlbums、musicPlaylist；不含 remote_assets 或额外权限。打包继续由官方 SDK 校验（ZIP/单文件 32MiB、展开 128MiB）。共享纯 target 数据与 manifest 解析均独立于 CLI，避免打包入口循环加载。
 
 ## 验证与发布门禁
 

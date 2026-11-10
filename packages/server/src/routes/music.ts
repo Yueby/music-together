@@ -23,6 +23,7 @@ import {
   getArtistSongsMetadata,
   getMusicLyricMetadata,
   getMusicTtmlMetadata,
+  getPlaylistPageMetadata,
   searchMusicMetadata,
 } from '../controllers/musicMetadataController.js'
 
@@ -140,8 +141,7 @@ router.get(
       cookie = authService.getUserCookie(identityUserId, source, roomId)
     }
 
-    const result = await musicProvider.getPlaylistPage(source, id, limit, offset, total, cookie, type)
-    res.json({ tracks: result.tracks, total: result.total, offset, hasMore: result.hasMore })
+    res.json(await getPlaylistPageMetadata({ source, id, limit, offset, total, type }, cookie))
   }),
 )
 

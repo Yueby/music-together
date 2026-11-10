@@ -41,6 +41,22 @@ const endpoints = {
     url: 'https://rooms.example.com/api/music/cover-proxy',
     method: 'GET', query: ['url'], auth: 'platform',
   },
+  musicArtist: {
+    url: 'https://rooms.example.com/api/music/artist',
+    method: 'GET', query: ['source', 'id'], auth: 'platform',
+  },
+  musicArtistSongs: {
+    url: 'https://rooms.example.com/api/music/artist/songs',
+    method: 'GET', query: ['source', 'id', 'offset', 'limit'], auth: 'platform',
+  },
+  musicArtistAlbums: {
+    url: 'https://rooms.example.com/api/music/artist/albums',
+    method: 'GET', query: ['source', 'id', 'offset', 'limit'], auth: 'platform',
+  },
+  musicPlaylist: {
+    url: 'https://rooms.example.com/api/music/playlist',
+    method: 'GET', query: ['source', 'id', 'type', 'limit', 'offset', 'total'], auth: 'platform',
+  },
 }
 const websockets = { roomSocket: { url: roomUrl, auth: 'platform' } }
 
