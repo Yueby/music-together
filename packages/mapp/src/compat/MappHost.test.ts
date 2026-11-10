@@ -385,6 +385,29 @@ describe('MappHost metadata lifetime', () => {
     expect(forwarded.signal?.aborted).toBe(true)
   })
 
+  it('still links the caller signal on engines without AbortSignal.any', async () => {
+    const original = Object.getOwnPropertyDescriptor(AbortSignal, 'any')!
+    // An older WebView simply has no static `any`.
+    Object.defineProperty(AbortSignal, 'any', { value: undefined, configurable: true, writable: true })
+    try {
+      const f = fixture()
+      const host = f.make()
+      const caller = new AbortController()
+      expect(await host.metadataFetch('/fixture', { signal: caller.signal })).toBe(response)
+      const forwarded = f.fetchMetadata.mock.calls[0][1]!.signal!
+      expect(forwarded.aborted).toBe(false)
+      caller.abort()
+      expect(forwarded.aborted).toBe(true)
+      // An already-aborted caller aborts the combined signal immediately.
+      const done = new AbortController()
+      done.abort()
+      await host.metadataFetch('/fixture', { signal: done.signal })
+      expect(f.fetchMetadata.mock.calls[1][1]!.signal!.aborted).toBe(true)
+    } finally {
+      Object.defineProperty(AbortSignal, 'any', original)
+    }
+  })
+
   it('aborts in-flight requests before closing the session and rejects new requests', async () => {
     const f = fixture()
     f.fetchMetadata.mockReturnValue(new Promise(() => {}))
@@ -467,6 +490,22 @@ describe('MappHost exclusive ownership and cleanup', () => {
     expect(host.dispose()).toBe(closing)
     expect(storageBackend.getItem('mt-userId')).toBeNull()
     expect(storageBackend.getItem('mt-theme')).toBeNull()
+    expect(() => f.make()).not.toThrow()
+  })
+
+  it('keeps closing the remaining resources when the websocket fails to close, then reports that failure', async () => {
+    const f = fixture()
+    const host = f.make()
+    f.joined()
+    host.playbackSoundFactory.create(track, soundOptions)
+    vi.mocked(f.session.dispose).mockImplementation(() => {
+      throw new Error('half-closed socket')
+    })
+    await expect(host.dispose()).rejects.toThrow('half-closed socket')
+    // Nothing after the failing step was skipped: covers, the current sound and the AudioContext are all released.
+    expect(f.covers.dispose).toHaveBeenCalledTimes(1)
+    expect(f.handles[0].unload).toHaveBeenCalledTimes(1)
+    expect(f.audio.dispose).toHaveBeenCalledTimes(1)
     expect(() => f.make()).not.toThrow()
   })
 

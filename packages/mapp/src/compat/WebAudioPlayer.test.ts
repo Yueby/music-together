@@ -466,6 +466,23 @@ describe('micro-app Web Audio player', () => {
     await player.dispose()
   })
 
+  it('still reports a successful unlock when track work is cancelled while resume is pending', async () => {
+    const { player, context } = await loaded()
+    const pending = player.unlock()
+    // A track change (cancel/pause/seek) while resume() is in flight invalidates track work, not the context.
+    player.cancelPendingOperations()
+    expect(await pending).toBe(true)
+    expect(context.state).toBe('running')
+    await player.dispose()
+  })
+
+  it('does not claim an unlock that finished after the player was closed', async () => {
+    const { player } = await loaded()
+    const pending = player.unlock()
+    await player.dispose()
+    expect(await pending).toBe(false)
+  })
+
   it('resolves authoritative position after resume and can invalidate pending work without stopping active audio', async () => {
     const { player, sources } = await loaded(true)
     let target = 1

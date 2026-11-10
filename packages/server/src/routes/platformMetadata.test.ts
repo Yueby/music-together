@@ -201,9 +201,11 @@ describe('platform cover target', () => {
   })
 
   it.each([
-    [{ ok: false, status: 403, error: 'Host not allowed' }, 403, 'METADATA_COVER_HOST_REJECTED'],
-    [{ ok: false, status: 413, error: 'Invalid or oversized image' }, 502, 'METADATA_COVER_REJECTED'],
-    [{ ok: false, status: 404, error: 'Upstream fetch failed' }, 502, 'METADATA_COVER_FAILED'],
+    [{ ok: false, status: 403, error: 'Host not allowed', kind: 'host' }, 403, 'METADATA_COVER_HOST_REJECTED'],
+    [{ ok: false, status: 413, error: 'Invalid or oversized image', kind: 'invalid' }, 502, 'METADATA_COVER_REJECTED'],
+    [{ ok: false, status: 404, error: 'Upstream fetch failed', kind: 'upstream' }, 502, 'METADATA_COVER_FAILED'],
+    // An expired or hotlink-protected image is an upstream failure, not an allowlist problem.
+    [{ ok: false, status: 403, error: 'Upstream fetch failed', kind: 'upstream' }, 502, 'METADATA_COVER_FAILED'],
   ])('maps upstream result %# to a fixed code without leaking details', async (result, status, code) => {
     const f = fixture({ raw: coverRaw })
     f.cover.mockResolvedValue(result)

@@ -6,7 +6,7 @@ import {
   searchMusicMetadata,
 } from '../controllers/musicMetadataController.js'
 import { coverProxyRateLimit, musicApiRateLimit } from '../middleware/httpRateLimiter.js'
-import { fetchPlatformCover, type CoverResult } from '../services/coverProxy.js'
+import { fetchPlatformCover, type CoverFailure, type CoverResult } from '../services/coverProxy.js'
 import { withTimeout } from '../utils/withTimeout.js'
 
 export interface MusicMetadataIdentityInput {
@@ -70,9 +70,9 @@ function sendError(res: Response, error: unknown): void {
 }
 
 /** Fixed codes only; the upstream status and body never reach the platform client. */
-function coverError(status: number): MetadataError {
-  if (status === 403) return new MetadataError(403, 'METADATA_COVER_HOST_REJECTED')
-  if (status === 413) return new MetadataError(502, 'METADATA_COVER_REJECTED')
+function coverError(kind: CoverFailure): MetadataError {
+  if (kind === 'host') return new MetadataError(403, 'METADATA_COVER_HOST_REJECTED')
+  if (kind === 'invalid') return new MetadataError(502, 'METADATA_COVER_REJECTED')
   return new MetadataError(502, 'METADATA_COVER_FAILED')
 }
 
@@ -170,7 +170,7 @@ export function createPlatformMetadataRouter(options: Options): RouterType {
       if (parsed.kind === 'cover') {
         const work = Promise.resolve().then(() => cover(parsed.query.url))
         const result = await withTimeout(work, REQUEST_TIMEOUT_MS, new MetadataError(504, 'METADATA_TIMEOUT'))
-        if (!result.ok) throw coverError(result.status)
+        if (!result.ok) throw coverError(result.kind)
         res.setHeader('X-Content-Type-Options', 'nosniff')
         res.status(200).type(result.contentType).send(result.body)
         return

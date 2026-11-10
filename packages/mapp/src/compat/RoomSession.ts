@@ -155,6 +155,8 @@ export function createMappRoomSession(options: MappRoomSessionOptions): MappRoom
       publish({
         connected: true,
         status: pending ? (pending.kind === 'create' ? 'creating' : 'joining') : restingStatus(),
+        // A transient connect failure is over once the socket is connected and the identity confirmed again.
+        ...(snapshot.errorCode === 'CONNECT_FAILED' ? { errorCode: null } : {}),
       })
       return
     }

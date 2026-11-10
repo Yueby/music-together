@@ -18,7 +18,7 @@ function isPlainHttpsUrl(value: string): boolean {
   if (/[\s\x00-\x1f\x7f#]/.test(value)) return false
   try {
     const url = new URL(value)
-    return url.protocol === 'https:' && !url.username && !url.password
+    return url.protocol === 'https:' && !url.username && !url.password && url.port === ''
   } catch {
     return false
   }

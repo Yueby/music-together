@@ -34,7 +34,7 @@ function fixture() {
 }
 
 describe('selected micro-app host modules', () => {
-  it('fails closed before binding without creating a native fallback or another owner', () => {
+  it('fails closed before binding without creating a native fallback or another owner', async () => {
     const native = vi.fn(() => {
       throw new Error('NATIVE_TRIPWIRE')
     })
@@ -43,7 +43,10 @@ describe('selected micro-app host modules', () => {
     expect(() => getMappHost()).toThrow('MAPP_BINDINGS_REQUIRED')
     expect(() => isAudioUnlocked()).toThrow('MAPP_BINDINGS_REQUIRED')
     expect(() => roomCommands.leave(f.bound.session.socket)).toThrow('MAPP_BINDINGS_REQUIRED')
-    expect(() => metadataFetch('/api/music/search')).toThrow('MAPP_BINDINGS_REQUIRED')
+    // Reported through the promise, so callers' `.then(ok, fail)` / try-catch see it instead of a synchronous throw.
+    const pending = metadataFetch('/api/music/search')
+    expect(pending).toBeInstanceOf(Promise)
+    await expect(pending).rejects.toThrow('MAPP_BINDINGS_REQUIRED')
     expect(native).not.toHaveBeenCalled()
     expect(f.host.connect).not.toHaveBeenCalled()
     expect(f.host.dispose).not.toHaveBeenCalled()

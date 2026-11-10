@@ -131,6 +131,15 @@ describe('Mapp room session', () => {
     expect(fake.connect).toHaveBeenCalledTimes(1)
   })
 
+  it('clears a transient connect failure once the socket is connected with a confirmed identity again', () => {
+    session.connect()
+    fake.fire('connect_error', new Error('transient'))
+    expect(session.snapshot).toMatchObject({ connected: false, status: 'disconnected', errorCode: 'CONNECT_FAILED' })
+    fake.open('socket-2')
+    fake.identity()
+    expect(session.snapshot).toMatchObject({ connected: true, status: 'ready', errorCode: null })
+  })
+
   it('accepts identity before the connect callback without deriving identity from socket.id or nickname', () => {
     session.connect()
     fake.identity()

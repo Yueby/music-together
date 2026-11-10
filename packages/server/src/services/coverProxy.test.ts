@@ -38,10 +38,21 @@ describe('fetchCoverImage', () => {
         ok: false,
         status: 403,
         error: 'Host not allowed',
+        kind: 'host',
       })
       expect(fetch).not.toHaveBeenCalled()
     },
   )
+
+  it.each([
+    'https://p1.music.126.net:8443/a.png',
+    'https://y.gtimg.cn:22/a.png',
+    'https://user:pass@p1.music.126.net/a.png',
+  ])('refuses an allowlisted host on a custom port or with credentials: %s', async (target) => {
+    const fetch = fetcher(image())
+    await expect(fetchCoverImage(target, undefined, fetch)).resolves.toMatchObject({ ok: false, kind: 'host' })
+    expect(fetch).not.toHaveBeenCalled()
+  })
 
   it('lets an invalid URL or a network failure propagate for the caller to map', async () => {
     await expect(fetchCoverImage('not a url', undefined, fetcher(image()))).rejects.toThrow()
@@ -54,7 +65,22 @@ describe('fetchCoverImage', () => {
       ok: false,
       status: 404,
       error: 'Upstream fetch failed',
+      kind: 'upstream',
     })
+  })
+
+  it.each([
+    ['an upstream error', () => new Response('nope', { status: 500 })],
+    ['a non-image body', () => new Response('<html>', { headers: { 'content-type': 'text/html' } })],
+    [
+      'an oversized declared length',
+      () => new Response('x', { headers: { 'content-type': 'image/png', 'content-length': String(MAX_WEB_COVER_BYTES + 1) } }),
+    ],
+  ])('releases the upstream body on %s', async (_name, make) => {
+    const response = make()
+    const cancel = vi.spyOn(response.body!, 'cancel')
+    await fetchCoverImage(url, undefined, fetcher(response))
+    expect(cancel).toHaveBeenCalledOnce()
   })
 
   describe('redirects', () => {
@@ -73,12 +99,14 @@ describe('fetchCoverImage', () => {
       'http://p2.music.126.net/a.jpg',
       'https://127.0.0.1/a.jpg',
       'https://p2.music.126.net.evil.test/a.jpg',
+      'https://p2.music.126.net:8443/a.jpg',
     ])('refuses a redirect to %s without contacting it', async (location) => {
       const fetch = vi.fn<typeof fetch>().mockResolvedValue(redirect(location))
       await expect(fetchCoverImage(url, undefined, fetch)).resolves.toEqual({
         ok: false,
         status: 403,
         error: 'Host not allowed',
+        kind: 'host',
       })
       expect(fetch).toHaveBeenCalledOnce()
     })
@@ -97,6 +125,7 @@ describe('fetchCoverImage', () => {
       ok: false,
       status: 413,
       error: 'Invalid or oversized image',
+      kind: 'invalid',
     })
   })
 
@@ -121,6 +150,7 @@ describe('fetchCoverImage', () => {
       ok: false,
       status: 413,
       error: 'Image too large',
+      kind: 'invalid',
     })
     expect(cancel).toHaveBeenCalledOnce()
     expect(sent).toBeLessThan(10)
