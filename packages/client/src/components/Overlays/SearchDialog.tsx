@@ -13,18 +13,24 @@ import { PLATFORM_ACTIVE, PLATFORM_TEXT } from '@/lib/platform'
 import { cn, trackKey } from '@/lib/utils'
 import { hostRuntime } from '@/lib/hostRuntime'
 import { useRoomStore } from '@/stores/roomStore'
-import { useSearch } from '@/hooks/useSearch'
+import { useSearch, type SearchType } from '@/hooks/useSearch'
+import { useArtist } from '@/hooks/useArtist'
 import { usePlaylist } from '@/hooks/usePlaylist'
 import { useSocketContext } from '@/providers/SocketProvider'
 import { EVENTS } from '@music-together/shared'
-import type { MusicSource, Track, Playlist } from '@music-together/shared'
-import { Loader2, Music2, Search, ListMusic } from 'lucide-react'
+import type { Artist, MusicSource, Track, Playlist } from '@music-together/shared'
+import { Loader2, Music2, Search, ListMusic, User } from 'lucide-react'
 import { motion } from 'motion/react'
 import { useCallback, useLayoutEffect, useMemo, useRef, useState, useEffect } from 'react'
 import { toast } from 'sonner'
+import { ArtistDetail } from './ArtistDetail'
+import { CollectionRow } from './CollectionRow'
 import { PlaylistDetail } from './Settings/PlaylistDetail'
 
 const EMPTY_QUEUE: Track[] = []
+
+/** Artist pages are backed by NetEase data only. */
+const ARTIST_SOURCES: readonly MusicSource[] = ['netease']
 
 const SOURCES: { id: MusicSource; label: string }[] = [
   { id: 'netease', label: '网易云' },
@@ -41,7 +47,7 @@ interface SearchDialogProps {
 
 export function SearchDialog({ open, onOpenChange, onAddToQueue, onInsertAfterCurrent }: SearchDialogProps) {
   const [source, setSource] = useState<MusicSource>('netease')
-  const [searchType, setSearchType] = useState<'song' | 'album' | 'playlist'>('song')
+  const [searchType, setSearchType] = useState<SearchType>('song')
   const [keyword, setKeyword] = useState('')
   const [addedIds, setAddedIds] = useState<Set<string>>(new Set())
   const listRef = useRef<VirtualTrackListRef>(null)
@@ -51,8 +57,11 @@ export function SearchDialog({ open, onOpenChange, onAddToQueue, onInsertAfterCu
   const queueKeys = useMemo(() => new Set(queue.map(trackKey)), [queue])
   const { socket } = useSocketContext()
 
-  // Album Detail view state
+  // Detail views: an artist page (kept while one of its albums is open on top of it) and an album/playlist.
+  const [artistOpen, setArtistOpen] = useState(false)
+  const artistState = useArtist()
   const [selectedAlbum, setSelectedAlbum] = useState<Playlist | null>(null)
+  const supportsArtists = hostRuntime.collections && ARTIST_SOURCES.includes(source)
   const {
     playlistTracks,
     playlistTotal,
@@ -98,10 +107,14 @@ export function SearchDialog({ open, onOpenChange, onAddToQueue, onInsertAfterCu
     if (open) requestAnimationFrame(measurePill)
   }, [open, measurePill])
 
-  // Reset album detail when dialog closes
+  // Reset the detail views when the dialog closes
+  const { reset: resetArtist } = artistState
   useEffect(() => {
-    if (!open) setSelectedAlbum(null)
-  }, [open])
+    if (open) return
+    setSelectedAlbum(null)
+    setArtistOpen(false)
+    resetArtist()
+  }, [open, resetArtist])
 
   const handleSearch = (overrideKeyword?: string) => {
     const searchKeyword = (overrideKeyword ?? keyword).trim()
@@ -165,10 +178,29 @@ export function SearchDialog({ open, onOpenChange, onAddToQueue, onInsertAfterCu
     [addedIds, queueKeys],
   )
 
-  const handleSelectAlbum = (album: Playlist) => {
+  const handleSelectAlbum = (album: Playlist, type: 'album' | 'playlist') => {
     if (!hostRuntime.collections) return
     setSelectedAlbum(album)
-    fetchPlaylistTracks(source, album.id, album.trackCount, searchType as 'album' | 'playlist')
+    fetchPlaylistTracks(source, album.id, album.trackCount, type)
+  }
+
+  const { load: loadArtist } = artistState
+  const handleSelectArtist = (artist: Artist) => {
+    if (!hostRuntime.collections) return
+    setArtistOpen(true)
+    void loadArtist(source, artist.id, artist)
+  }
+
+  /** A song row's artist name: open the artist search where artist pages exist, else search that name as songs. */
+  const handleArtistNameClick = (name: string) => {
+    if (supportsArtists) {
+      setAddedIds(new Set())
+      setKeyword(name)
+      setSearchType('artist')
+      return
+    }
+    setSearchType('song')
+    handleSearch(name)
   }
 
   return (
@@ -177,9 +209,9 @@ export function SearchDialog({ open, onOpenChange, onAddToQueue, onInsertAfterCu
         <ResponsiveDialogHeader>
           <div className="flex items-center gap-3">
             <ResponsiveDialogTitle className="shrink-0">
-              {selectedAlbum ? selectedAlbum.name : '搜索点歌'}
+              {selectedAlbum ? selectedAlbum.name : artistOpen ? (artistState.artist?.name ?? '歌手') : '搜索点歌'}
             </ResponsiveDialogTitle>
-            {!selectedAlbum && (
+            {!selectedAlbum && !artistOpen && (
               <div ref={sourceContainerRef} className="bg-muted/50 relative flex items-center rounded-lg p-0.5">
                 <motion.div
                   className={cn('absolute inset-y-0.5 rounded-md', PLATFORM_ACTIVE[source])}
@@ -196,6 +228,8 @@ export function SearchDialog({ open, onOpenChange, onAddToQueue, onInsertAfterCu
                     )}
                     onClick={() => {
                       setSource(s.id)
+                      // Artist search exists for NetEase only
+                      if (searchType === 'artist' && !ARTIST_SOURCES.includes(s.id)) setSearchType('song')
                       resetState()
                       setAddedIds(new Set())
                     }}
@@ -223,6 +257,30 @@ export function SearchDialog({ open, onOpenChange, onAddToQueue, onInsertAfterCu
               onAddAll={handleAddBatch}
               onLoadMore={loadMoreTracks}
             />
+          ) : artistOpen && hostRuntime.collections ? (
+            <ArtistDetail
+              artist={artistState.artist}
+              loading={artistState.loading}
+              error={artistState.error}
+              songs={artistState.songs}
+              songsTotal={artistState.songsTotal}
+              songsHasMore={artistState.songsHasMore}
+              songsLoadingMore={artistState.songsLoadingMore}
+              albums={artistState.albums}
+              albumsHasMore={artistState.albumsHasMore}
+              albumsLoadingMore={artistState.albumsLoadingMore}
+              onBack={() => {
+                setArtistOpen(false)
+                resetArtist()
+              }}
+              onRetry={() => artistState.artist && void loadArtist(source, artistState.artist.id, artistState.artist)}
+              onAddTrack={handleAdd}
+              onInsertAfterCurrent={handleInsertAfterCurrent}
+              onAddAll={handleAddBatch}
+              onLoadMoreSongs={() => void artistState.loadMoreSongs()}
+              onLoadMoreAlbums={() => void artistState.loadMoreAlbums()}
+              onSelectAlbum={(album) => handleSelectAlbum(album, 'album')}
+            />
           ) : (
             <>
               {/* Type tabs */}
@@ -230,13 +288,16 @@ export function SearchDialog({ open, onOpenChange, onAddToQueue, onInsertAfterCu
                 value={searchType}
                 onValueChange={(v) => {
                   if (!hostRuntime.collections && v !== 'song') return
-                  setSearchType(v as 'song' | 'album' | 'playlist')
+                  setSearchType(v as SearchType)
                   resetState()
                   setAddedIds(new Set())
                 }}
               >
                 <TabsList className="w-full">
                   <TabsTrigger value="song" className="flex-1 text-xs sm:text-sm">单曲</TabsTrigger>
+                  {supportsArtists && (
+                    <TabsTrigger value="artist" className="flex-1 text-xs sm:text-sm">歌手</TabsTrigger>
+                  )}
                   {hostRuntime.collections && (
                     <>
                       <TabsTrigger value="album" className="flex-1 text-xs sm:text-sm">专辑</TabsTrigger>
@@ -249,7 +310,15 @@ export function SearchDialog({ open, onOpenChange, onAddToQueue, onInsertAfterCu
               {/* Search input */}
               <div className="flex gap-2">
                 <Input
-                  placeholder={searchType === 'song' ? '搜索歌曲、歌手...' : searchType === 'album' ? '搜索专辑...' : '搜索歌单...'}
+                  placeholder={
+                    searchType === 'song'
+                      ? '搜索歌曲、歌手...'
+                      : searchType === 'artist'
+                        ? '搜索歌手...'
+                        : searchType === 'album'
+                          ? '搜索专辑...'
+                          : '搜索歌单...'
+                  }
                   value={keyword}
                   onChange={(e) => setKeyword(e.target.value)}
                   onKeyDown={(e) => e.key === 'Enter' && handleSearch()}
@@ -275,10 +344,7 @@ export function SearchDialog({ open, onOpenChange, onAddToQueue, onInsertAfterCu
                     isTrackAdded={isTrackAdded}
                     onAddTrack={handleAdd}
                     onInsertAfterCurrent={handleInsertAfterCurrent}
-                    onArtistClick={(artist) => {
-                      setSearchType('song')
-                      handleSearch(artist)
-                    }}
+                    onArtistClick={handleArtistNameClick}
                     emptyIcon={<Music2 className="h-8 w-8" />}
                     emptyMessage="暂无结果，换个关键词试试"
                   />
@@ -295,33 +361,35 @@ export function SearchDialog({ open, onOpenChange, onAddToQueue, onInsertAfterCu
                       </div>
                     ) : (
                       <div className="flex flex-col gap-2">
-                        {(results as Playlist[]).map((album, index) => (
-                          <button
-                            key={`${album.id}-${index}`}
-                            className="hover:bg-accent flex w-full min-w-0 items-center gap-3 overflow-hidden rounded-lg p-2 text-left transition-colors disabled:pointer-events-none disabled:opacity-50"
-                            onClick={() => handleSelectAlbum(album)}
-                            disabled={!hostRuntime.collections}
-                          >
-                            {hostRuntime.remoteArtwork && (album.thumbnailCover ?? album.cover) ? (
-                              <img
-                                src={album.thumbnailCover ?? album.cover}
-                                alt={album.name}
-                                className="h-12 w-12 shrink-0 rounded-md object-cover"
-                                loading="lazy"
+                        {searchType === 'artist'
+                          ? (results as Artist[]).map((artist, index) => (
+                              <CollectionRow
+                                key={`${artist.id}-${index}`}
+                                round
+                                title={artist.name}
+                                subtitle={[
+                                  artist.songCount != null ? `${artist.songCount} 首歌曲` : null,
+                                  artist.albumCount != null ? `${artist.albumCount} 张专辑` : null,
+                                ]
+                                  .filter(Boolean)
+                                  .join(' · ')}
+                                cover={artist.thumbnailCover ?? artist.cover}
+                                fallback={<User className="text-muted-foreground h-5 w-5" />}
+                                onClick={() => handleSelectArtist(artist)}
+                                disabled={!hostRuntime.collections}
                               />
-                            ) : (
-                              <div className="bg-muted flex h-12 w-12 shrink-0 items-center justify-center rounded-md">
-                                <ListMusic className="text-muted-foreground h-5 w-5" />
-                              </div>
-                            )}
-                            <div className="min-w-0 flex-1">
-                              <p className="truncate text-sm font-medium">{album.name}</p>
-                              <p className="text-muted-foreground truncate text-xs">
-                                {album.trackCount} 首{album.creator ? ` · ${album.creator}` : ''}
-                              </p>
-                            </div>
-                          </button>
-                        ))}
+                            ))
+                          : (results as Playlist[]).map((album, index) => (
+                              <CollectionRow
+                                key={`${album.id}-${index}`}
+                                title={album.name}
+                                subtitle={`${album.trackCount} 首${album.creator ? ` · ${album.creator}` : ''}`}
+                                cover={album.thumbnailCover ?? album.cover}
+                                fallback={<ListMusic className="text-muted-foreground h-5 w-5" />}
+                                onClick={() => handleSelectAlbum(album, searchType === 'album' ? 'album' : 'playlist')}
+                                disabled={!hostRuntime.collections}
+                              />
+                            ))}
                         {hasMore && (
                           <Button
                             variant="ghost"

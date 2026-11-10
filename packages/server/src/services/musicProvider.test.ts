@@ -224,3 +224,38 @@ describe('provider cover URL normalization', () => {
     )
   })
 })
+
+describe('ingestNeteaseSongs', () => {
+  const song = (id: number, extra: Record<string, unknown> = {}) => ({
+    id,
+    name: `Song ${id}`,
+    ar: [{ name: 'JJ' }, { name: 'Guest' }],
+    al: { name: 'Album', pic_str: '109951', picUrl: 'https://p3.music.126.net/cover.jpg?param=130y130' },
+    dt: 215_000,
+    fee: 0,
+    ...extra,
+  })
+
+  it('builds registered tracks with the album artwork the response already carries', () => {
+    const [track] = musicProvider.ingestNeteaseSongs([song(1, { fee: 1 })])
+    expect(track).toMatchObject({
+      title: 'Song 1',
+      artist: ['JJ', 'Guest'],
+      album: 'Album',
+      duration: 215,
+      source: 'netease',
+      sourceId: '1',
+      urlId: '1',
+      vip: true,
+      cover: 'https://p3.music.126.net/cover.jpg',
+    })
+    expect(track.thumbnailCover).toContain('120y120')
+  })
+
+  it('skips entries without an id and tolerates a non-array response', () => {
+    expect(musicProvider.ingestNeteaseSongs(undefined)).toEqual([])
+    expect(musicProvider.ingestNeteaseSongs({ songs: [] })).toEqual([])
+    const tracks = musicProvider.ingestNeteaseSongs([null, 'x', { name: 'no id' }, song(2)])
+    expect(tracks.map((t) => t.sourceId)).toEqual(['2'])
+  })
+})

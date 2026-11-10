@@ -106,6 +106,8 @@ SDK 0.3 的受控动态字节读取和 Web Audio 已在早期探针中实测（�
 
 `shared/mappMetadata.ts` 集中固定 target、query allowlist、严格 schema 与 1MiB 预算。SDK 名称为 `musicSearch`、`musicLyric`、`musicTtml`、`musicCover`，分别对应 `GET /api/music/search`、`GET /api/music/lyric`、`GET /api/music/ttml`、`GET /api/music/cover-proxy`。查询拒绝未知和重复键；schema 解析显式采用 jitless，并沿用 Mapp 的 CSP 初始化策略。
 
+歌手搜索与歌手主页（`/api/music/artist*`，见 [数据流](data-flow.md)）目前只在网页端提供：客户端用 `hostRuntime.collections` 门控这些入口，微应用宿主该能力为 false，歌手标签和主页不会出现；后续要在微应用里启用，需要在 `mappMetadata.ts` 新增对应只读 target 并在 `platformMetadata.ts` 登记，同时重新评估 1MiB 预算（歌手主页首屏含 50 首歌曲 + 30 张专辑）。
+
 Web 的 `metadataFetch` 默认原样委托 fetch；搜索、歌词 Hook 改用这一窄入口。`createMappMetadataFetch` 只调用 SDK bytes API，校验审核 origin、GET、JSON MIME、UTF-8、响应大小及 20 秒时限，传播取消并隔离晚结果。不会转发 credentials，也不会把任何外部 URL 当作网络目标。
 
 TTML 逐词歌词走第四个只读端点 `musicTtml`（`GET /api/music/ttml?source=netease|tencent&id=<歌曲 ID>`，id 限 `[A-Za-z0-9_-]{1,64}`）：服务端 `ttmlService` 只拼接 `TTML_DB_BASE_URL/<ncm-lyrics|qq-lyrics>/<id>.ttml`，6 秒总超时。公共库会把 `amlldb.…` 302 到 API 子域，所以手动跟随重定向，但只允许 https、无端口/凭据、主机名属于基础域名同一站点（以基础域名为后缀，基础地址不要指向 `github.io` 这类共享后缀）、最多 3 跳，且每一跳的解析结果都必须是公网地址（尽力防护，fetch 自身会再解析一次）。

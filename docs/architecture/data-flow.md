@@ -273,7 +273,10 @@ Conductor（当前 `hostId` 对应用户）**自适应频率**上报当前播放
 
 | 路径                       | 方法 | 用途                                                                                                    |
 | -------------------------- | ---- | ------------------------------------------------------------------------------------------------------- |
-| `/api/music/search`        | GET  | 搜索单曲/专辑/歌单（QQ 单曲搜索使用 zzc 签名 `musics.fcg` Desktop 协议）                               |
+| `/api/music/search`        | GET  | 搜索单曲/专辑/歌单/歌手（`type=song\|album\|playlist\|artist`；歌手仅网易云；QQ 单曲搜索使用 zzc 签名 `musics.fcg` Desktop 协议） |
+| `/api/music/artist`        | GET  | 歌手主页（仅网易云）：`source` + `id`，返回 `{ artist, songs, albums }`（资料、最热 50 首、首 30 张专辑，并行取数；资料 15 分钟、分页 10 分钟缓存，同一键的并发请求合并为一次上游调用）。上游失败返回 503（不用 502/504，避免 Cloudflare 替换响应），歌手不存在 404，非网易云 400 |
+| `/api/music/artist/songs`  | GET  | 歌手歌曲分页：`source` + `id` + `offset` + `limit`，返回 `{ items, hasMore, total }`（按热度排序） |
+| `/api/music/artist/albums` | GET  | 歌手专辑分页：同上，`items` 为专辑（`Playlist`），点开后复用 `/api/music/playlist?type=album` |
 | `/api/music/url`           | GET  | 解析流媒体 URL（`source` + `id`）                                                                       |
 | `/api/music/lyric`         | GET  | 获取歌词                                                                                                |
 | `/api/music/ttml`          | GET  | TTML 逐词歌词：query `source`（netease/tencent）+ `id`，返回 `{ lines }`（服务端已解析成 AMLL 歌词行；库里没有这首歌时 `lines: null`，仍是 200），上游故障 502。服务端从 `TTML_DB_BASE_URL` 取文件（≤ 512KiB，缓存；库自己会 302 到 API 子域，只允许跟随同站点 https 重定向，最多 3 跳）。网页端与微应用共用 |

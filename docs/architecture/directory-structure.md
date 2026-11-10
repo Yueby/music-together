@@ -54,7 +54,9 @@ src/
 │   ├── VirtualTrackList.tsx     #   共享虚拟滚动曲目列表（@tanstack/react-virtual + 无限加载 + skeleton + 空态，forwardRef 暴露 scrollToTop）
 │   ├── Overlays/
 │   │   ├── QueueDrawer.tsx     #     播放队列抽屉（vaul Drawer，移动端底部/桌面端右侧）
-│   │   ├── SearchDialog.tsx    #     音乐搜索弹窗（VirtualTrackList 虚拟滚动 + 自动无限加载 + AbortController 竞态防护）
+│   │   ├── SearchDialog.tsx    #     音乐搜索弹窗（单曲/歌手/专辑/歌单四个标签；VirtualTrackList 虚拟滚动 + 自动无限加载 + AbortController 竞态防护；歌手/专辑/歌单点进详情视图，专辑可叠在歌手主页之上并返回）
+│   │   ├── ArtistDetail.tsx    #     歌手主页（头像/简介/热门歌曲/专辑两个标签，网易云专用；由 `hostRuntime.collections` 门控）
+│   │   ├── CollectionRow.tsx   #     可点击的结果行（专辑/歌单方形封面，歌手圆形头像）
 │   │   ├── SettingsDialog.tsx  #     设置弹窗（壳，Tab 导航：房间/成员/账号/个人/外观，移动端 nav scrollbar-hide）
 │   │   └── Settings/
 │   │       ├── SettingRow.tsx              # 设置行共享组件
@@ -64,7 +66,8 @@ src/
 │   │       ├── PlatformHub.tsx            # 平台中心（登录 + 歌单浏览 + 导入，替代 PlatformAuthSection）
 │   │       ├── LoginSection.tsx           # 精简版平台登录区域（PlatformHub 子组件）
 │   │       ├── PlaylistSection.tsx        # 歌单列表 + 手动输入（PlatformHub 子组件）
-│   │       ├── PlaylistDetail.tsx         # 歌单详情（header + VirtualTrackList + queueKeys/addedIds 去重 + 动态全部添加过滤重复）
+│   │       ├── PlaylistDetail.tsx         # 歌单/专辑详情（返回行 + TrackCollection）
+│   │       ├── TrackCollection.tsx        # 可分页曲目列表（VirtualTrackList + queueKeys/addedIds 去重 + 动态全部添加过滤重复），歌单、专辑、歌手主页共用
 │   │       ├── ProfileSettingsSection.tsx  # 个人设置（昵称）
 │   │       ├── AppearanceSection.tsx       # 外观设置（歌词 + 背景 + 布局）
 │   │       ├── OtherSettingsSection.tsx    # 其他设置
@@ -126,6 +129,8 @@ src/
 │   ├── useChat.ts              #   聊天消息收发
 │   ├── useLobby.ts             #   大厅房间列表与操作（使用 useSocketEvent）
 │   ├── useQueue.ts             #   播放队列操作（含 addBatchTracks 批量添加）
+│   ├── useArtist.ts            #   歌手主页状态（资料 + 歌曲/专辑各自分页；按"服务端已发出条数"计偏移并去重；代际计数防止慢请求覆盖新歌手）
+│   ├── useSearch.ts            #   搜索/翻页/竞态保护（`SearchType` = song/album/playlist/artist）
 │   ├── usePlaylist.ts          #   歌单管理（用户歌单列表、分页曲目获取 + 无限加载、URL 解析、批量导入）
 │   ├── useIsMobile.ts          #   布局维度：orientation 检测（portrait=竖屏布局，landscape=横屏布局）
 │   ├── useHasHover.ts          #   交互维度：hover 能力检测（(hover: hover) 媒体查询，触控设备=false）
@@ -202,6 +207,7 @@ src/
 │   ├── kugouAuthService.ts    #   酷狗 API 认证（QR 扫码登录 + VIP 检查 + 用户昵称(RSA) + 用户歌单列表 + 歌单歌曲获取；kugouRequest 含 HTTP 状态检查与 JSON 安全解析；自包含签名实现，状态码归一化为 800-803 与网易云统一）
 │   ├── tencentAuthService.ts  #   QQ 音乐认证与通用 zzc 签名请求
 │   ├── kugouLyricService.ts   #   酷狗 KRC 搜索、下载、XOR/压缩解密与逐词解析
+│   ├── artistService.ts       #   网易云歌手搜索与主页（资料 + 最热歌曲 + 专辑并行取数，业务码校验、10 秒超时、带 TTL 的合并缓存；歌曲经 `musicProvider.ingestNeteaseSongs` 登记，之后加入队列与搜索结果一致）
 │   ├── ttmlService.ts         #   TTML 逐词歌词库读取并解析为 AMLL 歌词行（固定上游路径、超时、仅同站点公网重定向、大小上限、命中/缺失/故障分级缓存、并发合并）
 │   ├── voteActionService.ts    #   已通过投票的播放器/队列动作统一执行
 │   └── voteService.ts          #   投票状态、在线成员阈值与当前房主否决权管理
@@ -220,7 +226,7 @@ src/
 │   └── httpRateLimiter.ts      #   音乐 REST / 封面代理 / 平台媒体流的 identity/IP 限流
 │
 ├── routes/                     # Express REST 路由
-│   ├── music.ts                #   GET /api/music/search|url|lyric|cover|playlist|ttml（统一 validated() 路由包装器消除重复 try/catch + Zod 模式）
+│   ├── music.ts                #   GET /api/music/search|url|lyric|cover|playlist|ttml|artist|artist/songs|artist/albums（统一 validated() 路由包装器消除重复 try/catch + Zod 模式）
 │   ├── platformMedia.ts        #   可选 GET /api/mapp/audio（显式身份验证器，默认未挂载）
 │   ├── platformMetadata.ts     #   可选搜索/歌词平台认证（限流复用 musicApiRateLimit），普通 Web Cookie 请求继续原链
 │   └── rooms.ts                #   GET /api/rooms/:roomId/check（房间预检）

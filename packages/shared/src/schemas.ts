@@ -119,7 +119,24 @@ export const searchQuerySchema = z.object({
   keyword: z.string().min(1).max(LIMITS.SEARCH_KEYWORD_MAX_LENGTH),
   limit: z.coerce.number().int().min(1).max(LIMITS.SEARCH_PAGE_SIZE_MAX).default(20),
   page: z.coerce.number().int().min(1).max(LIMITS.SEARCH_PAGE_MAX).default(1),
-  type: z.enum(['song', 'album', 'playlist']).optional().default('song'),
+  type: z.enum(['song', 'album', 'playlist', 'artist']).optional().default('song'),
+})
+
+/** Artist ids are numeric on NetEase; kept as a bounded string like every other platform id. */
+const artistIdSchema = z.string().min(1).max(LIMITS.PLAYLIST_ID_MAX_LENGTH).regex(/^[\w-]+$/, 'Invalid artist id')
+
+/** Artist home page: profile, hot songs and the first page of albums. */
+export const artistQuerySchema = z.object({
+  source: musicSourceSchema,
+  id: artistIdSchema,
+})
+
+/** Further pages of an artist's songs or albums. */
+export const artistPageQuerySchema = z.object({
+  source: musicSourceSchema,
+  id: artistIdSchema,
+  offset: z.coerce.number().int().min(0).max(5000).default(0),
+  limit: z.coerce.number().int().min(1).max(LIMITS.SEARCH_PAGE_SIZE_MAX).default(30),
 })
 
 export const urlQuerySchema = z.object({
