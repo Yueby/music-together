@@ -15,6 +15,6 @@
   "devDependencies": {
     "@types/node": "^26.6.6",
     "typescript": "npm:@typescript/typescript6@~6.0.2",
-    "vite": "^8.3.5"
+    "vite": "^8.3.6"
   }
 }
