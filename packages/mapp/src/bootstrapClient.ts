@@ -1,6 +1,7 @@
 import './cspValidation.ts'
 import { getSDK, type MiniAppSDK } from '@discourse-mini-app/sdk'
 import { createMappHost, type MappHost } from './compat/MappHost.ts'
+import { hydratePersistentStorage } from './compat/storageBackend.ts'
 import { installFormSubmitFallback } from './compat/formSubmitFallback.ts'
 import { installMappHost } from './compat/hostBinding.ts'
 import { installTrustedTypesFallback } from './compat/trustedTypesFallback.ts'
@@ -131,6 +132,11 @@ export function startMappClient(options: MappClientOptions): {
       assertActive()
       await bounded(() => sdk!.ready, deadline - Date.now())
       assertActive()
+      // Restore the saved music-platform logins into the synchronous store before anything reads it.
+      if (sdk.permissions.has('storage.read') && sdk.permissions.has('storage.write')) {
+        await bounded(() => hydratePersistentStorage(sdk!.localStorage), deadline - Date.now())
+        assertActive()
+      }
       host = createMappHost({ endpoint: options.endpoint, reviewedEndpointUrl: options.reviewedEndpointUrl })
       assertActive()
       const releaseHost = installMappHost(host)

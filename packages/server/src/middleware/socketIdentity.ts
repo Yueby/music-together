@@ -32,6 +32,15 @@ const PLATFORM_ROOM_EVENTS = new Set<string>([
   EVENTS.VOTE_START,
   EVENTS.VOTE_CAST,
   EVENTS.NTP_PING,
+  // Music-platform account events. They are safe on this channel because the controllers never trust the client for
+  // identity: the account belongs to the server-verified platform user of this socket (`mapp_…`) and the room it
+  // joined, exactly like a Web user's, and every one of them is rate limited per socket.
+  EVENTS.AUTH_REQUEST_QR,
+  EVENTS.AUTH_CHECK_QR,
+  EVENTS.AUTH_SET_COOKIE,
+  EVENTS.AUTH_LOGOUT,
+  EVENTS.AUTH_GET_STATUS,
+  EVENTS.PLAYLIST_GET_MY,
 ])
 
 function restrictPlatformEvents(socket: TypedSocket): void {
@@ -40,7 +49,7 @@ function restrictPlatformEvents(socket: TypedSocket): void {
       next()
       return
     }
-    // Platform room access never exposes the Web music-credential flow.
+    // Anything outside the reviewed list (including unknown events) is refused.
     socket.emit(EVENTS.ROOM_ERROR, { code: ERROR_CODE.NO_PERMISSION, message: '此接入方式不支持该操作' })
   })
 }

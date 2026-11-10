@@ -190,22 +190,32 @@ describe('attachSocketIdentity', () => {
     expect(web.socket.emit).not.toHaveBeenCalled()
   })
 
-  it('restricts platform connections to room events and keeps credentials out of this channel', async () => {
+  it('lets platform connections use room and music-account events and refuses everything else', async () => {
     const h = setup({ resolvePlatformIdentity: vi.fn().mockResolvedValue({ userId: 'mapp_verified' }) }, platformUrl)
     await h.run()
     expect(h.socket.use).toHaveBeenCalledOnce()
     const guard = vi.mocked(h.socket.use).mock.calls[0]![0]
-    for (const event of [EVENTS.ROOM_JOIN, EVENTS.QUEUE_ADD, EVENTS.PLAYER_PAUSE, EVENTS.NTP_PING]) {
-      const next = vi.fn()
-      guard([event], next)
-      expect(next).toHaveBeenCalledOnce()
-    }
     for (const event of [
+      EVENTS.ROOM_JOIN,
+      EVENTS.QUEUE_ADD,
+      EVENTS.PLAYER_PAUSE,
+      EVENTS.NTP_PING,
       EVENTS.AUTH_REQUEST_QR,
       EVENTS.AUTH_CHECK_QR,
       EVENTS.AUTH_SET_COOKIE,
       EVENTS.AUTH_LOGOUT,
+      EVENTS.AUTH_GET_STATUS,
       EVENTS.PLAYLIST_GET_MY,
+    ]) {
+      const next = vi.fn()
+      guard([event], next)
+      expect(next, String(event)).toHaveBeenCalledOnce()
+    }
+    for (const event of [
+      // Server-to-client events must never be accepted from a client, and unknown events are refused.
+      EVENTS.AUTH_QR_GENERATED,
+      EVENTS.AUTH_MY_STATUS,
+      EVENTS.PLAYLIST_MY_LIST,
       'unknown:event',
     ]) {
       const next = vi.fn()

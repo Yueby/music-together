@@ -188,10 +188,16 @@ describe('platform identity with existing room and queue controllers', () => {
     await command(mini, EVENTS.ROOM_SETTINGS, { name: 'Unauthorized rename' })
     expect(room.name).toBe('Shared fixture room')
     expect(mini.emit).toHaveBeenCalledWith(EVENTS.ROOM_ERROR, expect.anything())
+    // Music-account events are part of the reviewed platform channel: they reach the same controllers a Web user's do.
     const credentials = vi.fn()
     mini.handlers.set(EVENTS.AUTH_SET_COOKIE, credentials)
     await command(mini, EVENTS.AUTH_SET_COOKIE, { platform: 'netease', cookie: 'fixture-only' })
-    expect(credentials).not.toHaveBeenCalled()
+    expect(credentials).toHaveBeenCalledExactlyOnceWith({ platform: 'netease', cookie: 'fixture-only' })
+    // Anything outside the reviewed list is still refused.
+    const unknown = vi.fn()
+    mini.handlers.set('admin:dump', unknown)
+    await command(mini, 'admin:dump', {})
+    expect(unknown).not.toHaveBeenCalled()
   })
 
   it('does not let verified forum identity or matching nickname bypass a Web room password', async () => {

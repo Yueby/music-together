@@ -341,7 +341,8 @@ describe('unmounted roomAudio/platform router', () => {
     expect(mount).toBeLessThan(index.indexOf("app.use('/api', identityHttpMiddleware)"))
     expect(index).not.toContain('/api/mapp/audio')
     expect(music).not.toContain('verifyRoomMedia')
-    expect(music).toContain('getUserCookie')
+    // Account lookup for private playlists lives in the shared controller and is reached through the Web route.
+    expect(music).toContain('getMyPlaylistPageMetadata')
   })
 })
 

@@ -4,9 +4,12 @@ import {
   ttmlQuerySchema,
   artistQuerySchema,
   artistPageQuerySchema,
+  myPlaylistQuerySchema,
   playlistQuerySchema,
 } from '@music-together/shared'
 import { config } from '../config.js'
+import { roomRepo } from '../repositories/roomRepository.js'
+import * as authService from '../services/authService.js'
 import { artistService } from '../services/artistService.js'
 import { musicProvider } from '../services/musicProvider.js'
 import { createTtmlService } from '../services/ttmlService.js'
@@ -15,6 +18,7 @@ export type MusicSearchQuery = ReturnType<typeof searchQuerySchema.parse>
 export type ArtistQuery = ReturnType<typeof artistQuerySchema.parse>
 export type ArtistPageQuery = ReturnType<typeof artistPageQuerySchema.parse>
 export type PlaylistPageQuery = ReturnType<typeof playlistQuerySchema.parse>
+export type MyPlaylistPageQuery = ReturnType<typeof myPlaylistQuerySchema.parse>
 export type MusicLyricQuery = ReturnType<typeof lyricQuerySchema.parse>
 export type MusicTtmlQuery = ReturnType<typeof ttmlQuerySchema.parse>
 export type MusicLyricMetadata = Awaited<ReturnType<typeof musicProvider.getLyric>>
@@ -48,6 +52,26 @@ export async function getPlaylistPageMetadata(
   // 0 means "unknown" (the mini-app always sends the key), exactly like an absent hint.
   const result = await musicProvider.getPlaylistPage(source, id, limit, offset, total || undefined, cookie, type)
   return { tracks: result.tracks, total: result.total, offset, hasMore: result.hasMore }
+}
+
+/** The caller may not read this room's account pool (not logged in, or not a member of the room). */
+export class PlaylistAccessError extends Error {
+  constructor(readonly status: 401 | 403) {
+    super(status === 401 ? 'UNAUTHORIZED' : 'FORBIDDEN')
+    this.name = 'PlaylistAccessError'
+  }
+}
+
+/**
+ * A page of the caller's own playlist. `userId` is the *verified* identity (Web cookie or platform token), never a
+ * client-supplied value; the login used is the one this user put into the room's account pool.
+ */
+export function getMyPlaylistPageMetadata(data: MyPlaylistPageQuery, userId: string | undefined) {
+  if (!userId) throw new PlaylistAccessError(401)
+  const room = roomRepo.get(data.roomId)
+  if (!room || !room.users.some((user) => user.id === userId)) throw new PlaylistAccessError(403)
+  const cookie = authService.getUserCookie(userId, data.source, data.roomId)
+  return getPlaylistPageMetadata(data, cookie)
 }
 
 export function getArtistMetadata(data: ArtistQuery) {

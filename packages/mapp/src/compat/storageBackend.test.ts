@@ -72,21 +72,76 @@ describe('Mapp memory storage backend', () => {
     expect(storageBackend.getItem(key)).toBeNull()
   })
 
-  it.each(['mt-auth-cookies', 'mt-rejoin-token'])(
-    'rejects reads, writes and removals of a sensitive key: %s',
-    (key) => {
-      storageBackend.setItem('mt-nickname', 'nickname-fixture')
-      expect(storageBackend.getItem(key)).toBeNull()
-      storageBackend.setItem(key, 'sensitive-fixture')
-      expect(storageBackend.getItem(key)).toBeNull()
-      storageBackend.setItem(key, 'replacement-fixture')
-      storageBackend.removeItem(key)
-      expect(storageBackend.getItem(key)).toBeNull()
-      expect(storageBackend.getItem('mt-nickname')).toBe('nickname-fixture')
-    },
-  )
+  it('never accepts the rejoin ticket, in memory or anywhere else', () => {
+    storageBackend.setItem('mt-nickname', 'nickname-fixture')
+    expect(storageBackend.getItem('mt-rejoin-token')).toBeNull()
+    storageBackend.setItem('mt-rejoin-token', 'sensitive-fixture')
+    expect(storageBackend.getItem('mt-rejoin-token')).toBeNull()
+    storageBackend.removeItem('mt-rejoin-token')
+    expect(storageBackend.getItem('mt-nickname')).toBe('nickname-fixture')
+  })
 
-  it.each(['', 'nickname', 'userId', 'auth-cookies', 'rejoin-token', 'MT-nickname', 'xmt-nickname'])(
+  describe('persisted music-platform logins', () => {
+    function store(initial: Record<string, string> = {}) {
+      const data = new Map(Object.entries(initial))
+      return {
+        data,
+        getItem: vi.fn(async (key: string) => data.get(key) ?? null),
+        setItem: vi.fn(async (key: string, value: string) => void data.set(key, value)),
+        removeItem: vi.fn(async (key: string) => void data.delete(key)),
+      }
+    }
+
+    it('works as plain memory until the SDK store is attached', () => {
+      storageBackend.setItem('mt-auth-cookies', '[{"platform":"netease"}]')
+      expect(storageBackend.getItem('mt-auth-cookies')).toBe('[{"platform":"netease"}]')
+    })
+
+    it('restores saved logins into the synchronous store and writes changes through', async () => {
+      const sdk = store({ 'mt-auth-cookies': '[{"platform":"qq"}]', 'mt-nickname': 'never-read' })
+      const module = await import('./storageBackend')
+      await module.hydratePersistentStorage(sdk)
+      expect(storageBackend.getItem('mt-auth-cookies')).toBe('[{"platform":"qq"}]')
+      // Only the login key is restored; everything else stays memory-only.
+      expect(storageBackend.getItem('mt-nickname')).toBeNull()
+      storageBackend.setItem('mt-auth-cookies', '[]')
+      storageBackend.setItem('mt-nickname', 'memory-only')
+      expect(sdk.setItem).toHaveBeenCalledExactlyOnceWith('mt-auth-cookies', '[]')
+      storageBackend.removeItem('mt-auth-cookies')
+      expect(sdk.removeItem).toHaveBeenCalledExactlyOnceWith('mt-auth-cookies')
+    })
+
+    it('does not let a failing SDK store break reads or writes', async () => {
+      const sdk = store()
+      sdk.getItem.mockRejectedValue(new Error('IndexedDB unavailable'))
+      sdk.setItem.mockRejectedValue(new Error('quota'))
+      const module = await import('./storageBackend')
+      await expect(module.hydratePersistentStorage(sdk)).resolves.toBeUndefined()
+      expect(() => storageBackend.setItem('mt-auth-cookies', 'x')).not.toThrow()
+      expect(storageBackend.getItem('mt-auth-cookies')).toBe('x')
+    })
+
+    it('stops writing through on unload and keeps the saved copy', async () => {
+      const sdk = store({ 'mt-auth-cookies': 'saved' })
+      const module = await import('./storageBackend')
+      await module.hydratePersistentStorage(sdk)
+      clearMemoryStorage()
+      expect(storageBackend.getItem('mt-auth-cookies')).toBeNull()
+      storageBackend.setItem('mt-auth-cookies', 'after-unload')
+      expect(sdk.setItem).not.toHaveBeenCalled()
+      expect(sdk.removeItem).not.toHaveBeenCalled()
+      expect(sdk.data.get('mt-auth-cookies')).toBe('saved')
+    })
+
+    it('never touches native storage', async () => {
+      const module = await import('./storageBackend')
+      await module.hydratePersistentStorage(store({ 'mt-auth-cookies': 'saved' }))
+      storageBackend.setItem('mt-auth-cookies', 'next')
+      expect(nativeAccess).not.toHaveBeenCalled()
+    })
+  })
+
+  it.each(['', 'nickname', 'userId', 'auth-cookies', 'rejoin-token', 'MT-nickname', 'xmt-nickname', 'mt'])(
     'rejects all operations without the exact prefix: %s',
     (key) => {
       expect(storageBackend.getItem(key)).toBeNull()

@@ -10,20 +10,15 @@ import { metadataFetch } from '@/lib/metadataFetch'
 const PAGE_SIZE = MAPP_PLAYLIST_PAGE_MAX
 
 /**
- * Room scope for a playlist request. It selects the caller's own music account (private lists) and exists only on
- * hosts with account login; the others read public lists anonymously.
+ * Build the playlist API URL. Public lists and albums are anonymous (`/playlist`). The caller's own lists use
+ * `/playlist/mine`, which also needs the room whose account pool holds the caller's music-platform login.
  */
-function playlistRoomScope(): string | undefined {
-  return hostRuntime.platformAccounts ? useRoomStore.getState().room?.id : undefined
-}
-
-/** Build the playlist API URL with all query parameters */
 function buildPlaylistUrl(
   source: MusicSource,
   id: string,
   limit: number,
   offset: number,
-  options?: { total?: number; roomId?: string; type?: 'playlist' | 'album' },
+  options?: { total?: number; type?: 'playlist' | 'album'; personalRoomId?: string },
 ): string {
   const params = new URLSearchParams({
     source,
@@ -32,9 +27,10 @@ function buildPlaylistUrl(
     offset: String(offset),
   })
   if (options?.total) params.set('total', String(options.total))
-  if (options?.roomId) params.set('roomId', options.roomId)
   if (options?.type) params.set('type', options.type)
-  return `${SERVER_URL}/api/music/playlist?${params.toString()}`
+  if (options?.personalRoomId) params.set('roomId', options.personalRoomId)
+  const path = options?.personalRoomId ? 'playlist/mine' : 'playlist'
+  return `${SERVER_URL}/api/music/${path}?${params.toString()}`
 }
 
 /**
@@ -106,7 +102,13 @@ export function usePlaylist() {
   const [loadingMore, setLoadingMore] = useState(false)
 
   // Track current playlist context to prevent stale responses
-  const currentPlaylistRef = useRef<{ source: MusicSource; id: string; type?: 'playlist' | 'album' } | null>(null)
+  const currentPlaylistRef = useRef<{
+    source: MusicSource
+    id: string
+    type?: 'playlist' | 'album'
+    /** Room whose account pool serves this list; set only for the caller's own lists. */
+    personalRoomId?: string
+  } | null>(null)
   const offsetRef = useRef(0)
   const loadingMoreRef = useRef(false)
 
@@ -137,7 +139,15 @@ export function usePlaylist() {
    * Resets all track state immediately to prevent stale data from flashing.
    */
   const fetchPlaylistTracks = useCallback(
-    async (source: MusicSource, playlistId: string, trackCount?: number, type: 'playlist' | 'album' = 'playlist'): Promise<Track[]> => {
+    async (
+      source: MusicSource,
+      playlistId: string,
+      trackCount?: number,
+      type: 'playlist' | 'album' = 'playlist',
+      /** True for the caller's own lists (they may contain private tracks and need the caller's login). */
+      personal = false,
+    ): Promise<Track[]> => {
+      const personalRoomId = personal ? useRoomStore.getState().room?.id : undefined
       // Reset state immediately — prevents flashing old data when switching playlists
       setPlaylistTracks([])
       setPlaylistTotal(0)
@@ -147,14 +157,20 @@ export function usePlaylist() {
       loadingMoreRef.current = false
 
       // Track current context for stale response detection
-      currentPlaylistRef.current = { source, id: playlistId, type }
+      currentPlaylistRef.current = { source, id: playlistId, type, personalRoomId }
       offsetRef.current = 0
+
+      // Own lists need a room; without one there is nothing to read them with.
+      if (personal && !personalRoomId) {
+        setTracksLoading(false)
+        return []
+      }
 
       try {
         const url = buildPlaylistUrl(source, playlistId, PAGE_SIZE, 0, {
           total: trackCount,
-          roomId: playlistRoomScope(),
           type,
+          personalRoomId,
         })
         const res = await metadataFetch(url, { credentials: 'include' })
         if (!res.ok) {
@@ -204,8 +220,8 @@ export function usePlaylist() {
       const offset = offsetRef.current
       const url = buildPlaylistUrl(ctx.source, ctx.id, PAGE_SIZE, offset, {
         total: playlistTotal,
-        roomId: playlistRoomScope(),
         type: ctx.type,
+        personalRoomId: ctx.personalRoomId,
       })
       const res = await metadataFetch(url, { credentials: 'include' })
       if (!res.ok) return

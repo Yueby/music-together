@@ -42,7 +42,7 @@
 - Socket.IO 目标为 `/socket.io/?EIO=4&transport=websocket`，无额外动态 query，令牌唯一。
 - 论坛身份由已验证的 `issuer + sub` 映射为稳定 `mapp_` 命名空间 ID；昵称相同不会绑定网页用户或取得网页房主身份。
 - 接入成功后，新增的 `identity:ready` 仅向该平台连接发送服务器确认的 userId。网页默认路径不发送此事件，不改变既有启动流程。
-- 平台连接只允许房间、队列、播放器、聊天、投票与校时事件。音乐账号 Cookie、二维码登录、退出账号及个人歌单入口不通过此接入通道，避免将网页音乐凭据发送到微应用。
+- 平台连接只允许明确列出的事件：房间、队列、播放器、聊天、投票与校时，以及音乐账号事件（`auth:request_qr` / `check_qr` / `set_cookie` / `logout` / `get_status`、`playlist:get_my`）；服务端到客户端的事件和未知事件一律拒绝。账号事件对应的控制器只认服务端验证过的 socket 身份（`mapp_…` 用户 ID）及其所在房间，登录得到的 Cookie 进入该房间账号池、归属该用户，和网页用户完全一致，且每个 socket 单独限流。
 
 该白名单是平台入口能力边界，不替代房间密码或 CASL 权限判断。真实 Socket.IO socket.id 继续用于连接映射与 conductor 选举，平台身份 ID 用于持久成员和房主识别。
 
@@ -138,9 +138,12 @@ TTML 逐词歌词走第四个只读端点 `musicTtml`（`GET /api/music/ttml?sou
 
 ## 宿主能力与独立产物
 
-Web hostRuntime 保留全部原能力。`hostRuntime` 只记录**宿主确实做不到的事**，不是功能开关："一次制作，到处打包"，功能不得因宿主而被隐藏。Mapp 现在关闭的只有：系统 MediaSession、版本轮询、剪贴板（无法复制房间号，只能显示）、外链、PixiJS 背景（禁止 eval），以及**尚未接通的音乐平台账号登录**（`platformAccounts`，后续在平台连接上桥接，见下）。搜索、歌手、专辑/歌单详情已与网页端一致。封面不直连 CDN，而是经 `musicCover` 读字节转 Blob URL（所有列表、歌手头像都走同一个 `useArtworkUrl`）；封面读取失败时回退本地图标占位。
+Web hostRuntime 保留全部原能力。`hostRuntime` 只记录**宿主确实做不到的事**，不是功能开关："一次制作，到处打包"，功能不得因宿主而被隐藏。Mapp 现在关闭的只有：系统 MediaSession、版本轮询、剪贴板（无法复制房间号，只能显示）、外链、PixiJS 背景（禁止 eval）。搜索、歌手、专辑/歌单详情和音乐账号登录（`platformAccounts` 为 true）已与网页端一致。封面不直连 CDN，而是经 `musicCover` 读字节转 Blob URL（所有列表、歌手头像都走同一个 `useArtworkUrl`）；封面读取失败时回退本地图标占位。
 
-音乐平台账号（二维码/Cookie 登录、个人歌单）在微应用里的计划：沿用已有的 Socket.IO `auth:*` 事件而不是 REST，需要在平台连接的事件白名单里开放这些事件、按平台身份而非连接隔离 Cookie 池，并用宿主存储适配保存登录态；这一步会放开此前"账号不进入平台连接"的限制，需要补服务端身份与作用域校验及测试后再启用。
+**音乐平台账号**（二维码/Cookie 登录、VIP 状态、个人歌单）在微应用里与网页端是同一套界面（房间顶栏的"音乐账号"，`AccountDialog`）。登录本来就在服务端完成（服务端调用网易云/QQ/酷狗，前端只显示二维码），因此走已有的 Socket.IO `auth:*` 事件，不新增 REST；个人歌单曲目走 `musicMyPlaylist`（`GET /api/music/playlist/mine`，必须带 `roomId`，服务端从验证过的身份查该用户在该房间账号池里的登录，没有登录则匿名读取；响应 `private, no-store`，缓存键按凭据隔离），公开歌单和专辑走匿名的 `musicPlaylist`。
+
+- **登录态保存**：网页端把 `mt-auth-cookies` 存在 localStorage 并在重开后自动恢复。微应用的存储适配器是同步接口，所以 `bootstrapClient` 在宿主创建前用 SDK 的异步 `localStorage`（IndexedDB，按应用与沙箱/正式隔离）把这一个键预读进内存，之后写入同步落盘；其余设置和重连票据仍只在内存。manifest 因此新增 `storage.read` / `storage.write` 两项权限（需要平台审核），没有授予权限时退化为只在本次会话内有效。
+- **二维码图片**：服务端返回 base64 `data:` 图片，沙箱 CSP 拦截 `data:` 图片，所以界面统一把它转成 Blob URL（`dataUrlToBlob` 只接受 png/jpeg/gif/webp 的 base64，不接受 SVG）显示，网页端同样使用。
 
 ### 平台运行环境限制与兜底
 
@@ -155,7 +158,7 @@ Web hostRuntime 保留全部原能力。`hostRuntime` 只记录**宿主确实做
 
 真实 JS 产物另经离线 DOM／模拟 SDK 冒烟：大厅成功挂载，原样 Engine.IO/Socket.IO 握手后请求房间列表，lifecycle.ready 只在 UI commit 后通知，pagehide 关闭 SDK 连接。在该测试中禁止原生网络发送、音频创建、Cookie/原生存储、eval/Function 与 innerHTML 写入，未触发这些调用；Socket.IO 的空 XHR 特性探测与请求发送分开处理。此测试不替代官方平台 VM、真实 JWT、设备音频或跨端同房现场验收。
 
-产物为 `dist/client-web`、`dist/client-package`。client manifest 仅 `user.read`、`audio.webAudio`、`network.websocket`、`network.request`，声明 roomSocket、roomAudio、musicSearch、musicLyric、musicTtml、musicCover、musicArtist、musicArtistSongs、musicArtistAlbums、musicPlaylist；不含 remote_assets 或额外权限。打包继续由官方 SDK 校验（ZIP/单文件 32MiB、展开 128MiB）。共享纯 target 数据与 manifest 解析均独立于 CLI，避免打包入口循环加载。
+产物为 `dist/client-web`、`dist/client-package`。client manifest 仅 `user.read`、`audio.webAudio`、`network.websocket`、`network.request`、`storage.read`、`storage.write`，声明 roomSocket、roomAudio、musicSearch、musicLyric、musicTtml、musicCover、musicArtist、musicArtistSongs、musicArtistAlbums、musicPlaylist；不含 remote_assets 或额外权限。打包继续由官方 SDK 校验（ZIP/单文件 32MiB、展开 128MiB）。共享纯 target 数据与 manifest 解析均独立于 CLI，避免打包入口循环加载。
 
 ## 验证与发布门禁
 

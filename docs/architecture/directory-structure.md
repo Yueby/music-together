@@ -130,6 +130,7 @@ src/
 │   ├── useChat.ts              #   聊天消息收发
 │   ├── useLobby.ts             #   大厅房间列表与操作（使用 useSocketEvent）
 │   ├── useQueue.ts             #   播放队列操作（含 addBatchTracks 批量添加）
+│   ├── useDataImageUrl.ts      #   base64 data: 图片 → Blob URL（登录二维码；沙箱 CSP 拦截 data: 图片）
 │   ├── useArtist.ts            #   歌手主页状态（资料 + 歌曲/专辑各自分页；按"服务端已发出条数"计偏移并去重；代际计数防止慢请求覆盖新歌手）
 │   ├── useSearch.ts            #   搜索/翻页/竞态保护（`SearchType` = song/album/playlist/artist）
 │   ├── usePlaylist.ts          #   歌单管理（用户歌单列表、分页曲目获取 + 无限加载、URL 解析、批量导入）
