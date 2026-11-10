@@ -1,6 +1,7 @@
 import './cspValidation.ts'
 import { getSDK, type MiniAppSDK } from '@discourse-mini-app/sdk'
 import { createMappHost, type MappHost } from './compat/MappHost.ts'
+import { installFormSubmitFallback } from './compat/formSubmitFallback.ts'
 import { installMappHost } from './compat/hostBinding.ts'
 
 export interface MappClientOptions {
@@ -131,7 +132,12 @@ export function startMappClient(options: MappClientOptions): {
       assertActive()
       host = createMappHost({ endpoint: options.endpoint, reviewedEndpointUrl: options.reviewedEndpointUrl })
       assertActive()
-      unbind = installMappHost(host)
+      const releaseHost = installMappHost(host)
+      const releaseForms = installFormSubmitFallback()
+      unbind = () => {
+        releaseForms()
+        releaseHost()
+      }
       assertActive()
       const { mountMappClient } = await bounded(
         () => import('../../client/src/platform/mountMappClient'),
