@@ -38,7 +38,7 @@
 平台验签位于 `packages/server/src/services/platformAuth.ts`（`PlatformAuth.verifyRoomSocket` 等，官方 SDK 作为 server 依赖），平台 resolver 由它生成：
 
 - 固定论坛 issuer、开发者 audience、应用 ID、Origin、签名和时效。
-- 只接受 SDK 的 **production** channel，sandbox 令牌不会获得房间入口；沙箱联调需要把 sandbox 与正式数据分开时另行评估。
+- 默认只接受 SDK 的 **production** channel，sandbox 令牌不会获得房间入口。测试沙箱构建时可显式设置 `MAPP_ALLOW_SANDBOX=true`：先按 production 验证，失败再按 sandbox 验证，其余校验不变。沙箱会话会与真实房间共用数据，测试完应移除该变量。
 - Socket.IO 目标为 `/socket.io/?EIO=4&transport=websocket`，无额外动态 query，令牌唯一。
 - 论坛身份由已验证的 `issuer + sub` 映射为稳定 `mapp_` 命名空间 ID；昵称相同不会绑定网页用户或取得网页房主身份。
 - 接入成功后，新增的 `identity:ready` 仅向该平台连接发送服务器确认的 userId。网页默认路径不发送此事件，不改变既有启动流程。
@@ -142,7 +142,7 @@ Web hostRuntime 保留全部原能力。初始 Mapp profile 仅启用已接入�
 
 ### 启用与部署
 
-- **环境变量**：`MAPP_ISSUER`（论坛 https 地址，可带子目录）、`MAPP_AUDIENCE`（本服务公开 https origin，主机名不能与 issuer 相同）、`MAPP_APP_ID`（平台分配的 UUIDv7）、可选 `MAPP_JWKS_FILE`（绝对路径，只读公钥文件）。全空即关闭；使用公钥文件时需把该文件挂载进主站容器并指向其容器内路径。
+- **环境变量**：`MAPP_ISSUER`（论坛 https 地址，可带子目录）、`MAPP_AUDIENCE`（本服务公开 https origin，主机名不能与 issuer 相同）、`MAPP_APP_ID`（平台分配的 UUIDv7）、可选 `MAPP_JWKS_FILE`（绝对路径，只读公钥文件）、可选 `MAPP_ALLOW_SANDBOX`（`true` 时同时接受沙箱令牌，仅限测试）。全空即关闭；使用公钥文件时需把该文件挂载进主站容器并指向其容器内路径。
 - **公钥**：默认从 issuer 的 `/mini-app-api/jwks` 获取（禁止重定向、5 秒超时、缓存 10 分钟，同一时刻只下载一次并带 10 秒冷却）。启动时只做尽力预热，失败不影响主站启动，首个令牌到来时再按需加载。
 - **镜像**：Dockerfile 额外复制仓库根 `vendor/`（官方 SDK 原样发行文件），不复制 mapp 源码。
 - **挂载顺序**：平台搜索/歌词与媒体路由挂在通用 `cors`、`express.json`、Cookie 身份引导和 `/api/music` 限流之前；它们自带 CORS、预检与鉴权，普通 Web 请求原样交还原链。

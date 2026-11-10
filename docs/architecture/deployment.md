@@ -52,7 +52,10 @@ MAPP_ISSUER      论坛 https 地址（可带子目录）
 MAPP_AUDIENCE    本服务的公开 https origin（主机名不能与论坛相同）
 MAPP_APP_ID      平台应用页分配的 UUIDv7
 MAPP_JWKS_FILE   可选，容器内只读公钥文件的绝对路径
+MAPP_ALLOW_SANDBOX  可选，true 时同时接受沙箱通道令牌；默认只接受正式通道
 ```
+
+沙箱构建签发的令牌 `channel` 为 `sandbox`，默认会被拒绝。测试沙箱构建时临时设置 `MAPP_ALLOW_SANDBOX=true`（官方文档要求沙箱需显式允许并与正式数据分开）；沙箱会话会与本服务的真实房间共用数据，测试完成后应移除该变量。
 
 四项全部不设置即关闭；只设置一部分或值非法时服务会拒绝启动。使用 `MAPP_JWKS_FILE` 时把公钥文件只读挂载进容器（如 `-v ./platform-jwks.json:/run/keys/platform-jwks.json:ro`）；不设置则从论坛 `/mini-app-api/jwks` 获取公钥。日志和代理不要记录带 `mini_app_token` 的完整 query。详见 [微应用兼容层](mini-app-compatibility.md)。
 

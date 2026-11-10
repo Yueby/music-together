@@ -12,9 +12,15 @@ export interface PlatformConfig {
   appId: string
   /** Operator-supplied trusted JWKS; when set, keys are never downloaded. */
   jwksFile?: string
+  /**
+   * Also accept sandbox-channel tokens (issued only to the app's author/admins for sandbox builds).
+   * Sandbox sessions then share this server's rooms, so enable it for testing only.
+   */
+  allowSandbox?: boolean
 }
 
 const ENV_NAMES = ['MAPP_ISSUER', 'MAPP_AUDIENCE', 'MAPP_APP_ID', 'MAPP_JWKS_FILE'] as const
+const SANDBOX_ENV = 'MAPP_ALLOW_SANDBOX'
 const UUID_V7 = /^[0-9a-f]{8}-[0-9a-f]{4}-7[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i
 
 function invalidConfig(name: string, reason: string): never {
@@ -37,12 +43,13 @@ function httpsUrl(name: string, value: string | undefined): URL {
 }
 
 /**
- * Platform access is opt-in. All four variables unset → disabled (`undefined`).
+ * Platform access is opt-in. All `MAPP_*` variables unset → disabled (`undefined`).
  * Anything else must be a complete, valid configuration, otherwise startup fails loudly.
  */
 export function readPlatformConfig(env: NodeJS.ProcessEnv = process.env): PlatformConfig | undefined {
-  const value = (name: (typeof ENV_NAMES)[number]) => env[name]?.trim() || undefined
-  if (ENV_NAMES.every((name) => !value(name))) return undefined
+  const value = (name: (typeof ENV_NAMES)[number] | typeof SANDBOX_ENV) => env[name]?.trim() || undefined
+  const allNames = [...ENV_NAMES, SANDBOX_ENV] as const
+  if (allNames.every((name) => !value(name))) return undefined
 
   const issuer = httpsUrl('MAPP_ISSUER', value('MAPP_ISSUER'))
   const audience = httpsUrl('MAPP_AUDIENCE', value('MAPP_AUDIENCE'))
@@ -52,12 +59,17 @@ export function readPlatformConfig(env: NodeJS.ProcessEnv = process.env): Platfo
   if (!appId || !UUID_V7.test(appId)) invalidConfig('MAPP_APP_ID', '必须是平台分配的 UUIDv7')
   const jwksFile = value('MAPP_JWKS_FILE')
   if (jwksFile && !isAbsolute(jwksFile)) invalidConfig('MAPP_JWKS_FILE', '必须是绝对路径')
+  const sandbox = value(SANDBOX_ENV)
+  if (sandbox !== undefined && sandbox !== 'true' && sandbox !== 'false') {
+    invalidConfig(SANDBOX_ENV, '只能是 true 或 false')
+  }
 
   return {
     issuer: issuer.href.endsWith('/') ? issuer.href.slice(0, -1) : issuer.href,
     audience: audience.origin,
     appId,
     ...(jwksFile ? { jwksFile } : {}),
+    ...(sandbox === 'true' ? { allowSandbox: true } : {}),
   }
 }
 
@@ -82,7 +94,7 @@ const ROOM_MEDIA_PATH = '/api/mapp/audio'
 type Jwk = JsonWebKeyInput['key'] & { kid?: string; alg?: string }
 
 /**
- * Verifies production platform JWTs. Signatures, claims and expiry are checked by the official SDK;
+ * Verifies platform JWTs (production, plus sandbox when explicitly allowed). Signatures, claims and expiry are checked by the official SDK;
  * this class chooses the trusted public key and pins the exact endpoint each caller may use.
  */
 export class PlatformAuth {
@@ -152,9 +164,20 @@ export class PlatformAuth {
     return key && fresh() ? key : fail()
   }
 
-  private verifyBearer(authorization: string, rawUrl: string) {
+  /** Production first; sandbox tokens only when explicitly allowed. Both are fully verified by the SDK. */
+  private async inChannels<T>(verify: (channel: 'production' | 'sandbox') => Promise<T>): Promise<T> {
+    try {
+      return await verify('production')
+    } catch (error) {
+      if (!this.config.allowSandbox) throw error
+      return verify('sandbox')
+    }
+  }
+
+  private async verifyBearer(authorization: string, rawUrl: string) {
     const { issuer, audience, appId } = this.config
-    return this.keyFor(authorization.slice('Bearer '.length)).then((publicKey) =>
+    const publicKey = await this.keyFor(authorization.slice('Bearer '.length))
+    return this.inChannels((channel) =>
       verifyPlatformRequest({
         issuer,
         audience,
@@ -165,7 +188,7 @@ export class PlatformAuth {
         method: 'GET',
         // Never derive the externally visible origin from Host or forwarded headers.
         url: audience + rawUrl,
-        channel: 'production',
+        channel,
         now: Math.floor(this.now() / 1000),
       }),
     )
@@ -178,15 +201,18 @@ export class PlatformAuth {
       const token = origin === this.origin ? ROOM_SOCKET_URL.exec(rawUrl)?.[1] : undefined
       if (!token) fail()
       const { issuer, audience, appId } = this.config
-      const identity = await verifyPlatformWebSocketRequest({
-        issuer,
-        audience,
-        appId,
-        publicKey: await this.keyFor(token),
-        channel: 'production',
-        url: audience + rawUrl,
-        now: Math.floor(this.now() / 1000),
-      })
+      const publicKey = await this.keyFor(token)
+      const identity = await this.inChannels((channel) =>
+        verifyPlatformWebSocketRequest({
+          issuer,
+          audience,
+          appId,
+          publicKey,
+          channel,
+          url: audience + rawUrl,
+          now: Math.floor(this.now() / 1000),
+        }),
+      )
       if (identity.htu !== audience + ROOM_SOCKET_HTU || identity.query_keys.length !== 0) fail()
       return identity
     })

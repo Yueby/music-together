@@ -113,6 +113,14 @@ describe('readPlatformConfig', () => {
     expect(() => readPlatformConfig({ MAPP_JWKS_FILE: join(tmpdir(), 'jwks.json') })).toThrow('MAPP_ISSUER')
   })
 
+  it('keeps sandbox tokens off unless MAPP_ALLOW_SANDBOX is explicitly true', () => {
+    expect(readPlatformConfig(env)?.allowSandbox).toBeUndefined()
+    expect(readPlatformConfig({ ...env, MAPP_ALLOW_SANDBOX: 'false' })?.allowSandbox).toBeUndefined()
+    expect(readPlatformConfig({ ...env, MAPP_ALLOW_SANDBOX: 'true' })?.allowSandbox).toBe(true)
+    expect(() => readPlatformConfig({ ...env, MAPP_ALLOW_SANDBOX: 'yes' })).toThrow('MAPP_ALLOW_SANDBOX')
+    expect(() => readPlatformConfig({ MAPP_ALLOW_SANDBOX: 'true' })).toThrow('MAPP_ISSUER')
+  })
+
   it.each([
     [{ MAPP_ISSUER: 'not a url' }, 'MAPP_ISSUER'],
     [{ MAPP_ISSUER: 'http://linux.do' }, 'MAPP_ISSUER'],
@@ -134,6 +142,55 @@ describe('readPlatformConfig', () => {
     }
     expect(message).toContain(name)
     for (const value of Object.values(changes)) expect(message).not.toContain(value)
+  })
+})
+
+describe('sandbox channel (explicit opt-in)', () => {
+  const sandbox = (claims: object) => ({ ...claims, channel: 'sandbox' })
+  const allowing = (f: ReturnType<typeof fixture>) =>
+    new PlatformAuth({ ...config, allowSandbox: true }, f.fetcher, () => epoch)
+
+  it('rejects sandbox tokens by default', async () => {
+    const f = fixture()
+    await expect(f.auth().verifyRoomSocket(roomSocketUrl(f.token(sandbox(roomSocket))), ORIGIN)).rejects.toThrow(
+      REJECTED,
+    )
+  })
+
+  it('accepts sandbox and production tokens once allowed, for the socket and HTTP endpoints', async () => {
+    const f = fixture()
+    const auth = allowing(f)
+    await expect(auth.verifyRoomSocket(roomSocketUrl(f.token(sandbox(roomSocket))), ORIGIN)).resolves.toMatchObject({
+      channel: 'sandbox',
+    })
+    await expect(auth.verifyRoomSocket(roomSocketUrl(f.token(roomSocket)), ORIGIN)).resolves.toMatchObject({
+      channel: 'production',
+    })
+    await expect(
+      auth.verifyRoomMedia(mediaUrl, ORIGIN, 'Bearer ' + f.token(sandbox(media)), 'GET'),
+    ).resolves.toMatchObject({ channel: 'sandbox' })
+    await expect(
+      auth.verifyMusicMetadata(searchUrl, ORIGIN, 'Bearer ' + f.token(sandbox(search)), 'GET'),
+    ).resolves.toMatchObject({ channel: 'sandbox' })
+  })
+
+  it('still enforces every other check on sandbox tokens', async () => {
+    const f = fixture()
+    const auth = allowing(f)
+    for (const claims of [
+      { htu: config.audience + '/other' },
+      { scopes: ['network.request'] },
+      { aud: 'https://evil.example' },
+      { app_id: '01900000-0000-7000-8000-000000000002' },
+      { channel: 'staging' },
+    ]) {
+      await expect(
+        auth.verifyRoomSocket(roomSocketUrl(f.token({ ...sandbox(roomSocket), ...claims })), ORIGIN),
+      ).rejects.toThrow(REJECTED)
+    }
+    await expect(
+      auth.verifyRoomSocket(roomSocketUrl(f.token(sandbox(roomSocket))), 'https://evil.example'),
+    ).rejects.toThrow(REJECTED)
   })
 })
 
