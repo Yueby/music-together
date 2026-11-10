@@ -1,0 +1,20 @@
+{
+  "name": "@music-together/mapp",
+  "version": "0.2.0",
+  "private": true,
+  "type": "module",
+  "scripts": {
+    "typecheck": "tsc6 --noEmit",
+    "package": "pnpm run typecheck && vite build && node scripts/package.ts"
+  },
+  "dependencies": {
+    "@discourse-mini-app/sdk": "file:../../vendor/discourse-mini-app-sdk",
+    "@music-together/shared": "workspace:*",
+    "zod": "^4.6.7"
+  },
+  "devDependencies": {
+    "@types/node": "^26.6.6",
+    "typescript": "npm:@typescript/typescript6@~6.0.2",
+    "vite": "^8.3.5"
+  }
+}

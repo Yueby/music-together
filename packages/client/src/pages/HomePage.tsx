@@ -10,6 +10,7 @@ import { useLobby } from '@/hooks/useLobby'
 import { unlockAudio } from '@/lib/audioUnlock'
 import { ACTION_LOADING_TIMEOUT_MS } from '@/lib/constants'
 import { storage } from '@/lib/storage'
+import { hostRuntime } from '@/lib/hostRuntime'
 import { useSocketContext } from '@/providers/SocketProvider'
 import { useRoomStore } from '@/stores/roomStore'
 import { useChatStore } from '@/stores/chatStore'
@@ -272,30 +273,44 @@ export default function HomePage() {
         <div className="mx-auto flex max-w-5xl flex-wrap items-center justify-between gap-2 px-4 py-4">
           <span className="text-xs text-muted-foreground">
             Music Together · Made by Yueby ·{' '}
+            {hostRuntime.externalLinks ? (
+              <a
+                href="https://github.com/Yueby/music-together/blob/main/package.json"
+                target="_blank"
+                rel="noopener noreferrer"
+                className="relative inline-flex items-center transition-colors hover:text-foreground"
+              >
+                v{__APP_VERSION__}
+                {hasUpdate && (
+                  <span
+                    className="absolute -right-2 -top-1 h-2 w-2 rounded-full bg-red-500"
+                    title="有新版本可用，刷新页面以更新"
+                  />
+                )}
+              </a>
+            ) : (
+              <span className="relative inline-flex items-center">
+                v{__APP_VERSION__}
+                {hasUpdate && (
+                  <span
+                    className="absolute -right-2 -top-1 h-2 w-2 rounded-full bg-red-500"
+                    title="有新版本可用，刷新页面以更新"
+                  />
+                )}
+              </span>
+            )}
+          </span>
+          {hostRuntime.externalLinks && (
             <a
-              href="https://github.com/Yueby/music-together/blob/main/package.json"
+              href="https://github.com/Yueby/music-together"
               target="_blank"
               rel="noopener noreferrer"
-              className="relative inline-flex items-center transition-colors hover:text-foreground"
+              className="flex items-center gap-1.5 text-xs text-muted-foreground transition-colors hover:text-foreground"
             >
-              v{__APP_VERSION__}
-              {hasUpdate && (
-                <span
-                  className="absolute -right-2 -top-1 h-2 w-2 rounded-full bg-red-500"
-                  title="有新版本可用，刷新页面以更新"
-                />
-              )}
+              <GitFork className="h-3.5 w-3.5" />
+              GitHub
             </a>
-          </span>
-          <a
-            href="https://github.com/Yueby/music-together"
-            target="_blank"
-            rel="noopener noreferrer"
-            className="flex items-center gap-1.5 text-xs text-muted-foreground transition-colors hover:text-foreground"
-          >
-            <GitFork className="h-3.5 w-3.5" />
-            GitHub
-          </a>
+          )}
         </div>
       </footer>
 

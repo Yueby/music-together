@@ -1,0 +1,54 @@
+{
+  "name": "@discourse-mini-app/sdk",
+  "version": "0.3.0",
+  "type": "module",
+  "types": "./index.d.ts",
+  "exports": {
+    ".": {
+      "types": "./index.d.ts",
+      "import": "./index.mjs"
+    },
+    "./pack": {
+      "types": "./pack.d.ts",
+      "import": "./pack.mjs"
+    },
+    "./server": {
+      "types": "./server.d.ts",
+      "import": "./server.mjs"
+    },
+    "./network": {
+      "types": "./network-tools.d.ts",
+      "import": "./network-tools.mjs"
+    },
+    "./media": {
+      "types": "./media-playlist.d.ts",
+      "import": "./media-playlist.mjs"
+    },
+    "./timeline": {
+      "types": "./media-timeline.d.ts",
+      "import": "./media-timeline.mjs"
+    }
+  },
+  "files": [
+    "index.mjs",
+    "index.d.ts",
+    "types.d.ts",
+    "pack.mjs",
+    "pack.d.ts",
+    "server.mjs",
+    "server.d.ts",
+    "network-tools.mjs",
+    "network-tools.d.ts",
+    "media-playlist.mjs",
+    "media-playlist.d.ts",
+    "media-program.d.ts",
+    "media-timeline.mjs",
+    "media-timeline.d.ts",
+    "code-policy.d.ts",
+    "module-bundle.d.ts",
+    "device-policy.d.ts",
+    "device-client.d.ts",
+    "capture-constraints.d.ts",
+    "README.md"
+  ]
+}

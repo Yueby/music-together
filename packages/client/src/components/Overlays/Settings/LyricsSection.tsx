@@ -24,21 +24,6 @@ export function LyricsSection() {
         >
           <Switch checked={s.ttmlEnabled} onCheckedChange={s.setTtmlEnabled} />
         </SettingRow>
-
-        {s.ttmlEnabled && (
-          <SettingRow
-            label="TTML 歌词库地址"
-            description="URL 模板，%s 会被替换为歌曲 ID，QQ 音乐自动替换 ncm-lyrics 为 qq-lyrics"
-            onReset={s.ttmlDbUrl !== s.ttmlDbUrlDefault ? s.resetTtmlDbUrl : undefined}
-          >
-            <Input
-              value={s.ttmlDbUrl}
-              onChange={(e) => s.setTtmlDbUrl(e.target.value)}
-              placeholder="https://amlldb.bikonoo.com/ncm-lyrics/%s.ttml"
-              className="w-64 text-xs"
-            />
-          </SettingRow>
-        )}
       </div>
 
       {/* ---- 歌词布局 ---- */}

@@ -6,6 +6,7 @@ import {
 } from '@/components/ui/responsive-dialog'
 import { ScrollArea } from '@/components/ui/scroll-area'
 import { cn } from '@/lib/utils'
+import { hostRuntime } from '@/lib/hostRuntime'
 import { KeyRound, Palette, Settings2, Type, Users, type LucideIcon } from 'lucide-react'
 import { useEffect, useState } from 'react'
 import { RoomSettingsSection } from './Settings/RoomSettingsSection'
@@ -86,14 +87,18 @@ export function SettingsDialog({
   onSetUserRole,
   initialTab,
 }: SettingsDialogProps) {
-  const [tab, setTab] = useState<SettingsTab>('room')
+  const effectiveInitial = initialTab === 'accounts' && !hostRuntime.platformAccounts ? 'room' : (initialTab || 'room')
+  const [tab, setTab] = useState<SettingsTab>(effectiveInitial)
 
   // When dialog opens with an initialTab, jump to it
   useEffect(() => {
     if (open && initialTab) {
-      setTab(initialTab)
+      const target = initialTab === 'accounts' && !hostRuntime.platformAccounts ? 'room' : initialTab
+      setTab(target)
     }
   }, [open, initialTab])
+
+  const visibleTabs = hostRuntime.platformAccounts ? TABS : TABS.filter((t) => t.id !== 'accounts')
 
   return (
     <ResponsiveDialog open={open} onOpenChange={onOpenChange}>
@@ -104,7 +109,7 @@ export function SettingsDialog({
           <div className="flex shrink-0 flex-col border-b md:hidden">
             <ResponsiveDialogTitle className="px-4 pt-4 pb-2 text-lg font-semibold">设置</ResponsiveDialogTitle>
             <nav className="scrollbar-hide flex gap-1 overflow-x-auto px-4 pb-2" role="tablist" aria-label="设置分类">
-              {TABS.map((t) => (
+              {visibleTabs.map((t) => (
                 <button
                   key={t.id}
                   role="tab"
@@ -128,14 +133,14 @@ export function SettingsDialog({
           <nav className="hidden w-48 shrink-0 flex-col border-r p-4 md:flex" role="tablist" aria-label="设置分类">
             <ResponsiveDialogTitle className="mb-4 px-3 text-lg font-semibold">设置</ResponsiveDialogTitle>
             <div className="space-y-1">
-              {TABS.map((t) => (
+              {visibleTabs.map((t) => (
                 <NavItem key={t.id} icon={t.icon} label={t.label} active={tab === t.id} onClick={() => setTab(t.id)} />
               ))}
             </div>
           </nav>
 
           {/* Content area — accounts tab uses its own scroll management for virtual list */}
-          {tab === 'accounts' ? (
+          {tab === 'accounts' && hostRuntime.platformAccounts ? (
             <div className="flex min-h-0 min-w-0 flex-1 flex-col overflow-hidden p-4 sm:p-6">
               <PlatformHub />
             </div>

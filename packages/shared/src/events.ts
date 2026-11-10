@@ -1,4 +1,7 @@
 export const EVENTS = {
+  // Platform connection identity (emitted only by the opt-in identity adapter)
+  IDENTITY_READY: 'identity:ready',
+
   // Room lifecycle
   ROOM_CREATE: 'room:create',
   ROOM_CREATED: 'room:created',
@@ -18,6 +21,8 @@ export const EVENTS = {
 
   // Player controls
   PLAYER_PLAY: 'player:play',
+  /** Server → clients: the track that will most likely play next, with a resolved stream URL, to fetch ahead of time. */
+  PLAYER_PRELOAD: 'player:preload',
   PLAYER_PAUSE: 'player:pause',
   PLAYER_RESUME: 'player:resume',
   PLAYER_SEEK: 'player:seek',

@@ -37,6 +37,8 @@
 | qrcode | ^1.5.4 | 酷狗登录二维码编码 |
 | escape-html | ^1.0.3 | 聊天内容转义 |
 
+服务端的 TTML 逐词歌词解析使用 `@applemusic-like-lyrics/ttml`（与客户端歌词包内置版本一致，固定 1.0.1）并注入 `@xmldom/xmldom` 作为 DOMParser（Node 没有内置的，微应用的 Trusted Types 也不允许在客户端解析）。
+
 酷狗 KRC 获取、解密和逐词解析由 `packages/server/src/services/kugouLyricService.ts` 内置实现，不再依赖已停止维护的 `request` 生态。
 
 QQ 音乐搜索使用腾讯 `zzc` 签名访问 `musics.fcg`，避免未签名 `musicu.fcg` 返回业务码 `2001` 和空列表。
@@ -47,6 +49,10 @@ QQ 音乐搜索使用腾讯 `zzc` 签名访问 `musics.fcg`，避免未签名 `m
 | --- | --- | --- |
 | @casl/ability | ^7.1.0 | 前后端共享 RBAC 能力定义 |
 | zod | ^4.6.7 | 前后端共享 Schema |
+
+## 微应用依赖
+
+`packages/mapp` 使用原生 TypeScript、现有 Vite 8 工具链及固定在仓库根 `vendor/` 的 `@discourse-mini-app/sdk@0.3.0`。SDK 通过 `file:` 依赖解析：`packages/mapp` 用它的平台客户端与 ZIP 打包入口，`packages/server` 用它的 `/server` 验签入口（平台 JWT 验证）；运行时音频内核使用原生 Web Audio。浏览器显式复用 `zod@^4.6.7` 并在 Schema 初始化前关闭 JIT，以适配沙箱 CSP。该包通过 `tsc6` 执行独立类型检查；因 `file:` 依赖，Dockerfile 在安装依赖前需复制 `vendor/`。构建及 SDK 来源见 [mini-app.md](mini-app.md)。
 
 ## 开发与测试工具
 

@@ -8,6 +8,7 @@ import * as trackFallbackService from './trackFallbackService.js'
 import * as authService from './authService.js'
 import { estimateCurrentTime } from './syncService.js'
 import { isStreamUrlExpired } from './streamUrlLifetime.js'
+import { resolveStreamUrl as resolveStreamUrlWithFallback } from './streamUrlResolver.js'
 import { broadcastRoomList } from './roomLifecycleService.js'
 import { toPublicRoomState } from '../utils/roomUtils.js'
 import { config } from '../config.js'
@@ -191,38 +192,8 @@ function schedulePlaybackCommit(
 // Audio quality fallback
 // ---------------------------------------------------------------------------
 
-/** Ordered fallback bitrates for each quality tier */
-const BITRATE_FALLBACKS: Record<AudioQuality, AudioQuality[]> = {
-  999: [320, 192, 128],
-  320: [192, 128],
-  192: [128],
-  128: [],
-}
-
-/**
- * Try to get a stream URL at the requested bitrate. If it fails, try each
- * lower tier in order until one succeeds or all options are exhausted.
- */
-async function resolveStreamUrl(
-  source: MusicSource,
-  urlId: string,
-  bitrate: AudioQuality,
-  cookie?: string,
-): Promise<string | null> {
-  const url = await musicProvider.getStreamUrl(source, urlId, bitrate, cookie)
-  if (url && !isStreamUrlExpired(source, url)) return url
-
-  // Fallback to lower bitrates
-  for (const fallback of BITRATE_FALLBACKS[bitrate]) {
-    const fallbackUrl = await musicProvider.getStreamUrl(source, urlId, fallback, cookie)
-    if (fallbackUrl && !isStreamUrlExpired(source, fallbackUrl)) {
-      logger.info(`Bitrate fallback: ${bitrate} -> ${fallback} for ${source}/${urlId}`)
-      return fallbackUrl
-    }
-  }
-
-  return null
-}
+const resolveStreamUrl = (source: MusicSource, urlId: string, bitrate: AudioQuality, cookie?: string) =>
+  resolveStreamUrlWithFallback(musicProvider, source, urlId, bitrate, cookie)
 
 /**
  * Resolve stream URL / cover, set current track, and broadcast PLAYER_PLAY.
@@ -439,7 +410,59 @@ async function _playTrackInRoom(io: TypedServer, roomId: string, track: Track, g
   broadcastRoomList(io)
 
   logger.info(`Playing: ${resolved.title} in room ${roomId}`, { roomId })
+  void preloadUpcoming(io, roomId)
   return true
+}
+
+// ---------------------------------------------------------------------------
+// Preloading the next track
+// ---------------------------------------------------------------------------
+
+/**
+ * What each room was last told to preload: repeated queue edits do not repeat the announcement, and a member who
+ * joins mid-track (and so missed it) is told when it syncs.
+ */
+const announcedPreloads = new Map<string, { key: string; track: Track }>()
+
+/**
+ * Resolve the stream URL of the track that will most likely follow the current one and announce it, so clients can
+ * fetch it while the current track plays. A member whose client has to download the whole file first (the mini-app)
+ * would otherwise start several seconds into every new track.
+ *
+ * Only transitions that are known in advance qualify: shuffle is picked at the moment of the change and loop-one
+ * replays the current track. The resolved URL is also kept on the queue item, which makes the real transition skip
+ * the provider round trip. A failure here is silent: the normal play path still resolves, falls back and reports.
+ */
+export async function preloadUpcoming(io: TypedServer, roomId: string): Promise<void> {
+  const room = roomRepo.get(roomId)
+  if (!room) {
+    announcedPreloads.delete(roomId)
+    return
+  }
+  const current = getLatestPlayback(room).track
+  if (!current || room.playMode === 'shuffle' || room.playMode === 'loop-one') return
+  const next = queueService.getNextTrack(roomId, room.playMode, current.id)
+  if (!next || next.id === current.id) {
+    announcedPreloads.delete(roomId)
+    return
+  }
+  const key = `${next.id}:${next.urlId}:${room.audioQuality}`
+  if (announcedPreloads.get(roomId)?.key === key && next.streamUrl && !hasExpiredUrl(next)) return
+
+  try {
+    // Always resolve afresh: a URL left on the item may belong to another audio quality.
+    const fresh = await refreshTrackUrl(roomId, room, next)
+    // Anything may have changed while the provider answered.
+    const latest = roomRepo.get(roomId)
+    if (!fresh || latest !== room || getLatestPlayback(room).track?.id !== current.id) return
+    const item = room.queue.find((track) => track.id === next.id)
+    if (!item) return
+    item.streamUrl = fresh.streamUrl
+    announcedPreloads.set(roomId, { key, track: item })
+    io.to(roomId).emit(EVENTS.PLAYER_PRELOAD, { track: item })
+  } catch (error) {
+    logger.warn('Preload of the next track failed', { roomId, reason: error instanceof Error ? error.name : 'unknown' })
+  }
 }
 
 export function resumeTrack(io: TypedServer, roomId: string, _initiatorSocket?: TypedSocket): void {
@@ -678,6 +701,21 @@ export async function syncPlaybackToSocket(
   roomId: string,
   room: RoomData,
 ): Promise<void> {
+  await syncCurrentPlayback(io, socket, roomId, room)
+  // Someone who joins mid-track missed the announcement of the next one: without it their client would still
+  // start the next track cold, seconds behind everybody else.
+  const upcoming = announcedPreloads.get(roomId)
+  if (upcoming && roomRepo.getSocketMapping(socket.id)?.roomId === roomId) {
+    socket.emit(EVENTS.PLAYER_PRELOAD, { track: upcoming.track })
+  }
+}
+
+async function syncCurrentPlayback(
+  io: TypedServer,
+  socket: TypedSocket,
+  roomId: string,
+  room: RoomData,
+): Promise<void> {
   const isAloneInRoom = room.users.length === 1
   let joinTrack = getLatestPlayback(room).track
   if (joinTrack && hasExpiredUrl(joinTrack)) {
@@ -768,6 +806,7 @@ export function cleanupRoom(roomId: string): void {
   lastSkipTimestamp.delete(roomId)
   playMutexes.delete(roomId)
   controlGenerations.delete(roomId)
+  announcedPreloads.delete(roomId)
   const room = roomRepo.get(roomId)
   if (room) cancelPendingPlayback(room)
 }

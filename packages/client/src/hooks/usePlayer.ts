@@ -1,6 +1,7 @@
 import { getServerTime, isCalibrated } from '@/lib/clockSync'
 import { PLAYER_PLAY_DEDUP_MS } from '@/lib/constants'
 import { lyricPlayerBridge } from '@/lib/lyricPlayerBridge'
+import { playbackSoundFactory } from '@/lib/playbackSoundFactory'
 import { getScheduledPlaybackPosition } from '@/lib/playbackSync'
 import { registerPendingPlayCancel } from '@/lib/scheduledPlayback'
 import { useSocketContext } from '@/providers/SocketProvider'
@@ -201,6 +202,22 @@ export function usePlayer() {
       }
     }
   }, [socket, loadTrack, fetchLyric, howlRef, soundIdRef, setDesiredPlayback, startPlayback])
+
+  // The server announces the track that will probably follow, so a host that must download a whole file first
+  // can have it ready before the transition instead of starting seconds into it.
+  useEffect(() => {
+    const onPreload = (data: { track: Track }) => {
+      try {
+        playbackSoundFactory.preload?.(data.track)
+      } catch {
+        // Preloading is an optimisation; it must never disturb playback.
+      }
+    }
+    socket.on(EVENTS.PLAYER_PRELOAD, onPreload)
+    return () => {
+      socket.off(EVENTS.PLAYER_PRELOAD, onPreload)
+    }
+  }, [socket])
 
   // Recovery: auto-sync player state from room state when desync is detected
   // (e.g. after HMR resets stores, or PLAYER_PLAY arrived before this route's

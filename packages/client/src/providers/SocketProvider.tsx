@@ -7,9 +7,30 @@ import { toast } from 'sonner'
 interface SocketContextValue {
   socket: TypedSocket
   isConnected: boolean
+  requiresManualJoin: boolean
 }
 
 const SocketContext = createContext<SocketContextValue | null>(null)
+
+export interface SocketStateProviderProps {
+  socket: TypedSocket
+  isConnected: boolean
+  requiresManualJoin?: boolean
+  children: ReactNode
+}
+
+export function SocketStateProvider({
+  socket,
+  isConnected,
+  requiresManualJoin = false,
+  children,
+}: SocketStateProviderProps) {
+  const value = useMemo<SocketContextValue>(
+    () => ({ socket, isConnected, requiresManualJoin }),
+    [socket, isConnected, requiresManualJoin],
+  )
+  return <SocketContext.Provider value={value}>{children}</SocketContext.Provider>
+}
 
 /** Persistent toast id so we can dismiss it on reconnect */
 const DISCONNECT_TOAST_ID = 'socket-disconnect'
@@ -102,9 +123,11 @@ export function SocketProvider({ children }: { children: ReactNode }) {
     }
   }, [])
 
-  const value = useMemo<SocketContextValue>(() => ({ socket: socketRef.current, isConnected }), [isConnected])
-
-  return <SocketContext.Provider value={value}>{children}</SocketContext.Provider>
+  return (
+    <SocketStateProvider socket={socketRef.current} isConnected={isConnected}>
+      {children}
+    </SocketStateProvider>
+  )
 }
 
 export function useSocketContext(): SocketContextValue {

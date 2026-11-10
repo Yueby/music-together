@@ -46,6 +46,7 @@ export function registerQueueController(io: TypedServer, socket: TypedSocket) {
       // per-room mutex, preventing concurrent QUEUE_ADD handlers from both
       // triggering playback.
       await playerService.autoPlayIfEmpty(io, ctx.roomId, track)
+      void playerService.preloadUpcoming(io, ctx.roomId)
 
       logger.info(`Track added: ${track.title}`, { roomId: ctx.roomId })
     }),
@@ -75,6 +76,7 @@ export function registerQueueController(io: TypedServer, socket: TypedSocket) {
 
       // If nothing was playing, auto-play this track.
       await playerService.autoPlayIfEmpty(io, ctx.roomId, track)
+      void playerService.preloadUpcoming(io, ctx.roomId)
 
       logger.info(`Track inserted after current: ${track.title}`, { roomId: ctx.roomId })
     }),
@@ -109,6 +111,7 @@ export function registerQueueController(io: TypedServer, socket: TypedSocket) {
       // Auto-play first added track if nothing is playing
       if (addedCount > 0) {
         await playerService.autoPlayIfEmpty(io, ctx.roomId, tracks[0])
+        void playerService.preloadUpcoming(io, ctx.roomId)
       }
 
       logger.info(`Batch added ${addedCount} tracks from playlist`, { roomId: ctx.roomId })
@@ -134,6 +137,8 @@ export function registerQueueController(io: TypedServer, socket: TypedSocket) {
       if (isCurrentTrack) {
         if (successor) await playerService.playTrackInRoom(io, ctx.roomId, successor)
         else playerService.stopPlayback(io, ctx.roomId)
+      } else {
+        void playerService.preloadUpcoming(io, ctx.roomId)
       }
 
       logger.info(`Track removed`, { roomId: ctx.roomId })
@@ -151,6 +156,7 @@ export function registerQueueController(io: TypedServer, socket: TypedSocket) {
       const { trackIds } = parsed.data
       queueService.reorderTracks(ctx.roomId, trackIds)
       io.to(ctx.roomId).emit(EVENTS.QUEUE_UPDATED, { queue: ctx.room.queue })
+      void playerService.preloadUpcoming(io, ctx.roomId)
       logger.info(`Queue reordered`, { roomId: ctx.roomId })
     }),
   )

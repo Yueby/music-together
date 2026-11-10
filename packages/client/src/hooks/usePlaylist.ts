@@ -3,6 +3,8 @@ import { EVENTS, type MusicSource, type Playlist, type Track } from '@music-toge
 import { useSocketContext } from '@/providers/SocketProvider'
 import { useRoomStore } from '@/stores/roomStore'
 import { SERVER_URL } from '@/lib/config'
+import { hostRuntime } from '@/lib/hostRuntime'
+import { metadataFetch } from '@/lib/metadataFetch'
 
 const PAGE_SIZE = 1000
 
@@ -100,6 +102,7 @@ export function usePlaylist() {
   const loadingMoreRef = useRef(false)
 
   useEffect(() => {
+    if (!hostRuntime.platformAccounts) return
     const onMyList = (data: { platform: MusicSource; playlists: Playlist[] }) => {
       setMyPlaylists((prev) => ({ ...prev, [data.platform]: data.playlists }))
       setPlaylistsLoading((prev) => ({ ...prev, [data.platform]: false }))
@@ -113,6 +116,7 @@ export function usePlaylist() {
 
   const fetchMyPlaylists = useCallback(
     (platform: MusicSource) => {
+      if (!hostRuntime.platformAccounts) return
       setPlaylistsLoading((prev) => ({ ...prev, [platform]: true }))
       socket.emit(EVENTS.PLAYLIST_GET_MY, { platform })
     },
@@ -125,6 +129,7 @@ export function usePlaylist() {
    */
   const fetchPlaylistTracks = useCallback(
     async (source: MusicSource, playlistId: string, trackCount?: number, type: 'playlist' | 'album' = 'playlist'): Promise<Track[]> => {
+      if (!hostRuntime.collections) return []
       // Reset state immediately — prevents flashing old data when switching playlists
       setPlaylistTracks([])
       setPlaylistTotal(0)
@@ -143,7 +148,7 @@ export function usePlaylist() {
           roomId: useRoomStore.getState().room?.id,
           type,
         })
-        const res = await fetch(url, { credentials: 'include' })
+        const res = await metadataFetch(url, { credentials: 'include' })
         if (!res.ok) {
           setTracksLoading(false)
           return []
@@ -181,6 +186,7 @@ export function usePlaylist() {
    * even before React batches the state update.
    */
   const loadMoreTracks = useCallback(async () => {
+    if (!hostRuntime.collections) return
     const ctx = currentPlaylistRef.current
     if (!ctx || loadingMoreRef.current || !hasMoreTracks) return
 
@@ -194,7 +200,7 @@ export function usePlaylist() {
         roomId: useRoomStore.getState().room?.id,
         type: ctx.type,
       })
-      const res = await fetch(url, { credentials: 'include' })
+      const res = await metadataFetch(url, { credentials: 'include' })
       if (!res.ok) return
 
       // Stale response guard — context might have changed while we were fetching

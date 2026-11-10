@@ -1,4 +1,5 @@
 import { MarqueeText } from '@/components/ui/marquee-text'
+import { useArtworkUrl } from '@/hooks/useArtworkUrl'
 import { cn } from '@/lib/utils'
 import { usePlayerStore } from '@/stores/playerStore'
 import { Disc3 } from 'lucide-react'
@@ -29,11 +30,12 @@ export function NowPlaying({ compact = false, onCoverClick }: NowPlayingProps) {
     setCoverError(false)
   }, [currentTrack?.id])
 
-  const showCover = currentTrack?.cover && !coverError
+  const coverSrc = useArtworkUrl(currentTrack?.cover)
+  const showCover = Boolean(coverSrc && !coverError)
 
-  const coverContent = showCover ? (
+  const coverContent = showCover && currentTrack ? (
     <img
-      src={currentTrack.cover}
+      src={coverSrc}
       alt={currentTrack.title}
       className="h-full w-full object-cover"
       onError={() => setCoverError(true)}

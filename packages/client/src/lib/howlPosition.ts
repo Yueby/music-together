@@ -1,4 +1,4 @@
-import type { Howl } from 'howler'
+import type { PlaybackSound } from './PlaybackSound'
 
 interface Html5Sound {
   _id: number
@@ -12,7 +12,7 @@ interface Html5Sound {
  * That cycle can add hundreds of milliseconds on mobile and immediately
  * recreate the drift the correction is trying to remove.
  */
-export function setHowlPosition(howl: Howl, targetTime: number, soundId?: number): void {
+export function setHowlPosition(howl: Pick<PlaybackSound, 'playing' | 'seek'>, targetTime: number, soundId?: number): void {
   const safeTarget = Math.max(0, targetTime)
   const internal = howl as unknown as { _sounds?: Html5Sound[] }
   const sound = internal._sounds?.find((candidate) => soundId === undefined || candidate._id === soundId)

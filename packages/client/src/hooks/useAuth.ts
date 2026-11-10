@@ -1,4 +1,5 @@
 import { storage } from '@/lib/storage'
+import { hostRuntime } from '@/lib/hostRuntime'
 import { useSocketContext } from '@/providers/SocketProvider'
 import type { MusicSource, MyPlatformAuth, PlatformAuthStatus } from '@music-together/shared'
 import { EVENTS } from '@music-together/shared'
@@ -30,6 +31,7 @@ export function useAuth() {
   const qrPlatformRef = useRef<MusicSource>(qrPlatform)
 
   useEffect(() => {
+    if (!hostRuntime.platformAccounts) return
     const onStatusUpdate = (data: PlatformAuthStatus[]) => {
       setPlatformStatus(data)
     }
@@ -70,6 +72,7 @@ export function useAuth() {
 
   const requestQrCode = useCallback(
     (platform: MusicSource) => {
+      if (!hostRuntime.platformAccounts) return
       setQrData(null)
       setQrStatus(null)
       setIsQrLoading(true)
@@ -82,6 +85,7 @@ export function useAuth() {
 
   const checkQrStatus = useCallback(
     (key: string) => {
+      if (!hostRuntime.platformAccounts) return
       socket.emit(EVENTS.AUTH_CHECK_QR, { key, platform: qrPlatformRef.current })
     },
     [socket],
@@ -89,6 +93,7 @@ export function useAuth() {
 
   const setCookie = useCallback(
     (platform: MusicSource, cookie: string) => {
+      if (!hostRuntime.platformAccounts) return
       socket.emit(EVENTS.AUTH_SET_COOKIE, { platform, cookie })
     },
     [socket],
@@ -96,6 +101,7 @@ export function useAuth() {
 
   const logout = useCallback(
     (platform: MusicSource) => {
+      if (!hostRuntime.platformAccounts) return
       storage.removeAuthCookie(platform)
       socket.emit(EVENTS.AUTH_LOGOUT, { platform })
     },

@@ -1,4 +1,6 @@
 import { SERVER_URL } from '@/lib/config'
+import { hostRuntime } from '@/lib/hostRuntime'
+import { metadataFetch } from '@/lib/metadataFetch'
 import { useEffect, useState } from 'react'
 
 /**
@@ -9,9 +11,10 @@ export function useVersionCheck() {
   const [hasUpdate, setHasUpdate] = useState(false)
 
   useEffect(() => {
+    if (!hostRuntime.versionCheck) return
     const controller = new AbortController()
 
-    fetch(`${SERVER_URL}/api/version`, { signal: controller.signal })
+    metadataFetch(`${SERVER_URL}/api/version`, { signal: controller.signal })
       .then((res) => (res.ok ? res.json() : null))
       .then((data: { version: string } | null) => {
         if (data?.version && data.version !== __APP_VERSION__) {

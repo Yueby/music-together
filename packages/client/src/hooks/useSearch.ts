@@ -1,4 +1,5 @@
 import { SERVER_URL } from '@/lib/config'
+import { metadataFetch } from '@/lib/metadataFetch'
 import type { MusicSource, Playlist, Track } from '@music-together/shared'
 import { useCallback, useEffect, useRef, useState } from 'react'
 import { toast } from 'sonner'
@@ -42,7 +43,7 @@ export function useSearch(
       signal: AbortSignal,
       searchType: 'song' | 'album' | 'playlist'
     ): Promise<{ tracks: SearchResult[]; hasMore: boolean }> => {
-      const res = await fetch(
+      const res = await metadataFetch(
         `${SERVER_URL}/api/music/search?source=${searchSource}&keyword=${encodeURIComponent(searchKeyword)}&limit=${PAGE_SIZE}&page=${searchPage}&type=${searchType}`,
         { signal, credentials: 'include' },
       )

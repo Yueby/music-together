@@ -14,21 +14,48 @@ import { attachSocketIdentity } from './middleware/socketIdentity.js'
 import type { SocketData } from './middleware/types.js'
 import authRoutes from './routes/auth.js'
 import musicRoutes from './routes/music.js'
+import { createPlatformMediaRouter } from './routes/platformMedia.js'
+import { createPlatformMetadataRouter } from './routes/platformMetadata.js'
 import roomRoutes from './routes/rooms.js'
+import { createPlatformResolvers, PlatformAuth, readPlatformConfig } from './services/platformAuth.js'
 import { clearAllTimers } from './services/roomLifecycleService.js'
 import { logger } from './utils/logger.js'
 
+// Mini-app (Discourse) platform access is opt-in: with no MAPP_* variables nothing below is mounted.
+// A partial or invalid configuration throws here, so a misconfigured deployment never starts half-open.
+function loadPlatform() {
+  let platformConfig
+  try {
+    platformConfig = readPlatformConfig()
+  } catch (error) {
+    logger.error((error as Error).message)
+    process.exit(1)
+  }
+  if (!platformConfig) return undefined
+  const auth = new PlatformAuth(platformConfig)
+  return { auth, config: platformConfig, resolvers: createPlatformResolvers(auth) }
+}
+const platform = loadPlatform()
+
 const app = express()
 const httpServer = createServer(app)
+
+if (platform) {
+  // These routers do their own CORS, preflight and JWT verification and never fall back to the Cookie
+  // identity, so they must sit in front of the Web CORS / Cookie bootstrap. Ordinary Web requests to the
+  // search/lyric paths are handed back with next('router'). The metadata router applies the music rate
+  // limiter itself, hence it is mounted before `/api/music`.
+  const allowedOrigin = new URL(platform.config.issuer).origin
+  app.use(createPlatformMediaRouter({ allowedOrigin, verifyIdentity: platform.resolvers.roomMedia }))
+  app.use(createPlatformMetadataRouter({ allowedOrigin, verifyIdentity: platform.resolvers.musicMetadata }))
+}
 
 // HTTP API CORS: in auto mode we allow the browser-reported origin and rely on
 // the cookie / same-host socket checks for deployment safety. This keeps local
 // dev (localhost) and LAN access working consistently.
 app.use(
   cors({
-    origin: config.explicitOrigins.length > 0
-      ? config.explicitOrigins
-      : (true as const),
+    origin: config.explicitOrigins.length > 0 ? config.explicitOrigins : (true as const),
     credentials: true,
   }),
 )
@@ -94,7 +121,8 @@ const io = new Server<ClientToServerEvents, ServerToClientEvents, Record<string,
   },
 })
 
-attachSocketIdentity(io)
+// Platform tokens are verified by an Engine.IO middleware before the WebSocket upgrade; Web Cookies are unchanged.
+attachSocketIdentity(io, platform ? { resolvePlatformIdentity: platform.resolvers.roomSocket } : {})
 initializeSocket(io)
 
 httpServer.on('error', (err: NodeJS.ErrnoException) => {
@@ -112,6 +140,13 @@ httpServer.listen(config.port, () => {
       ? `Accepting connections from explicit origins: ${config.explicitOrigins.join(', ')}`
       : 'Accepting connections from all origins (auto mode)',
   )
+  if (platform) {
+    logger.info('Mini-app platform access enabled')
+    // Best-effort warm-up only: keys otherwise load lazily with the first token, so a failure here never blocks startup.
+    void platform.auth
+      .refresh()
+      .catch(() => logger.warn('Mini-app platform JWKS warm-up failed; keys will load on demand'))
+  }
 })
 
 // Graceful shutdown

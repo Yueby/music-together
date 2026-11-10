@@ -33,6 +33,9 @@ pnpm dev:server
 | `REJOIN_TTL_MS` | 重连票据有效期 | `60000` |
 | `IDENTITY_COOKIE_SECURE` | 强制 Secure Cookie | 自动判断 |
 | `AUTO_FALLBACK_ENABLED` | 网易云/QQ 自动换源 | `true` |
+| `MAPP_AUDIO_MAX_BITRATE` | 微应用音频接口的最高码率（128/192/320/999） | `128` |
+| `MAPP_MAX_STREAMS` | 微应用音频同时转发的路数（1–32），超出的请求排队 15 秒 | `8` |
+| `TTML_DB_BASE_URL` | TTML 逐词歌词库 https 地址，服务端代理读取 | `https://amlldb.bikonoo.com` |
 
 客户端可通过 `VITE_SERVER_URL` 覆盖后端地址；默认使用当前访问地址自动推导。
 
@@ -67,6 +70,21 @@ packages/client/dist/
 ```
 
 服务端生产构建会引用 `shared/dist`；Express 在存在 `client/dist/index.html` 时托管前端 SPA。
+
+## 微应用打包
+
+`packages/mapp` 把现有网页前端适配为论坛微应用，后端与网页端共用同一个服务；它不参与根目录 `pnpm build`。
+
+```bash
+pnpm --filter @music-together/mapp typecheck
+pnpm exec vitest run packages/mapp
+
+# 使用社区应用页分配的真实 ID 与审定的 WSS 地址生成沙箱上传包
+MINI_APP_ID=平台应用ID MAPP_ROOM_URL='wss://你的域名/socket.io/?EIO=4&transport=websocket' \
+  pnpm --filter @music-together/mapp package
+```
+
+上传 ZIP 位于 `packages/mapp/dist/client-package/app.zip`；版本号取 `manifest.json`（`0.2.0`），沙箱测试无需传 `MINI_APP_VERSION`。主站后端需配置 `MAPP_ISSUER`、`MAPP_AUDIENCE`、`MAPP_APP_ID`（可选 `MAPP_JWKS_FILE`）才会接受平台连接，详见 [微应用兼容层](mini-app-compatibility.md)。本地预览不模拟平台 API；权限、出声和资源访问必须在真实 sandbox 检查。详见 [mapp README](../../packages/mapp/README.md)。
 
 ## 添加 shadcn/ui 组件
 

@@ -133,6 +133,15 @@ export const lyricQuerySchema = z.object({
   lyricId: z.string().min(1).max(200),
 })
 
+/** Sources that have a word-by-word TTML lyric library. */
+export const TTML_SOURCES = ['netease', 'tencent'] as const
+
+/** Same character set as real NetEase song IDs and QQ song mids; the server builds the upstream URL from it. */
+export const ttmlQuerySchema = z.object({
+  source: z.enum(TTML_SOURCES),
+  id: z.string().regex(/^[A-Za-z0-9_-]{1,64}$/),
+})
+
 export const coverQuerySchema = z.object({
   source: musicSourceSchema,
   picId: z.string().min(1).max(200),
@@ -167,4 +176,10 @@ export const voteStartSchema = z.discriminatedUnion('action', [
 
 export const voteCastSchema = z.object({
   approve: z.boolean(),
+})
+
+/** Mini-app room media request: only server room/track identifiers; arrays (duplicate query keys) are invalid. */
+export const mappRoomMediaQuerySchema = z.strictObject({
+  roomId: z.string().regex(/^[A-Z0-9_-]{6}$/),
+  trackId: z.string().min(1).max(200),
 })

@@ -10,6 +10,8 @@ import {
 } from '@/components/ui/dropdown-menu'
 import { Tooltip, TooltipContent, TooltipTrigger } from '@/components/ui/tooltip'
 import { getMedianRTT } from '@/lib/clockSync'
+import { hostRuntime } from '@/lib/hostRuntime'
+import { cn } from '@/lib/utils'
 import { useRoomStore } from '@/stores/roomStore'
 import { useSocketContext } from '@/providers/SocketProvider'
 import { toast } from 'sonner'
@@ -49,6 +51,7 @@ export function RoomHeader({ onOpenSearch, onOpenSettings, onOpenMembers, onLeav
         : 'text-destructive/60'
 
   const copyRoomLink = () => {
+    if (!hostRuntime.clipboard) return
     if (roomId) {
       navigator.clipboard.writeText(window.location.href)
       toast.success('房间链接已复制')
@@ -61,26 +64,31 @@ export function RoomHeader({ onOpenSearch, onOpenSettings, onOpenMembers, onLeav
         {roomId && (
           <>
             <span
-              className="max-w-[120px] cursor-pointer truncate text-sm font-semibold text-foreground active:opacity-70 sm:max-w-[200px] sm:cursor-default"
-              onClick={copyRoomLink}
+              className={cn(
+                'max-w-[120px] truncate text-sm font-semibold text-foreground sm:max-w-[200px] sm:cursor-default',
+                hostRuntime.clipboard ? 'cursor-pointer active:opacity-70' : 'cursor-default',
+              )}
+              onClick={hostRuntime.clipboard ? copyRoomLink : undefined}
             >
               {roomName}
             </span>
-            <Tooltip>
-              <TooltipTrigger asChild>
-                <Button
-                  variant="outline"
-                  size="sm"
-                  className="hidden h-7 gap-1 border-border/50 px-2 font-mono text-xs sm:flex"
-                  onClick={copyRoomLink}
-                  aria-label="复制房间链接"
-                >
-                  {roomId}
-                  <Copy className="h-3 w-3" />
-                </Button>
-              </TooltipTrigger>
-              <TooltipContent>复制房间链接</TooltipContent>
-            </Tooltip>
+            {hostRuntime.clipboard && (
+              <Tooltip>
+                <TooltipTrigger asChild>
+                  <Button
+                    variant="outline"
+                    size="sm"
+                    className="hidden h-7 gap-1 border-border/50 px-2 font-mono text-xs sm:flex"
+                    onClick={copyRoomLink}
+                    aria-label="复制房间链接"
+                  >
+                    {roomId}
+                    <Copy className="h-3 w-3" />
+                  </Button>
+                </TooltipTrigger>
+                <TooltipContent>复制房间链接</TooltipContent>
+              </Tooltip>
+            )}
             <Tooltip>
               <TooltipTrigger asChild>
                 <Button
@@ -185,11 +193,15 @@ export function RoomHeader({ onOpenSearch, onOpenSettings, onOpenMembers, onLeav
               <Settings className="mr-2 h-4 w-4" />
               设置
             </DropdownMenuItem>
-            <DropdownMenuSeparator />
-            <DropdownMenuItem onClick={copyRoomLink}>
-              <Copy className="mr-2 h-4 w-4" />
-              复制房间链接
-            </DropdownMenuItem>
+            {hostRuntime.clipboard && (
+              <>
+                <DropdownMenuSeparator />
+                <DropdownMenuItem onClick={copyRoomLink}>
+                  <Copy className="mr-2 h-4 w-4" />
+                  复制房间链接
+                </DropdownMenuItem>
+              </>
+            )}
             <DropdownMenuItem className="text-destructive focus:text-destructive" onClick={onLeaveRoom}>
               <LogOut className="mr-2 h-4 w-4" />
               离开房间

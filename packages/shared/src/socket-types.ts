@@ -20,6 +20,7 @@ import type {
 
 /** 服务端 → 客户端 事件接口 */
 export interface ServerToClientEvents {
+  [EVENTS.IDENTITY_READY]: (data: { userId: string }) => void
   [EVENTS.ROOM_CREATED]: (data: { roomId: string; userId: string }) => void
   [EVENTS.ROOM_STATE]: (room: RoomState) => void
   [EVENTS.ROOM_REJOIN_TOKEN]: (data: { roomId: string; token: string; expiresAt: number }) => void
@@ -37,6 +38,7 @@ export interface ServerToClientEvents {
   [EVENTS.ROOM_ROLE_CHANGED]: (data: { userId: string; role: UserRole }) => void
 
   [EVENTS.PLAYER_PLAY]: (data: { track: Track; playState: ScheduledPlayState }) => void
+  [EVENTS.PLAYER_PRELOAD]: (data: { track: Track }) => void
   [EVENTS.PLAYER_PAUSE]: (data: { playState: ScheduledPlayState }) => void
   [EVENTS.PLAYER_RESUME]: (data: { playState: ScheduledPlayState }) => void
   [EVENTS.PLAYER_SEEK]: (data: { playState: ScheduledPlayState }) => void
