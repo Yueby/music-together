@@ -3,6 +3,8 @@ import { useCoverWidth } from '@/hooks/useCoverWidth'
 import { useArtworkUrl } from '@/hooks/useArtworkUrl'
 import { useVote } from '@/hooks/useVote'
 import { SERVER_URL } from '@/lib/config'
+import { usesMeshRenderer } from '@/lib/backgroundRenderer'
+import { hostRuntime } from '@/lib/hostRuntime'
 import { cn } from '@/lib/utils'
 import { usePlayerStore } from '@/stores/playerStore'
 import { useSettingsStore } from '@/stores/settingsStore'
@@ -10,6 +12,7 @@ import { useSettingsStore } from '@/stores/settingsStore'
 import { BackgroundRender, MeshGradientRenderer, PixiRenderer } from '@applemusic-like-lyrics/react'
 import { AnimatePresence, LayoutGroup, motion } from 'motion/react'
 import { useCallback, useMemo, useState } from 'react'
+import { ErrorBoundary } from 'react-error-boundary'
 import { VoteBanner } from '../Vote/VoteBanner'
 import { LyricDisplay } from './LyricDisplay'
 import { NowPlaying } from './NowPlaying'
@@ -122,18 +125,21 @@ export function AudioPlayer({
       {/* AMLL fluid dynamic background powered by pixi.js */}
       {proxiedCover && (
         <div className="pointer-events-none absolute inset-0 z-0 opacity-80 saturate-[1.3]">
-          <BackgroundRender
-            album={proxiedCover}
-            renderer={bgRenderer === 'mesh' ? MeshGradientRenderer : PixiRenderer}
-            playing={isPlaying}
-            hasLyric={hasLyrics}
-            lowFreqVolume={bgReactToLowFreq ? lowFreqVolume : 1}
-            staticMode={bgStaticMode}
-            fps={bgFps}
-            flowSpeed={bgFlowSpeed}
-            renderScale={bgRenderScale}
-            style={FULL_SIZE_STYLE}
-          />
+          {/* Decorative only: if the renderer cannot start (e.g. a host forbidding WebGL setup), drop it quietly. */}
+          <ErrorBoundary fallback={null} resetKeys={[proxiedCover]}>
+            <BackgroundRender
+              album={proxiedCover}
+              renderer={usesMeshRenderer(bgRenderer, hostRuntime) ? MeshGradientRenderer : PixiRenderer}
+              playing={isPlaying}
+              hasLyric={hasLyrics}
+              lowFreqVolume={bgReactToLowFreq ? lowFreqVolume : 1}
+              staticMode={bgStaticMode}
+              fps={bgFps}
+              flowSpeed={bgFlowSpeed}
+              renderScale={bgRenderScale}
+              style={FULL_SIZE_STYLE}
+            />
+          </ErrorBoundary>
         </div>
       )}
 

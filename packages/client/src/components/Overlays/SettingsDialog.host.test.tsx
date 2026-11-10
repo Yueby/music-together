@@ -12,6 +12,7 @@ const runtimeState: { -readonly [Key in keyof HostRuntime]: HostRuntime[Key] } =
   nativeMediaSession: true,
   versionCheck: true,
   remoteArtwork: true,
+  pixiBackground: true,
   clipboard: true,
   externalLinks: true,
 }

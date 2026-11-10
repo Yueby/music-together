@@ -20,6 +20,7 @@ const fixture = vi.hoisted(() => ({
     nativeMediaSession: false,
     versionCheck: false,
     remoteArtwork: false,
+    pixiBackground: false,
     clipboard: false,
     externalLinks: false,
   },

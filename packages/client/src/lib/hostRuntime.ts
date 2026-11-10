@@ -5,6 +5,8 @@ export interface HostRuntime {
   readonly nativeMediaSession: boolean
   readonly versionCheck: boolean
   readonly remoteArtwork: boolean
+  /** PixiJS needs `new Function`; hosts that forbid eval fall back to the mesh gradient renderer. */
+  readonly pixiBackground: boolean
   readonly clipboard: boolean
   readonly externalLinks: boolean
 }
@@ -17,6 +19,7 @@ export const hostRuntime: HostRuntime = Object.freeze({
   nativeMediaSession: true,
   versionCheck: true,
   remoteArtwork: true,
+  pixiBackground: true,
   clipboard: true,
   externalLinks: true,
 })
