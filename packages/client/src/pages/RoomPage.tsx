@@ -10,6 +10,7 @@ import { ChatPanel } from '@/components/Chat/ChatPanel'
 import { RoomHeader } from '@/components/Room/RoomHeader'
 import { SearchDialog } from '@/components/Overlays/SearchDialog'
 import { QueueDrawer } from '@/components/Overlays/QueueDrawer'
+import { AccountDialog } from '@/components/Overlays/AccountDialog'
 import { SettingsDialog, type SettingsTab } from '@/components/Overlays/SettingsDialog'
 import { PasswordDialog } from '@/components/Lobby/PasswordDialog'
 import { Drawer, DrawerContent, DrawerHeader, DrawerTitle } from '@/components/ui/drawer'
@@ -65,6 +66,7 @@ export default function RoomPage() {
   const [searchOpen, setSearchOpen] = useState(false)
   const [queueOpen, setQueueOpen] = useState(false)
   const [settingsOpen, setSettingsOpen] = useState(false)
+  const [accountOpen, setAccountOpen] = useState(false)
   const [settingsInitialTab, setSettingsInitialTab] = useState<SettingsTab | undefined>(undefined)
 
   // Fallback password dialog state (edge case: password changed after pre-check)
@@ -313,6 +315,7 @@ export default function RoomPage() {
           <RoomHeader
             onOpenSearch={() => setSearchOpen(true)}
             onOpenSettings={() => setSettingsOpen(true)}
+            onOpenAccount={() => setAccountOpen(true)}
             onOpenMembers={handleOpenMembers}
             onLeaveRoom={handleLeaveRoom}
           />
@@ -377,6 +380,7 @@ export default function RoomPage() {
             onSetUserRole={setUserRole}
             initialTab={settingsInitialTab}
           />
+          <AccountDialog open={accountOpen} onOpenChange={setAccountOpen} />
         </div>
 
         {/* Fallback password dialog for edge cases (password changed after pre-check) */}

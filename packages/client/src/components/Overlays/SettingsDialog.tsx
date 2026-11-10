@@ -6,20 +6,19 @@ import {
 } from '@/components/ui/responsive-dialog'
 import { ScrollArea } from '@/components/ui/scroll-area'
 import { cn } from '@/lib/utils'
-import { hostRuntime } from '@/lib/hostRuntime'
-import { KeyRound, Palette, Settings2, Type, Users, type LucideIcon } from 'lucide-react'
+import { Palette, Settings2, Type, Users, type LucideIcon } from 'lucide-react'
 import { useEffect, useState } from 'react'
 import { RoomSettingsSection } from './Settings/RoomSettingsSection'
 import { MembersSection } from './Settings/MembersSection'
 import { AppearanceSection } from './Settings/AppearanceSection'
 import { LyricsSection } from './Settings/LyricsSection'
-import { PlatformHub } from './Settings/PlatformHub'
 
 // ---------------------------------------------------------------------------
 // Types
 // ---------------------------------------------------------------------------
 
-export type SettingsTab = 'room' | 'members' | 'appearance' | 'lyrics' | 'accounts'
+/** Music accounts live in their own dialog (`AccountDialog`), not here. */
+export type SettingsTab = 'room' | 'members' | 'appearance' | 'lyrics'
 
 interface SettingsDialogProps {
   open: boolean
@@ -71,7 +70,6 @@ function NavItem({
 const TABS: { id: SettingsTab; icon: LucideIcon; label: string }[] = [
   { id: 'room', icon: Settings2, label: '房间' },
   { id: 'members', icon: Users, label: '成员' },
-  { id: 'accounts', icon: KeyRound, label: '账号' },
   { id: 'appearance', icon: Palette, label: '外观' },
   { id: 'lyrics', icon: Type, label: '歌词' },
 ]
@@ -87,18 +85,12 @@ export function SettingsDialog({
   onSetUserRole,
   initialTab,
 }: SettingsDialogProps) {
-  const effectiveInitial = initialTab === 'accounts' && !hostRuntime.platformAccounts ? 'room' : (initialTab || 'room')
-  const [tab, setTab] = useState<SettingsTab>(effectiveInitial)
+  const [tab, setTab] = useState<SettingsTab>(initialTab ?? 'room')
 
   // When dialog opens with an initialTab, jump to it
   useEffect(() => {
-    if (open && initialTab) {
-      const target = initialTab === 'accounts' && !hostRuntime.platformAccounts ? 'room' : initialTab
-      setTab(target)
-    }
+    if (open && initialTab) setTab(initialTab)
   }, [open, initialTab])
-
-  const visibleTabs = hostRuntime.platformAccounts ? TABS : TABS.filter((t) => t.id !== 'accounts')
 
   return (
     <ResponsiveDialog open={open} onOpenChange={onOpenChange}>
@@ -109,7 +101,7 @@ export function SettingsDialog({
           <div className="flex shrink-0 flex-col border-b md:hidden">
             <ResponsiveDialogTitle className="px-4 pt-4 pb-2 text-lg font-semibold">设置</ResponsiveDialogTitle>
             <nav className="scrollbar-hide flex gap-1 overflow-x-auto px-4 pb-2" role="tablist" aria-label="设置分类">
-              {visibleTabs.map((t) => (
+              {TABS.map((t) => (
                 <button
                   key={t.id}
                   role="tab"
@@ -133,27 +125,20 @@ export function SettingsDialog({
           <nav className="hidden w-48 shrink-0 flex-col border-r p-4 md:flex" role="tablist" aria-label="设置分类">
             <ResponsiveDialogTitle className="mb-4 px-3 text-lg font-semibold">设置</ResponsiveDialogTitle>
             <div className="space-y-1">
-              {visibleTabs.map((t) => (
+              {TABS.map((t) => (
                 <NavItem key={t.id} icon={t.icon} label={t.label} active={tab === t.id} onClick={() => setTab(t.id)} />
               ))}
             </div>
           </nav>
 
-          {/* Content area — accounts tab uses its own scroll management for virtual list */}
-          {tab === 'accounts' && hostRuntime.platformAccounts ? (
-            <div className="flex min-h-0 min-w-0 flex-1 flex-col overflow-hidden p-4 sm:p-6">
-              <PlatformHub />
+          <ScrollArea className="min-h-0 flex-1">
+            <div className="p-4 sm:p-6">
+              {tab === 'room' && <RoomSettingsSection onUpdateSettings={onUpdateSettings} />}
+              {tab === 'members' && <MembersSection onSetUserRole={onSetUserRole} />}
+              {tab === 'lyrics' && <LyricsSection />}
+              {tab === 'appearance' && <AppearanceSection />}
             </div>
-          ) : (
-            <ScrollArea className="min-h-0 flex-1">
-              <div className="p-4 sm:p-6">
-                {tab === 'room' && <RoomSettingsSection onUpdateSettings={onUpdateSettings} />}
-                {tab === 'members' && <MembersSection onSetUserRole={onSetUserRole} />}
-                {tab === 'lyrics' && <LyricsSection />}
-                {tab === 'appearance' && <AppearanceSection />}
-              </div>
-            </ScrollArea>
-          )}
+          </ScrollArea>
         </div>
       </ResponsiveDialogContent>
     </ResponsiveDialog>
