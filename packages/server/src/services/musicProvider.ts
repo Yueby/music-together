@@ -1,3 +1,4 @@
+import { createHash } from 'node:crypto'
 import Meting from '@meting/core'
 import type { MusicSource, Track } from '@music-together/shared'
 import { LRUCache } from 'lru-cache'
@@ -125,6 +126,22 @@ interface TencentSearchSong {
 
 /** External API timeout (ms) */
 const API_TIMEOUT_MS = 15_000
+
+/**
+ * Key of the cached id list of a playlist or album. It must separate:
+ * - kinds: an album and a playlist can share a numeric id on the same platform;
+ * - credentials: a list fetched with a user's cookie can include private tracks and must never be served to
+ *   anyone else, so each distinct cookie gets its own entry (only a short hash of it is kept, never the cookie).
+ */
+export function playlistCacheKey(
+  source: MusicSource,
+  playlistId: string,
+  type: 'playlist' | 'album',
+  cookie?: string | null,
+): string {
+  const scope = cookie ? `u${createHash('sha256').update(cookie).digest('hex').slice(0, 16)}` : 'public'
+  return `${source}:${type}:${scope}:${playlistId}`
+}
 
 /** Run fetch factories with an abort signal; legacy SDK promises still use a bounded wait. */
 async function withTimeout<T>(work: Promise<T> | ((signal: AbortSignal) => Promise<T>), ms = API_TIMEOUT_MS): Promise<T | null> {
@@ -950,7 +967,7 @@ class MusicProvider {
     cookie?: string | null,
     type: 'playlist' | 'album' = 'playlist'
   ): Promise<{ ids: string[]; total: number }> {
-    const cacheKey = `${source}:${playlistId}`
+    const cacheKey = playlistCacheKey(source, playlistId, type, cookie)
 
     // Check reference index — verify registry still has all tracks
     const indexed = this.playlistIndex.get(cacheKey)
@@ -1307,9 +1324,9 @@ class MusicProvider {
     if (!tracks) {
       // Registry eviction between fetchFullPlaylist and hydrate (very rare).
       // Clear index and retry once.
-      this.playlistIndex.delete(`${source}:${playlistId}`)
+      this.playlistIndex.delete(playlistCacheKey(source, playlistId, type, cookie))
       logger.warn(`Playlist page hydration failed, retrying: ${source}/${playlistId}`)
-      const retry = await this.fetchFullPlaylist(source, playlistId, playlistTotal, cookie)
+      const retry = await this.fetchFullPlaylist(source, playlistId, playlistTotal, cookie, type)
       if (retry.total === 0) return { tracks: [], total: 0, hasMore: false }
       const retryPageIds = retry.ids.slice(offset, offset + limit)
       tracks = this.hydrateFromRegistry(source, retryPageIds)

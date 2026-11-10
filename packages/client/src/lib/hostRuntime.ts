@@ -1,10 +1,14 @@
+/**
+ * What the host genuinely cannot do. Every flag here is a platform restriction (no clipboard, no external links, no
+ * eval, no browser MediaSession...), not a feature switch: features are built once and work on every host, and a
+ * capability only appears here when the host makes it impossible.
+ */
 export interface HostRuntime {
   readonly kind: 'web' | 'mapp'
+  /** Music-platform account login (cookies, QR codes, own playlists). Still to be bridged for the mini-app. */
   readonly platformAccounts: boolean
-  readonly collections: boolean
   readonly nativeMediaSession: boolean
   readonly versionCheck: boolean
-  readonly remoteArtwork: boolean
   /** PixiJS needs `new Function`; hosts that forbid eval fall back to the mesh gradient renderer. */
   readonly pixiBackground: boolean
   readonly clipboard: boolean
@@ -15,10 +19,8 @@ export interface HostRuntime {
 export const hostRuntime: HostRuntime = Object.freeze({
   kind: 'web',
   platformAccounts: true,
-  collections: true,
   nativeMediaSession: true,
   versionCheck: true,
-  remoteArtwork: true,
   pixiBackground: true,
   clipboard: true,
   externalLinks: true,

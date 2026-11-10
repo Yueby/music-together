@@ -1,10 +1,20 @@
 import { Router, type Request, type RequestHandler, type Response, type Router as RouterType } from 'express'
-import { MAPP_METADATA_MAX_BYTES, MAPP_METADATA_TARGETS, parseMappMetadataRequest } from '@music-together/shared'
 import {
+  MAPP_METADATA_MAX_BYTES,
+  MAPP_METADATA_TARGETS,
+  parseMappMetadataRequest,
+  type MappMetadataRequest,
+} from '@music-together/shared'
+import {
+  getArtistAlbumsMetadata,
+  getArtistMetadata,
+  getArtistSongsMetadata,
   getMusicLyricMetadata,
   getMusicTtmlMetadata,
+  getPlaylistPageMetadata,
   searchMusicMetadata,
 } from '../controllers/musicMetadataController.js'
+import { ArtistError } from '../services/artistService.js'
 import { coverProxyRateLimit, musicApiRateLimit } from '../middleware/httpRateLimiter.js'
 import { fetchPlatformCover, type CoverFailure, type CoverResult } from '../services/coverProxy.js'
 import { withTimeout } from '../utils/withTimeout.js'
@@ -25,9 +35,17 @@ interface Options {
   search?: typeof searchMusicMetadata
   lyric?: typeof getMusicLyricMetadata
   ttml?: typeof getMusicTtmlMetadata
+  artist?: typeof getArtistMetadata
+  artistSongs?: typeof getArtistSongsMetadata
+  artistAlbums?: typeof getArtistAlbumsMetadata
+  playlist?: typeof getPlaylistPageMetadata
   cover?: (url: string) => Promise<CoverResult>
 }
-type ParsedRequest = ReturnType<typeof parseMappMetadataRequest>
+type ParsedRequest = MappMetadataRequest
+/** Handler for a JSON target: receives exactly the query type the shared schema produces for it. */
+type JsonHandlers = {
+  [K in Exclude<ParsedRequest['kind'], 'cover'>]: (query: Extract<ParsedRequest, { kind: K }>['query']) => Promise<unknown>
+}
 
 const AUTH_TIMEOUT_MS = 6_000
 const REQUEST_TIMEOUT_MS = 20_000
@@ -66,7 +84,18 @@ function sendError(res: Response, error: unknown): void {
     return
   }
   const safe = error instanceof MetadataError ? error : new MetadataError(502, 'METADATA_FAILED')
-  res.status(safe.status).json({ code: safe.code })
+  // 502/504 from the origin are replaced by Cloudflare with a page that has no CORS headers, which the mini-app can
+  // then only report as a CORS failure. Answer 503 on the wire; the fixed `code` carries the distinction.
+  const wire = safe.status === 502 || safe.status === 504 ? 503 : safe.status
+  res.status(wire).json({ code: safe.code })
+}
+
+/** Catalog failures (artist pages) as fixed codes; anything else keeps the generic failure. */
+function catalogError(error: unknown): unknown {
+  if (!(error instanceof ArtistError)) return error
+  if (error.code === 'ARTIST_UNSUPPORTED') return new MetadataError(400, 'METADATA_UNSUPPORTED')
+  if (error.code === 'ARTIST_NOT_FOUND') return new MetadataError(404, 'METADATA_NOT_FOUND')
+  return new MetadataError(502, 'METADATA_FAILED')
 }
 
 /** Fixed codes only; the upstream status and body never reach the platform client. */
@@ -91,7 +120,26 @@ export function createPlatformMetadataRouter(options: Options): RouterType {
   const search = options.search ?? searchMusicMetadata
   const lyric = options.lyric ?? getMusicLyricMetadata
   const ttml = options.ttml ?? getMusicTtmlMetadata
+  const artist = options.artist ?? getArtistMetadata
+  const artistSongs = options.artistSongs ?? getArtistSongsMetadata
+  const artistAlbums = options.artistAlbums ?? getArtistAlbumsMetadata
+  const playlist = options.playlist ?? getPlaylistPageMetadata
   const cover = options.cover ?? ((url: string) => fetchPlatformCover(url))
+  /** One entry per JSON target; the type forces every new target in the shared table to get a handler. */
+  const handlers: JsonHandlers = {
+    search: (query) => search(query),
+    lyric: (query) => lyric(query),
+    ttml: async (query) => {
+      const found = await ttml(query)
+      if (!found.ok) throw new MetadataError(502, 'METADATA_FAILED')
+      return { lines: found.lines }
+    },
+    artist: (query) => artist(query),
+    artistSongs: (query) => artistSongs(query),
+    artistAlbums: (query) => artistAlbums(query),
+    // Anonymous on purpose: personal playlists need an account and never use this public target.
+    playlist: (query) => playlist(query, null),
+  }
   const searchLimit = options.rateLimit ?? musicApiRateLimit
   const coverLimit = options.coverRateLimit ?? coverProxyRateLimit
   const router = Router()
@@ -175,13 +223,12 @@ export function createPlatformMetadataRouter(options: Options): RouterType {
         res.status(200).type(result.contentType).send(result.body)
         return
       }
-      const work = Promise.resolve().then<unknown>(async () => {
-        if (parsed.kind === 'search') return search(parsed.query)
-        if (parsed.kind === 'lyric') return lyric(parsed.query)
-        const found = await ttml(parsed.query)
-        if (!found.ok) throw new MetadataError(502, 'METADATA_FAILED')
-        return { lines: found.lines }
-      })
+      const handler = handlers[parsed.kind] as (query: unknown) => Promise<unknown>
+      const work = Promise.resolve()
+        .then(() => handler(parsed.query))
+        .catch((error: unknown) => {
+          throw catalogError(error)
+        })
       const json = JSON.stringify(
         await withTimeout(work, REQUEST_TIMEOUT_MS, new MetadataError(504, 'METADATA_TIMEOUT')),
       )

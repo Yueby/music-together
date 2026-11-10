@@ -1,12 +1,21 @@
 import { useCallback, useEffect, useRef, useState } from 'react'
-import { EVENTS, type MusicSource, type Playlist, type Track } from '@music-together/shared'
+import { EVENTS, MAPP_PLAYLIST_PAGE_MAX, type MusicSource, type Playlist, type Track } from '@music-together/shared'
 import { useSocketContext } from '@/providers/SocketProvider'
 import { useRoomStore } from '@/stores/roomStore'
 import { SERVER_URL } from '@/lib/config'
 import { hostRuntime } from '@/lib/hostRuntime'
 import { metadataFetch } from '@/lib/metadataFetch'
 
-const PAGE_SIZE = 1000
+/** Matches the most tracks a mini-app playlist page may carry, so every host pages the same way. */
+const PAGE_SIZE = MAPP_PLAYLIST_PAGE_MAX
+
+/**
+ * Room scope for a playlist request. It selects the caller's own music account (private lists) and exists only on
+ * hosts with account login; the others read public lists anonymously.
+ */
+function playlistRoomScope(): string | undefined {
+  return hostRuntime.platformAccounts ? useRoomStore.getState().room?.id : undefined
+}
 
 /** Build the playlist API URL with all query parameters */
 function buildPlaylistUrl(
@@ -129,7 +138,6 @@ export function usePlaylist() {
    */
   const fetchPlaylistTracks = useCallback(
     async (source: MusicSource, playlistId: string, trackCount?: number, type: 'playlist' | 'album' = 'playlist'): Promise<Track[]> => {
-      if (!hostRuntime.collections) return []
       // Reset state immediately — prevents flashing old data when switching playlists
       setPlaylistTracks([])
       setPlaylistTotal(0)
@@ -145,7 +153,7 @@ export function usePlaylist() {
       try {
         const url = buildPlaylistUrl(source, playlistId, PAGE_SIZE, 0, {
           total: trackCount,
-          roomId: useRoomStore.getState().room?.id,
+          roomId: playlistRoomScope(),
           type,
         })
         const res = await metadataFetch(url, { credentials: 'include' })
@@ -186,7 +194,6 @@ export function usePlaylist() {
    * even before React batches the state update.
    */
   const loadMoreTracks = useCallback(async () => {
-    if (!hostRuntime.collections) return
     const ctx = currentPlaylistRef.current
     if (!ctx || loadingMoreRef.current || !hasMoreTracks) return
 
@@ -197,7 +204,7 @@ export function usePlaylist() {
       const offset = offsetRef.current
       const url = buildPlaylistUrl(ctx.source, ctx.id, PAGE_SIZE, offset, {
         total: playlistTotal,
-        roomId: useRoomStore.getState().room?.id,
+        roomId: playlistRoomScope(),
         type: ctx.type,
       })
       const res = await metadataFetch(url, { credentials: 'include' })

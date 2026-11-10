@@ -8,10 +8,8 @@ import type { HostRuntime } from '@/lib/hostRuntime'
 const runtimeState: { -readonly [Key in keyof HostRuntime]: HostRuntime[Key] } = {
   kind: 'web',
   platformAccounts: true,
-  collections: true,
   nativeMediaSession: true,
   versionCheck: true,
-  remoteArtwork: true,
   pixiBackground: true,
   clipboard: true,
   externalLinks: true,

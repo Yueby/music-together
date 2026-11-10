@@ -10,6 +10,7 @@ import {
   musicProvider,
   normalizeKugouTemplateCoverUrl,
   normalizeNeteaseCoverUrl,
+  playlistCacheKey,
 } from './musicProvider.js'
 
 const tencentSong = {
@@ -222,6 +223,30 @@ describe('provider cover URL normalization', () => {
     expect(deriveThumbnailCoverUrl('kugou', 'https://example.com/5000/abc.jpg')).toBe(
       'https://example.com/5000/abc.jpg',
     )
+  })
+})
+
+describe('playlistCacheKey', () => {
+  it('keeps albums and playlists with the same numeric id apart', () => {
+    expect(playlistCacheKey('netease', '123', 'album')).not.toBe(playlistCacheKey('netease', '123', 'playlist'))
+  })
+
+  it('keeps platforms apart', () => {
+    expect(playlistCacheKey('netease', '123', 'playlist')).not.toBe(playlistCacheKey('tencent', '123', 'playlist'))
+  })
+
+  it('never shares an entry fetched with a cookie with anonymous callers or other accounts', () => {
+    const anonymous = playlistCacheKey('netease', '123', 'playlist')
+    const alice = playlistCacheKey('netease', '123', 'playlist', 'MUSIC_U=alice-secret')
+    const bob = playlistCacheKey('netease', '123', 'playlist', 'MUSIC_U=bob-secret')
+    expect(new Set([anonymous, alice, bob]).size).toBe(3)
+    // An empty cookie is anonymous, and the same cookie always maps to the same entry.
+    expect(playlistCacheKey('netease', '123', 'playlist', '')).toBe(anonymous)
+    expect(playlistCacheKey('netease', '123', 'playlist', 'MUSIC_U=alice-secret')).toBe(alice)
+  })
+
+  it('does not put the cookie itself into the key', () => {
+    expect(playlistCacheKey('netease', '123', 'playlist', 'MUSIC_U=alice-secret')).not.toContain('alice')
   })
 })
 

@@ -2,6 +2,7 @@ import { describe, expect, it } from 'vitest'
 import {
   MAPP_COVER_MAX_BYTES,
   MAPP_METADATA_MAX_BYTES,
+  MAPP_METADATA_SCHEMAS,
   MAPP_METADATA_TARGETS,
   parseMappMetadataRequest,
   mappMetadataSearchQuerySchema,
@@ -11,7 +12,7 @@ import {
 const search = '/api/music/search?source=netease&keyword=fixture'
 const lyric = '/api/music/lyric?source=tencent&lyricId=fixture'
 describe('reviewed metadata read contract', () => {
-  it('publishes only search, lyric, TTML and cover targets, a one MiB JSON limit and a two MiB cover limit', () => {
+  it('publishes only the reviewed targets, a one MiB JSON limit and a two MiB cover limit', () => {
     expect(MAPP_METADATA_MAX_BYTES).toBe(1024 * 1024)
     expect(MAPP_COVER_MAX_BYTES).toBe(2 * 1024 * 1024)
     expect(MAPP_METADATA_TARGETS).toEqual({
@@ -23,7 +24,76 @@ describe('reviewed metadata read contract', () => {
       lyric: { path: '/api/music/lyric', endpoint: 'musicLyric', queryKeys: ['source', 'lyricId'] },
       ttml: { path: '/api/music/ttml', endpoint: 'musicTtml', queryKeys: ['source', 'id'] },
       cover: { path: '/api/music/cover-proxy', endpoint: 'musicCover', queryKeys: ['url'] },
+      artist: { path: '/api/music/artist', endpoint: 'musicArtist', queryKeys: ['source', 'id'] },
+      artistSongs: {
+        path: '/api/music/artist/songs',
+        endpoint: 'musicArtistSongs',
+        queryKeys: ['source', 'id', 'offset', 'limit'],
+      },
+      artistAlbums: {
+        path: '/api/music/artist/albums',
+        endpoint: 'musicArtistAlbums',
+        queryKeys: ['source', 'id', 'offset', 'limit'],
+      },
+      playlist: {
+        path: '/api/music/playlist',
+        endpoint: 'musicPlaylist',
+        queryKeys: ['source', 'id', 'type', 'limit', 'offset', 'total'],
+      },
     })
+  })
+
+  it('keeps every target\'s declared query keys identical to its schema (the JWT and manifest depend on them)', () => {
+    for (const [kind, target] of Object.entries(MAPP_METADATA_TARGETS)) {
+      const schema = MAPP_METADATA_SCHEMAS[kind as keyof typeof MAPP_METADATA_SCHEMAS] as unknown as {
+        shape: Record<string, unknown>
+      }
+      expect([...target.queryKeys].sort(), kind).toEqual(Object.keys(schema.shape).sort())
+    }
+    // Endpoint names and paths are unique, or one declaration would shadow another.
+    const targets = Object.values(MAPP_METADATA_TARGETS)
+    expect(new Set(targets.map((target) => target.endpoint)).size).toBe(targets.length)
+    expect(new Set(targets.map((target) => target.path)).size).toBe(targets.length)
+  })
+
+  it.each([
+    ['/api/music/artist?source=netease&id=3684', 'artist', { source: 'netease', id: '3684' }],
+    [
+      '/api/music/artist/songs?source=netease&id=3684',
+      'artistSongs',
+      { source: 'netease', id: '3684', offset: 0, limit: 30 },
+    ],
+    [
+      '/api/music/artist/albums?source=netease&id=3684&offset=30&limit=30',
+      'artistAlbums',
+      { source: 'netease', id: '3684', offset: 30, limit: 30 },
+    ],
+    [
+      '/api/music/playlist?source=tencent&id=abc&type=album',
+      'playlist',
+      { source: 'tencent', id: 'abc', type: 'album', limit: 100, offset: 0, total: 0 },
+    ],
+  ])('parses %s with every key present, defaults included', (raw, kind, query) => {
+    expect(parseMappMetadataRequest(raw)).toMatchObject({ kind, query })
+  })
+
+  it.each([
+    '/api/music/artist?source=netease',
+    '/api/music/artist?source=netease&id=1&extra=1',
+    '/api/music/artist?source=netease&id=a%2Fb',
+    '/api/music/artist/songs?source=netease&id=1&limit=51',
+    '/api/music/playlist?source=netease&id=1&limit=201',
+    '/api/music/playlist?source=netease&id=1&roomId=ABC123',
+    '/api/music/playlist?source=netease&id=1&type=artist',
+  ])('rejects %s', (raw) => {
+    expect(() => parseMappMetadataRequest(raw)).toThrow()
+  })
+
+  it('reports a malformed escape as a rejected query, not a stray URIError', () => {
+    // %C3 alone is a valid-looking escape whose UTF-8 sequence is incomplete.
+    expect(() => parseMappMetadataRequest('/api/music/search?source=netease&keyword=%C3')).toThrow(
+      'METADATA_QUERY_REJECTED',
+    )
   })
   it.each(['netease', 'tencent'])('accepts a TTML request for %s with a plain song id', (source) => {
     expect(parseMappMetadataRequest(`/api/music/ttml?source=${source}&id=Ab_12-3`)).toMatchObject({
@@ -91,7 +161,8 @@ describe('reviewed metadata read contract', () => {
   it.each([
     '/api/music/url?source=netease&urlId=fixture',
     '/api/music/cover?source=netease&picId=fixture',
-    '/api/music/playlist?source=netease&id=fixture',
+    '/api/music/playlist/extra?source=netease&id=fixture',
+    '/api/music/artist/popular?source=netease&id=1',
     '/api/rooms',
     '/api/check',
     '/api/version',

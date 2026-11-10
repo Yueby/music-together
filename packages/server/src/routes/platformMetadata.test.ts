@@ -3,6 +3,7 @@ import type { NextFunction, Request, RequestHandler, Response } from 'express'
 import { afterEach, describe, expect, it, vi } from 'vitest'
 import { MAPP_METADATA_MAX_BYTES } from '@music-together/shared'
 import { createPlatformMetadataRouter } from './platformMetadata.js'
+import { ArtistError } from '../services/artistService.js'
 import { musicProvider } from '../services/musicProvider.js'
 
 vi.mock('../services/musicProvider.js', () => ({
@@ -95,6 +96,10 @@ function fixture(
   const lyric = vi.fn().mockResolvedValue({ lyric: '[00:01]fixture', tlyric: '', romalrc: '', yrc: '' })
   const ttml = vi.fn().mockResolvedValue({ ok: true, lines: [{ words: [{ word: 'Hello' }] }] })
   const cover = vi.fn().mockResolvedValue({ ok: true, contentType: 'image/jpeg', body: Buffer.from([1, 2, 3]) })
+  const artist = vi.fn().mockResolvedValue({ artist: { id: '1', name: 'A' }, songs: { items: [] }, albums: { items: [] } })
+  const artistSongs = vi.fn().mockResolvedValue({ items: [], hasMore: false })
+  const artistAlbums = vi.fn().mockResolvedValue({ items: [], hasMore: false })
+  const playlist = vi.fn().mockResolvedValue({ tracks: [], total: 0, offset: 0, hasMore: false })
   const rateLimit = vi.fn<RequestHandler>((_req, _res, next) => next())
   const coverRateLimit = vi.fn<RequestHandler>((_req, _res, next) => next())
   const router = createPlatformMetadataRouter({
@@ -102,7 +107,7 @@ function fixture(
     verifyIdentity,
     rateLimit: changes.rateLimit ?? rateLimit,
     coverRateLimit,
-    ...(changes.defaults ? {} : { search, lyric, ttml, cover }),
+    ...(changes.defaults ? {} : { search, lyric, ttml, cover, artist, artistSongs, artistAlbums, playlist }),
   })
   /** Resolves when the router either answers or hands the request back to the original chain. */
   const run = () =>
@@ -112,10 +117,92 @@ function fixture(
       router(req as unknown as Request, res as unknown as Response, done)
       finish()
     })
-  return { req, res, verifyIdentity, search, lyric, ttml, cover, rateLimit, coverRateLimit, run }
+  return {
+    req,
+    res,
+    verifyIdentity,
+    search,
+    lyric,
+    ttml,
+    cover,
+    artist,
+    artistSongs,
+    artistAlbums,
+    playlist,
+    rateLimit,
+    coverRateLimit,
+    run,
+  }
 }
 
 const ttmlRaw = '/api/music/ttml?source=netease&id=1234'
+
+describe('platform catalog targets (artist pages and public playlists)', () => {
+  it.each([
+    ['/api/music/artist?source=netease&id=3684', 'artist', { source: 'netease', id: '3684' }],
+    [
+      '/api/music/artist/songs?source=netease&id=3684&offset=50&limit=50',
+      'artistSongs',
+      { source: 'netease', id: '3684', offset: 50, limit: 50 },
+    ],
+    [
+      '/api/music/artist/albums?source=netease&id=3684',
+      'artistAlbums',
+      { source: 'netease', id: '3684', offset: 0, limit: 30 },
+    ],
+  ] as const)('serves %s from the shared controller with the parsed query', async (path, handler, query) => {
+    const f = fixture({ raw: path })
+    expect(await f.run()).toBe('answered')
+    expect(f[handler]).toHaveBeenCalledExactlyOnceWith(query)
+    expect(f.rateLimit).toHaveBeenCalledOnce()
+    expect(f.res.statusCode).toBe(200)
+  })
+
+  it('serves a public playlist page anonymously, whatever cookie the request carries', async () => {
+    const path = '/api/music/playlist?source=netease&id=42&type=album'
+    const f = fixture({ raw: path })
+    expect(await f.run()).toBe('answered')
+    // `null`: the platform identity never selects a music account, so a private list can never leak through here.
+    expect(f.playlist).toHaveBeenCalledExactlyOnceWith(
+      { source: 'netease', id: '42', type: 'album', limit: 100, offset: 0, total: 0 },
+      null,
+    )
+    expect(f.res.statusCode).toBe(200)
+  })
+
+  it.each([
+    ['ARTIST_UNSUPPORTED', 400, 'METADATA_UNSUPPORTED'],
+    ['ARTIST_NOT_FOUND', 404, 'METADATA_NOT_FOUND'],
+    ['ARTIST_UPSTREAM', 503, 'METADATA_FAILED'],
+  ] as const)('maps %s to a fixed code and status', async (code, status, expected) => {
+    const f = fixture({ raw: '/api/music/artist?source=netease&id=1' })
+    f.artist.mockRejectedValue(new ArtistError(code, code === 'ARTIST_UPSTREAM' ? 503 : status))
+    expect(await f.run()).toBe('answered')
+    expect(f.res.statusCode).toBe(status)
+    expect(f.res.body).toEqual({ code: expected })
+  })
+
+  it('hides unexpected catalog failures behind the generic code', async () => {
+    const f = fixture({ raw: '/api/music/artist?source=netease&id=1' })
+    f.artist.mockRejectedValue(new Error('cookie=secret'))
+    expect(await f.run()).toBe('answered')
+    expect(f.res.statusCode).toBe(503)
+    expect(JSON.stringify(f.res.body)).not.toContain('secret')
+  })
+
+  it.each([
+    '/api/music/playlist?source=netease&id=1&roomId=ABC123',
+    '/api/music/playlist?source=netease&id=1&limit=500',
+    '/api/music/artist?source=netease',
+  ])('rejects %s before any handler runs', async (path) => {
+    const f = fixture({ raw: path })
+    expect(await f.run()).toBe('answered')
+    expect(f.res.statusCode).toBe(400)
+    expect(f.verifyIdentity).not.toHaveBeenCalled()
+    expect(f.playlist).not.toHaveBeenCalled()
+    expect(f.artist).not.toHaveBeenCalled()
+  })
+})
 
 describe('platform TTML target', () => {
   it('verifies the identity, applies the music limiter and answers with the parsed lyric lines as JSON', async () => {
@@ -151,7 +238,7 @@ describe('platform TTML target', () => {
     const f = fixture({ raw: ttmlRaw })
     f.ttml.mockResolvedValue({ ok: false })
     expect(await f.run()).toBe('answered')
-    expect(f.res.statusCode).toBe(502)
+    expect(f.res.statusCode).toBe(503)
     expect(f.res.body).toEqual({ code: 'METADATA_FAILED' })
   })
 
@@ -202,10 +289,10 @@ describe('platform cover target', () => {
 
   it.each([
     [{ ok: false, status: 403, error: 'Host not allowed', kind: 'host' }, 403, 'METADATA_COVER_HOST_REJECTED'],
-    [{ ok: false, status: 413, error: 'Invalid or oversized image', kind: 'invalid' }, 502, 'METADATA_COVER_REJECTED'],
-    [{ ok: false, status: 404, error: 'Upstream fetch failed', kind: 'upstream' }, 502, 'METADATA_COVER_FAILED'],
+    [{ ok: false, status: 413, error: 'Invalid or oversized image', kind: 'invalid' }, 503, 'METADATA_COVER_REJECTED'],
+    [{ ok: false, status: 404, error: 'Upstream fetch failed', kind: 'upstream' }, 503, 'METADATA_COVER_FAILED'],
     // An expired or hotlink-protected image is an upstream failure, not an allowlist problem.
-    [{ ok: false, status: 403, error: 'Upstream fetch failed', kind: 'upstream' }, 502, 'METADATA_COVER_FAILED'],
+    [{ ok: false, status: 403, error: 'Upstream fetch failed', kind: 'upstream' }, 503, 'METADATA_COVER_FAILED'],
   ])('maps upstream result %# to a fixed code without leaking details', async (result, status, code) => {
     const f = fixture({ raw: coverRaw })
     f.cover.mockResolvedValue(result)
@@ -219,7 +306,7 @@ describe('platform cover target', () => {
     const f = fixture({ raw: coverRaw })
     f.cover.mockRejectedValue(new Error('connect ECONNREFUSED 10.0.0.1:443'))
     await f.run()
-    expect(f.res.statusCode).toBe(502)
+    expect(f.res.statusCode).toBe(503)
     expect(f.res.body).toEqual({ code: 'METADATA_FAILED' })
   })
 
@@ -230,7 +317,7 @@ describe('platform cover target', () => {
     const done = f.run()
     await vi.advanceTimersByTimeAsync(20_001)
     await done
-    expect(f.res.statusCode).toBe(504)
+    expect(f.res.statusCode).toBe(503)
     expect(f.res.body).toEqual({ code: 'METADATA_TIMEOUT' })
   })
 
@@ -304,7 +391,7 @@ describe('platform cover target', () => {
         vi.stubGlobal('fetch', vi.fn().mockResolvedValue(response))
         const f = fixture({ raw: coverRaw, defaults: true })
         await f.run()
-        expect(f.res.statusCode).toBe(502)
+        expect(f.res.statusCode).toBe(503)
         expect(f.res.body).toEqual({ code: 'METADATA_COVER_REJECTED' })
       }
     })
@@ -329,7 +416,7 @@ describe('platform cover target', () => {
       )
       const f = fixture({ raw: coverRaw, defaults: true })
       await f.run()
-      expect(f.res.statusCode).toBe(502)
+      expect(f.res.statusCode).toBe(503)
       expect(f.res.body).toEqual({ code: 'METADATA_COVER_REJECTED' })
     })
   })
@@ -341,7 +428,8 @@ describe('unmounted platform metadata router', () => {
     '/api/music/url?source=netease&urlId=x',
     '/api/music/cover?source=netease&picId=x',
     '/api/music/ttml/?source=netease&id=1',
-    '/api/music/playlist?source=netease&id=x',
+    '/api/music/playlist/extra?source=netease&id=x',
+    '/api/music/artist/popular?source=netease&id=1',
     '/api/rooms',
     '/api/auth/status',
     '/api/music/search/',
@@ -569,7 +657,7 @@ describe('unmounted platform metadata router', () => {
     const done = f.run()
     await vi.advanceTimersByTimeAsync(20_001)
     await done
-    expect(f.res.statusCode).toBe(504)
+    expect(f.res.statusCode).toBe(503)
     expect(f.res.body).toEqual({ code: 'METADATA_TIMEOUT' })
   })
 
@@ -582,7 +670,7 @@ describe('unmounted platform metadata router', () => {
     const large = fixture()
     large.search.mockResolvedValue('界'.repeat(Math.ceil(MAPP_METADATA_MAX_BYTES / 3)))
     await large.run()
-    expect(large.res.statusCode).toBe(502)
+    expect(large.res.statusCode).toBe(503)
     expect(large.res.body).toEqual({ code: 'METADATA_RESPONSE_TOO_LARGE' })
   })
 
@@ -596,7 +684,7 @@ describe('unmounted platform metadata router', () => {
         f.search.mockResolvedValue(cyclic)
       }
       await f.run()
-      expect(f.res.statusCode).toBe(502)
+      expect(f.res.statusCode).toBe(503)
       expect(f.res.body).toEqual({ code: 'METADATA_FAILED' })
     }
   })
