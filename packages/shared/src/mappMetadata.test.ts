@@ -1,5 +1,6 @@
 import { describe, expect, it } from 'vitest'
 import {
+  MAPP_COVER_MAX_BYTES,
   MAPP_METADATA_MAX_BYTES,
   MAPP_METADATA_TARGETS,
   parseMappMetadataRequest,
@@ -10,8 +11,9 @@ import {
 const search = '/api/music/search?source=netease&keyword=fixture'
 const lyric = '/api/music/lyric?source=tencent&lyricId=fixture'
 describe('reviewed metadata read contract', () => {
-  it('publishes only search and lyric targets and a one MiB serialized limit', () => {
+  it('publishes only search, lyric and cover targets, a one MiB JSON limit and a two MiB cover limit', () => {
     expect(MAPP_METADATA_MAX_BYTES).toBe(1024 * 1024)
+    expect(MAPP_COVER_MAX_BYTES).toBe(2 * 1024 * 1024)
     expect(MAPP_METADATA_TARGETS).toEqual({
       search: {
         path: '/api/music/search',
@@ -19,7 +21,36 @@ describe('reviewed metadata read contract', () => {
         queryKeys: ['source', 'keyword', 'limit', 'page', 'type'],
       },
       lyric: { path: '/api/music/lyric', endpoint: 'musicLyric', queryKeys: ['source', 'lyricId'] },
+      cover: { path: '/api/music/cover-proxy', endpoint: 'musicCover', queryKeys: ['url'] },
     })
+  })
+  it('accepts a single plain https cover URL, whatever its host (the server owns the allowlist)', () => {
+    const cover = 'https://p1.music.126.net/a/b.jpg?param=200y200'
+    expect(parseMappMetadataRequest('/api/music/cover-proxy?url=' + encodeURIComponent(cover))).toMatchObject({
+      kind: 'cover',
+      query: { url: cover },
+    })
+    expect(parseMappMetadataRequest('/api/music/cover-proxy?url=https://evil.test/x.jpg').kind).toBe('cover')
+  })
+  it.each([
+    '/api/music/cover-proxy',
+    '/api/music/cover-proxy?url=',
+    '/api/music/cover-proxy?url=http://p1.music.126.net/a.jpg',
+    '/api/music/cover-proxy?url=//p1.music.126.net/a.jpg',
+    '/api/music/cover-proxy?url=/a.jpg',
+    '/api/music/cover-proxy?url=javascript:alert(1)',
+    '/api/music/cover-proxy?url=data:image/png;base64,AAAA',
+    '/api/music/cover-proxy?url=https%3A%2F%2Fuser%3Apass%40p1.music.126.net%2Fa.jpg',
+    '/api/music/cover-proxy?url=https%3A%2F%2Fp1.music.126.net%2Fa.jpg%23frag',
+    '/api/music/cover-proxy?url=https%3A%2F%2Fp1.music.126.net%2Fa%20b.jpg',
+    '/api/music/cover-proxy?url=https://a.test/x&url=https://b.test/y',
+    '/api/music/cover-proxy?url=https://a.test/x&extra=1',
+    '/api/music/cover-proxy?url=https://a.test/x&roomId=ABC123',
+    '/api/music/cover-proxy?url=https://a.test/x&mini_app_token=fixture',
+    '/api/music/cover-proxy?url=' + encodeURIComponent('https://a.test/' + 'x'.repeat(2048)),
+    '/api/music/cover-proxy/?url=https://a.test/x',
+  ])('rejects unreviewed cover target %#', (raw) => {
+    expect(() => parseMappMetadataRequest(raw)).toThrow()
   })
   it.each(['song', 'album', 'playlist'])('keeps anonymous catalog %s search', (type) => {
     expect(parseMappMetadataRequest(search + '&type=' + type)).toMatchObject({
@@ -37,7 +68,6 @@ describe('reviewed metadata read contract', () => {
   it.each([
     '/api/music/url?source=netease&urlId=fixture',
     '/api/music/cover?source=netease&picId=fixture',
-    '/api/music/cover-proxy?url=https://evil.test',
     '/api/music/playlist?source=netease&id=fixture',
     '/api/music/ttml?url=https://evil.test',
     '/api/rooms',

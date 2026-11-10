@@ -1,10 +1,23 @@
+import { z } from 'zod'
 import { searchQuerySchema, lyricQuerySchema } from './schemas.js'
 
 import { MAPP_METADATA_TARGETS } from './mappMetadataTargets.js'
-export { MAPP_METADATA_MAX_BYTES, MAPP_METADATA_TARGETS } from './mappMetadataTargets.js'
+export { MAPP_COVER_MAX_BYTES, MAPP_METADATA_MAX_BYTES, MAPP_METADATA_TARGETS } from './mappMetadataTargets.js'
 
 export const mappMetadataSearchQuerySchema = searchQuerySchema.strict()
 export const mappMetadataLyricQuerySchema = lyricQuerySchema.strict()
+
+/** Absolute https URL without credentials, fragment or whitespace. The host allowlist is enforced by the server. */
+function isPlainHttpsUrl(value: string): boolean {
+  if (/[\s\x00-\x1f\x7f#]/.test(value)) return false
+  try {
+    const url = new URL(value)
+    return url.protocol === 'https:' && !url.username && !url.password
+  } catch {
+    return false
+  }
+}
+export const mappMetadataCoverQuerySchema = z.strictObject({ url: z.string().max(2048).refine(isPlainHttpsUrl) })
 
 /** One reviewed public-read contract shared by the SDK client and trusted server adapters. */
 export function parseMappMetadataRequest(rawUrl: string) {
@@ -37,6 +50,13 @@ export function parseMappMetadataRequest(rawUrl: string) {
       kind: 'lyric' as const,
       target: MAPP_METADATA_TARGETS.lyric,
       query: mappMetadataLyricQuerySchema.parse(query, { jitless: true }),
+    }
+  }
+  if (rawPath === MAPP_METADATA_TARGETS.cover.path) {
+    return {
+      kind: 'cover' as const,
+      target: MAPP_METADATA_TARGETS.cover,
+      query: mappMetadataCoverQuerySchema.parse(query, { jitless: true }),
     }
   }
   throw new Error('METADATA_TARGET_REJECTED')

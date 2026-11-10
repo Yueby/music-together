@@ -33,6 +33,10 @@ const endpoints = {
     url: 'https://rooms.example.com/api/music/lyric',
     method: 'GET', query: ['source', 'lyricId'], auth: 'platform',
   },
+  musicCover: {
+    url: 'https://rooms.example.com/api/music/cover-proxy',
+    method: 'GET', query: ['url'], auth: 'platform',
+  },
 }
 const websockets = { roomSocket: { url: roomUrl, auth: 'platform' } }
 

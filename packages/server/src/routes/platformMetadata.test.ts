@@ -29,6 +29,7 @@ class Reply {
   headersSent = false
   statusCode = 200
   payload = ''
+  bytes: Buffer | undefined
   ended = false
   locals: Record<string, unknown> = {}
   setHeader(name: string, value: unknown) {
@@ -39,14 +40,15 @@ class Reply {
     this.statusCode = code
     return this
   }
-  type() {
-    return this
+  type(value: string) {
+    return this.setHeader('Content-Type', value)
   }
   json(value: unknown) {
     return this.send(JSON.stringify(value))
   }
-  send(body: string) {
-    this.payload = body
+  send(body: string | Buffer) {
+    if (typeof body === 'string') this.payload = body
+    else this.bytes = body
     return this.end()
   }
   end() {
@@ -91,12 +93,15 @@ function fixture(
   const verifyIdentity = vi.fn().mockResolvedValue({ userId: changes.userId ?? uid() })
   const search = vi.fn().mockResolvedValue({ tracks: [], page: 1, hasMore: false })
   const lyric = vi.fn().mockResolvedValue({ lyric: '[00:01]fixture', tlyric: '', romalrc: '', yrc: '' })
+  const cover = vi.fn().mockResolvedValue({ ok: true, contentType: 'image/jpeg', body: Buffer.from([1, 2, 3]) })
   const rateLimit = vi.fn<RequestHandler>((_req, _res, next) => next())
+  const coverRateLimit = vi.fn<RequestHandler>((_req, _res, next) => next())
   const router = createPlatformMetadataRouter({
     allowedOrigin: origin,
     verifyIdentity,
     rateLimit: changes.rateLimit ?? rateLimit,
-    ...(changes.defaults ? {} : { search, lyric }),
+    coverRateLimit,
+    ...(changes.defaults ? {} : { search, lyric, cover }),
   })
   /** Resolves when the router either answers or hands the request back to the original chain. */
   const run = () =>
@@ -106,8 +111,175 @@ function fixture(
       router(req as unknown as Request, res as unknown as Response, done)
       finish()
     })
-  return { req, res, verifyIdentity, search, lyric, rateLimit, run }
+  return { req, res, verifyIdentity, search, lyric, cover, rateLimit, coverRateLimit, run }
 }
+
+const coverImage = 'https://p1.music.126.net/a/b.jpg?param=200y200'
+const coverRaw = '/api/music/cover-proxy?url=' + encodeURIComponent(coverImage)
+
+describe('platform cover target', () => {
+  it('verifies the identity, applies the cover limiter and answers with the image bytes', async () => {
+    const f = fixture({ raw: coverRaw })
+    expect(await f.run()).toBe('answered')
+    expect(f.verifyIdentity).toHaveBeenCalledExactlyOnceWith({
+      url: coverRaw,
+      origin,
+      authorization: 'Bearer fixture-token',
+      method: 'GET',
+    })
+    expect(f.cover).toHaveBeenCalledExactlyOnceWith(coverImage)
+    expect(f.coverRateLimit).toHaveBeenCalledOnce()
+    expect(f.rateLimit).not.toHaveBeenCalled()
+    expect(f.res.statusCode).toBe(200)
+    expect(f.res.bytes).toEqual(Buffer.from([1, 2, 3]))
+    expect(f.res.headers).toMatchObject({
+      'content-type': 'image/jpeg',
+      'cache-control': 'private, no-store, no-transform',
+      'x-content-type-options': 'nosniff',
+      'access-control-allow-origin': origin,
+    })
+  })
+
+  it('keeps search on its own limiter', async () => {
+    const f = fixture()
+    await f.run()
+    expect(f.rateLimit).toHaveBeenCalledOnce()
+    expect(f.coverRateLimit).not.toHaveBeenCalled()
+    expect(f.cover).not.toHaveBeenCalled()
+  })
+
+  it.each([
+    [{ ok: false, status: 403, error: 'Host not allowed' }, 403, 'METADATA_COVER_HOST_REJECTED'],
+    [{ ok: false, status: 413, error: 'Invalid or oversized image' }, 502, 'METADATA_COVER_REJECTED'],
+    [{ ok: false, status: 404, error: 'Upstream fetch failed' }, 502, 'METADATA_COVER_FAILED'],
+  ])('maps upstream result %# to a fixed code without leaking details', async (result, status, code) => {
+    const f = fixture({ raw: coverRaw })
+    f.cover.mockResolvedValue(result)
+    await f.run()
+    expect(f.res.statusCode).toBe(status)
+    expect(f.res.body).toEqual({ code })
+    expect(f.res.bytes).toBeUndefined()
+  })
+
+  it('hides fetch failures behind a generic error', async () => {
+    const f = fixture({ raw: coverRaw })
+    f.cover.mockRejectedValue(new Error('connect ECONNREFUSED 10.0.0.1:443'))
+    await f.run()
+    expect(f.res.statusCode).toBe(502)
+    expect(f.res.body).toEqual({ code: 'METADATA_FAILED' })
+  })
+
+  it('bounds the fetch to 20s', async () => {
+    vi.useFakeTimers()
+    const f = fixture({ raw: coverRaw })
+    f.cover.mockReturnValue(new Promise(() => {}))
+    const done = f.run()
+    await vi.advanceTimersByTimeAsync(20_001)
+    await done
+    expect(f.res.statusCode).toBe(504)
+    expect(f.res.body).toEqual({ code: 'METADATA_TIMEOUT' })
+  })
+
+  it.each([
+    '/api/music/cover-proxy',
+    '/api/music/cover-proxy?url=http://p1.music.126.net/a.jpg',
+    coverRaw + '&extra=1',
+    coverRaw + '&url=' + encodeURIComponent(coverImage),
+    '/api/music/cover-proxy?url=' + encodeURIComponent('https://user:pass@p1.music.126.net/a.jpg'),
+  ])('rejects an invalid cover query %# before authentication', async (value) => {
+    const f = fixture({ raw: value })
+    await f.run()
+    expect(f.res.statusCode).toBe(400)
+    expect(f.verifyIdentity).not.toHaveBeenCalled()
+    expect(f.cover).not.toHaveBeenCalled()
+  })
+
+  it('requires a verified platform identity', async () => {
+    const f = fixture({ raw: coverRaw })
+    f.verifyIdentity.mockRejectedValue(new Error('sensitive'))
+    await f.run()
+    expect(f.res.statusCode).toBe(401)
+    expect(f.cover).not.toHaveBeenCalled()
+  })
+
+  it('leaves a normal Web cover-proxy request (no Authorization) on the original chain', async () => {
+    const f = fixture({ raw: coverRaw, headers: { origin: 'https://web.example.test', authorization: undefined } })
+    expect(await f.run()).toBe('passed')
+    expect(f.res.headers).toEqual({})
+    expect(f.verifyIdentity).not.toHaveBeenCalled()
+    expect(f.cover).not.toHaveBeenCalled()
+  })
+
+  it('answers the SDK Authorization preflight for the cover path', async () => {
+    const f = fixture({
+      raw: '/api/music/cover-proxy',
+      method: 'OPTIONS',
+      headers: {
+        authorization: undefined,
+        'access-control-request-method': 'GET',
+        'access-control-request-headers': 'Authorization, Content-Type',
+      },
+    })
+    await f.run()
+    expect(f.res.statusCode).toBe(204)
+    expect(f.res.headers['access-control-allow-origin']).toBe(origin)
+    expect(f.verifyIdentity).not.toHaveBeenCalled()
+  })
+
+  describe('default fetcher (global fetch mocked, no network)', () => {
+    const image = (bytes: number, headers: Record<string, string> = {}) =>
+      new Response(Buffer.alloc(bytes), { headers: { 'content-type': 'image/png', ...headers } })
+    afterEach(() => vi.unstubAllGlobals())
+
+    it('returns allowed-host images up to 2 MiB', async () => {
+      const upstream = vi.fn().mockResolvedValue(image(2 * 1024 * 1024))
+      vi.stubGlobal('fetch', upstream)
+      const f = fixture({ raw: coverRaw, defaults: true })
+      await f.run()
+      expect(upstream).toHaveBeenCalledOnce()
+      expect(f.res.statusCode).toBe(200)
+      expect(f.res.bytes?.length).toBe(2 * 1024 * 1024)
+      expect(f.res.headers['content-type']).toBe('image/png')
+    })
+
+    it('rejects images above 2 MiB, declared or not', async () => {
+      for (const response of [
+        image(10, { 'content-length': String(2 * 1024 * 1024 + 1) }),
+        image(2 * 1024 * 1024 + 1),
+      ]) {
+        vi.stubGlobal('fetch', vi.fn().mockResolvedValue(response))
+        const f = fixture({ raw: coverRaw, defaults: true })
+        await f.run()
+        expect(f.res.statusCode).toBe(502)
+        expect(f.res.body).toEqual({ code: 'METADATA_COVER_REJECTED' })
+      }
+    })
+
+    it('refuses hosts outside the cover CDN allowlist without contacting them', async () => {
+      const upstream = vi.fn()
+      vi.stubGlobal('fetch', upstream)
+      const f = fixture({
+        raw: '/api/music/cover-proxy?url=' + encodeURIComponent('https://evil.test/a.png'),
+        defaults: true,
+      })
+      await f.run()
+      expect(f.res.statusCode).toBe(403)
+      expect(f.res.body).toEqual({ code: 'METADATA_COVER_HOST_REJECTED' })
+      expect(upstream).not.toHaveBeenCalled()
+    })
+
+    it('rejects a non-image upstream response', async () => {
+      vi.stubGlobal(
+        'fetch',
+        vi.fn().mockResolvedValue(new Response('<html>', { headers: { 'content-type': 'text/html' } })),
+      )
+      const f = fixture({ raw: coverRaw, defaults: true })
+      await f.run()
+      expect(f.res.statusCode).toBe(502)
+      expect(f.res.body).toEqual({ code: 'METADATA_COVER_REJECTED' })
+    })
+  })
+})
 
 describe('unmounted platform metadata router', () => {
   it.each([

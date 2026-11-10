@@ -281,5 +281,6 @@ Conductor（当前 `hostId` 对应用户）**自适应频率**上报当前播放
 | `/api/rooms/:roomId/check` | GET  | 房间预检（存在性 + 是否需要密码），用于分享链接直接访问时的前置校验                                     |
 | `/api/health`              | GET  | 健康检查                                                                                                |
 | `/api/mapp/audio`          | GET  | 可选平台 JWT 房间音频响应，query 为 `roomId`、`trackId`；仅配置 `MAPP_*` 环境变量后挂载，默认关闭          |
+| `/api/music/cover-proxy`   | GET  | 带平台 Authorization 时验签后返回封面图片字节（query 仅 `url`，≤ 2MiB）；无 Authorization 的普通请求仍走 Web 封面代理 |
 
 ---

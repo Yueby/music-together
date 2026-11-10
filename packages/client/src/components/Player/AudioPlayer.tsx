@@ -1,8 +1,8 @@
 import { useContainerPortrait } from '@/hooks/useContainerPortrait'
 import { useCoverWidth } from '@/hooks/useCoverWidth'
+import { useArtworkUrl } from '@/hooks/useArtworkUrl'
 import { useVote } from '@/hooks/useVote'
 import { SERVER_URL } from '@/lib/config'
-import { hostRuntime } from '@/lib/hostRuntime'
 import { cn } from '@/lib/utils'
 import { usePlayerStore } from '@/stores/playerStore'
 import { useSettingsStore } from '@/stores/settingsStore'
@@ -82,13 +82,13 @@ export function AudioPlayer({
   const { ref: playerRef, isPortrait } = useContainerPortrait()
 
 
-  // 封面 URL 代理：解决 QQ 音乐 / 酷狗等 CDN 的 CORS 限制
+  // 封面 URL 代理：解决 QQ 音乐 / 酷狗等 CDN 的 CORS 限制。
+  // 宿主需要读取字节时（微应用）得到的是同源 Blob 地址，无需再代理。
+  const coverUrl = currentTrack?.cover
+  const artwork = useArtworkUrl(coverUrl)
   const proxiedCover = useMemo(
-    () => {
-      if (!hostRuntime.remoteArtwork) return undefined
-      return currentTrack?.cover ? getProxiedCoverUrl(currentTrack.cover) : undefined
-    },
-    [currentTrack?.cover],
+    () => (artwork && artwork === coverUrl ? getProxiedCoverUrl(artwork) : artwork),
+    [artwork, coverUrl],
   )
 
   // Mobile: toggle between cover view and lyric view

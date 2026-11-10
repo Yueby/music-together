@@ -335,6 +335,53 @@ describe('verifyMusicMetadata (production search/lyric)', () => {
     await expect(f.auth().verifyMusicMetadata(searchUrl, ORIGIN, undefined, 'GET')).rejects.toThrow(REJECTED)
     expect(f.fetcher).not.toHaveBeenCalled()
   })
+
+  describe('cover target (musicCover)', () => {
+    const cover = { ...search, htu: config.audience + '/api/music/cover-proxy', query_keys: ['url'] }
+    const coverUrl = '/api/music/cover-proxy?url=' + encodeURIComponent('https://p1.music.126.net/a.jpg')
+    const verify = (f: ReturnType<typeof fixture>, claims = {}, url = coverUrl, auth = f.auth()) =>
+      auth.verifyMusicMetadata(url, ORIGIN, 'Bearer ' + f.token({ ...cover, ...claims }), 'GET')
+
+    it('accepts a token declared for exactly the cover path and its single url key', async () => {
+      await expect(verify(fixture())).resolves.toMatchObject({ sub: '123', query_keys: ['url'] })
+    })
+    it.each([
+      { htu: config.audience + '/api/music/search' },
+      { htu: config.audience + '/api/music/cover-proxy/' },
+      { query_keys: [] },
+      { query_keys: ['url', 'source'] },
+      { query_keys: ['url', 'url'] },
+      { query_keys: ['source', 'keyword', 'limit', 'page', 'type'] },
+      { scopes: ['network.websocket'] },
+      { channel: 'sandbox' },
+    ])('rejects invalid claims %#', async (claims) => {
+      await expect(verify(fixture(), claims)).rejects.toThrow(REJECTED)
+    })
+    it('does not let a search or lyric token read covers', async () => {
+      const f = fixture()
+      await expect(f.auth().verifyMusicMetadata(coverUrl, ORIGIN, 'Bearer ' + f.token(search), 'GET')).rejects.toThrow(
+        REJECTED,
+      )
+    })
+    it.each([
+      '/api/music/cover-proxy',
+      '/api/music/cover-proxy?url=http://p1.music.126.net/a.jpg',
+      '/api/music/cover-proxy?url=https://p1.music.126.net/a.jpg&extra=1',
+      '/api/music/cover-proxy?url=https://a.test/x&url=https://b.test/y',
+    ])('rejects an unreviewed cover request %# before loading keys', async (raw) => {
+      const f = fixture()
+      await expect(verify(f, {}, raw)).rejects.toThrow(REJECTED)
+      expect(f.fetcher).not.toHaveBeenCalled()
+    })
+    it('accepts a sandbox cover token only when sandbox access is explicitly allowed', async () => {
+      const f = fixture()
+      const allowing = new PlatformAuth({ ...config, allowSandbox: true }, f.fetcher, () => epoch)
+      await expect(verify(f, { channel: 'sandbox' }, coverUrl, allowing)).resolves.toMatchObject({
+        channel: 'sandbox',
+      })
+      await expect(verify(f, { channel: 'sandbox', query_keys: [] }, coverUrl, allowing)).rejects.toThrow(REJECTED)
+    })
+  })
 })
 
 describe('trusted keys', () => {

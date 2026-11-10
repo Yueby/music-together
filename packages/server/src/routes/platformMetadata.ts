@@ -1,7 +1,13 @@
 import { Router, type Request, type RequestHandler, type Response, type Router as RouterType } from 'express'
-import { MAPP_METADATA_MAX_BYTES, MAPP_METADATA_TARGETS, parseMappMetadataRequest } from '@music-together/shared'
+import {
+  MAPP_COVER_MAX_BYTES,
+  MAPP_METADATA_MAX_BYTES,
+  MAPP_METADATA_TARGETS,
+  parseMappMetadataRequest,
+} from '@music-together/shared'
 import { getMusicLyricMetadata, searchMusicMetadata } from '../controllers/musicMetadataController.js'
-import { musicApiRateLimit } from '../middleware/httpRateLimiter.js'
+import { coverProxyRateLimit, musicApiRateLimit } from '../middleware/httpRateLimiter.js'
+import { fetchCoverImage, type CoverResult } from '../services/coverProxy.js'
 import { withTimeout } from '../utils/withTimeout.js'
 
 export interface MusicMetadataIdentityInput {
@@ -13,10 +19,13 @@ export interface MusicMetadataIdentityInput {
 interface Options {
   allowedOrigin: string
   verifyIdentity: (input: MusicMetadataIdentityInput) => Promise<{ userId: string }>
-  /** Defaults to the shared per-identity music API limiter. */
+  /** Search/lyric limiter; defaults to the shared per-identity music API limiter. */
   rateLimit?: RequestHandler
+  /** Cover limiter; defaults to the same quota the Web cover proxy uses. */
+  coverRateLimit?: RequestHandler
   search?: typeof searchMusicMetadata
   lyric?: typeof getMusicLyricMetadata
+  cover?: (url: string) => Promise<CoverResult>
 }
 type ParsedRequest = ReturnType<typeof parseMappMetadataRequest>
 
@@ -60,8 +69,17 @@ function sendError(res: Response, error: unknown): void {
   res.status(safe.status).json({ code: safe.code })
 }
 
+/** Fixed codes only; the upstream status and body never reach the platform client. */
+function coverError(status: number): MetadataError {
+  if (status === 403) return new MetadataError(403, 'METADATA_COVER_HOST_REJECTED')
+  if (status === 413) return new MetadataError(502, 'METADATA_COVER_REJECTED')
+  return new MetadataError(502, 'METADATA_COVER_FAILED')
+}
+
+const TARGET_PATHS = new Set<string>(Object.values(MAPP_METADATA_TARGETS).map((target) => target.path))
+
 /**
- * Unmounted by default. Handles only the two exact external metadata paths.
+ * Unmounted by default. Handles only the exact external metadata paths (search, lyric, cover).
  * Mount it before the generic music API rate limiter: it applies the same
  * limiter itself, keyed by the verified platform identity.
  */
@@ -72,16 +90,16 @@ export function createPlatformMetadataRouter(options: Options): RouterType {
   }
   const search = options.search ?? searchMusicMetadata
   const lyric = options.lyric ?? getMusicLyricMetadata
+  const cover = options.cover ?? ((url: string) => fetchCoverImage(url, MAPP_COVER_MAX_BYTES))
+  const searchLimit = options.rateLimit ?? musicApiRateLimit
+  const coverLimit = options.coverRateLimit ?? coverProxyRateLimit
   const router = Router()
 
   // 1. Select platform requests and verify origin, method, query and identity. No Cookie fallback.
   router.use(async (req, res, next) => {
     const raw = req.originalUrl
     const path = raw.split('?')[0]
-    if (
-      (path !== MAPP_METADATA_TARGETS.search.path && path !== MAPP_METADATA_TARGETS.lyric.path) ||
-      !isPlatformRequest(req)
-    ) {
+    if (!TARGET_PATHS.has(path) || !isPlatformRequest(req)) {
       next('router')
       return
     }
@@ -139,13 +157,24 @@ export function createPlatformMetadataRouter(options: Options): RouterType {
     }
   })
 
-  // 2. Per-identity rate limit (shared with the Web music API).
-  router.use(options.rateLimit ?? musicApiRateLimit)
+  // 2. Per-identity rate limit (shared with the Web music API; covers use the Web cover quota).
+  router.use((req, res, next) =>
+    ((res.locals.metadata as ParsedRequest).kind === 'cover' ? coverLimit : searchLimit)(req, res, next),
+  )
 
-  // 3. Reuse the shared metadata controllers.
+  // 3. Reuse the shared metadata controllers; covers answer with image bytes instead of JSON.
   router.use(async (_req, res) => {
     try {
-      const { kind, query } = res.locals.metadata as ParsedRequest
+      const parsed = res.locals.metadata as ParsedRequest
+      if (parsed.kind === 'cover') {
+        const work = Promise.resolve().then(() => cover(parsed.query.url))
+        const result = await withTimeout(work, REQUEST_TIMEOUT_MS, new MetadataError(504, 'METADATA_TIMEOUT'))
+        if (!result.ok) throw coverError(result.status)
+        res.setHeader('X-Content-Type-Options', 'nosniff')
+        res.status(200).type(result.contentType).send(result.body)
+        return
+      }
+      const { kind, query } = parsed
       const work = Promise.resolve().then<unknown>(() => (kind === 'search' ? search(query) : lyric(query)))
       const json = JSON.stringify(
         await withTimeout(work, REQUEST_TIMEOUT_MS, new MetadataError(504, 'METADATA_TIMEOUT')),

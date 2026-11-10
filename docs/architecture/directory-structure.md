@@ -250,7 +250,7 @@ src/
 
 mapp 只是把现有网页前端适配为论坛微应用并打包的外壳，后端与网页端共用同一个服务。`src/` 放启动入口（`bootstrapClient`、`clientMain`）、CSP 初始化与微应用样式，`scripts/` 放客户端 manifest 生成与 SDK 打包入口。单 IIFE 与 CSS 输出到 `dist/client-web/`，运行 ZIP 输出到 `dist/client-package/`。概览见 [mini-app.md](mini-app.md)。
 
-`src/compat/` 放置 SDK 房间连接绑定、RoomSession、RoomAudioSource、WebAudioPlayer（Web Audio 内核）、MappAudioEngine、MappPlaybackSoundFactory、MappRoomCommands、metadataFetch、roomCheck、MappHost、hostBinding/hostModules 与内存 storageBackend。平台 JWT 验签位于 `packages/server/src/services/platformAuth.ts`，由主站后端按环境变量启用。契约和发布门禁见 [mini-app-compatibility.md](mini-app-compatibility.md)。
+`src/compat/` 放置 SDK 房间连接绑定、RoomSession、RoomAudioSource、WebAudioPlayer（Web Audio 内核）、MappAudioEngine、MappPlaybackSoundFactory、MappRoomCommands、metadataFetch、coverLoader（封面经 SDK 读字节转 Blob URL）、roomCheck、MappHost、hostBinding/hostModules、内存 storageBackend，以及适配平台沙箱的 formSubmitFallback 与 trustedTypesFallback。网页端对应的封面入口是 `lib/artwork.ts` 与 `hooks/useArtworkUrl.ts`。平台 JWT 验签位于 `packages/server/src/services/platformAuth.ts`，由主站后端按环境变量启用。契约和发布门禁见 [mini-app-compatibility.md](mini-app-compatibility.md)。
 
 ## 测试文件
 

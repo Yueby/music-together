@@ -13,12 +13,14 @@ const mocks = vi.hoisted(() => ({
   session: vi.fn(),
   audio: vi.fn(),
   metadata: vi.fn(),
+  cover: vi.fn(),
   commands: vi.fn(),
 }))
 vi.mock('@discourse-mini-app/sdk', () => ({ getSDK: mocks.getSDK }))
 vi.mock('./RoomSession.ts', () => ({ createMappRoomSession: mocks.session }))
 vi.mock('./MappPlaybackSoundFactory.ts', () => ({ createMappPlaybackSoundFactory: mocks.audio }))
 vi.mock('./metadataFetch.ts', () => ({ createMappMetadataFetch: mocks.metadata }))
+vi.mock('./coverLoader.ts', () => ({ createMappCoverLoader: mocks.cover }))
 vi.mock('./MappRoomCommands.ts', () => ({ createMappRoomCommands: mocks.commands }))
 
 const options: MappHostOptions = {
@@ -106,6 +108,8 @@ function fixture() {
   })
   mocks.audio.mockReturnValue(audio)
   mocks.metadata.mockReturnValue(fetchMetadata)
+  const covers = { direct: false, load: vi.fn(), dispose: vi.fn() }
+  mocks.cover.mockReturnValue(covers)
   mocks.commands.mockReturnValue(commands)
   const make = (overrides: Partial<MappHostOptions> = {}) => {
     const host = createMappHost({ ...options, ...overrides })
@@ -132,6 +136,7 @@ function fixture() {
     audio,
     handles,
     fetchMetadata,
+    covers,
     commands,
   }
 }
@@ -335,6 +340,21 @@ describe('MappHost explicit user-gesture audio unlock', () => {
     pending.resolve(true)
     await assertion
     expect(host.isAudioUnlocked()).toBe(false)
+  })
+})
+
+describe('MappHost artwork loader', () => {
+  it('builds the loader from the shared SDK, exposes it, and releases it before closing the session', async () => {
+    const f = fixture()
+    const host = f.make()
+    expect(mocks.cover).toHaveBeenCalledExactlyOnceWith({ sdk: f.sdk })
+    expect(host.artworkLoader).toBe(f.covers)
+    vi.mocked(f.session.dispose).mockImplementation(() => {
+      // Session cleanup runs first; the loader is released in the same synchronous cleanup step.
+      expect(f.covers.dispose).not.toHaveBeenCalled()
+    })
+    await host.dispose()
+    expect(f.covers.dispose).toHaveBeenCalledOnce()
   })
 })
 

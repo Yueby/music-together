@@ -1,5 +1,6 @@
 import '../cspValidation.ts'
 import { getSDK } from '@discourse-mini-app/sdk'
+import type { ArtworkLoader } from '../../../client/src/lib/artwork.ts'
 import type { MetadataFetch } from '../../../client/src/lib/MetadataTransport.ts'
 import type { PlaybackSound, PlaybackSoundFactory } from '../../../client/src/lib/PlaybackSound.ts'
 import type { RoomCommands } from '../../../client/src/lib/RoomCommands.ts'
@@ -7,6 +8,7 @@ import type { RoomCheckReader } from '../../../client/src/lib/RoomCheckReader.ts
 import { createMappPlaybackSoundFactory } from './MappPlaybackSoundFactory.ts'
 import { createMappRoomCommands } from './MappRoomCommands.ts'
 import { createMappRoomSession, type MappRoomSession, type MappRoomSessionSnapshot } from './RoomSession.ts'
+import { createMappCoverLoader, type MappCoverLoader } from './coverLoader.ts'
 import { createMappMetadataFetch } from './metadataFetch.ts'
 import { clearMemoryStorage, storageBackend } from './storageBackend.ts'
 import { createMappRoomCheck } from './roomCheck.ts'
@@ -26,6 +28,7 @@ export interface MappHost {
   readonly playbackSoundFactory: PlaybackSoundFactory
   readonly roomCommands: RoomCommands
   readonly metadataFetch: MetadataFetch
+  readonly artworkLoader: ArtworkLoader
   readonly roomCheck: RoomCheckReader
   isAudioUnlocked(): boolean
   unlockAudio(): Promise<void>
@@ -56,6 +59,7 @@ export function createMappHost(options: MappHostOptions): MappHost {
   let disposal: Promise<void> | undefined
   let session: MappRoomSession | undefined
   let audioFactory: ReturnType<typeof createMappPlaybackSoundFactory> | undefined
+  let covers: MappCoverLoader | undefined
   let currentSound: PlaybackSound | undefined
   let previous: MappRoomSessionSnapshot | undefined
   /** Aborts in-flight metadata requests and room pre-checks on dispose. */
@@ -91,6 +95,7 @@ export function createMappHost(options: MappHostOptions): MappHost {
       lifetime.abort()
       try {
         session?.dispose()
+        covers?.dispose()
         unloadCurrent()
         await audioFactory?.dispose()
       } finally {
@@ -123,6 +128,8 @@ export function createMappHost(options: MappHostOptions): MappHost {
     })
     audioFactory = audio
     const metadata = createMappMetadataFetch({ sdk, reviewedOrigin: serverOrigin })
+    const coverLoader = createMappCoverLoader({ sdk })
+    covers = coverLoader
 
     return Object.freeze<MappHost>({
       serverOrigin,
@@ -133,6 +140,7 @@ export function createMappHost(options: MappHostOptions): MappHost {
         const signal = init?.signal ? AbortSignal.any([init.signal, lifetime.signal]) : lifetime.signal
         return metadata(input, { ...init, signal })
       },
+      artworkLoader: coverLoader,
       roomCheck: createMappRoomCheck(roomSession, lifetime.signal),
       playbackSoundFactory: {
         allowLoadRetry: audio.allowLoadRetry,

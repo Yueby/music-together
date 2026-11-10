@@ -13,6 +13,7 @@ export function createMappClientConfig(roomUrl: string | undefined, version: str
   const alias = [
     ['@/lib/playbackSoundFactory', `${compat}hostModules/playbackSoundFactory.ts`],
     ['@/lib/metadataFetch', `${compat}hostModules/metadataFetch.ts`],
+    ['@/lib/artwork', `${compat}hostModules/artwork.ts`],
     ['@/lib/RoomCommands', `${compat}hostModules/RoomCommands.ts`],
     ['@/lib/roomCheck', `${compat}hostModules/roomCheck.ts`],
     ['@/lib/audioUnlock', `${compat}hostModules/audioUnlock.ts`],

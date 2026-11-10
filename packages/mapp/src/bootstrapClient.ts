@@ -3,6 +3,7 @@ import { getSDK, type MiniAppSDK } from '@discourse-mini-app/sdk'
 import { createMappHost, type MappHost } from './compat/MappHost.ts'
 import { installFormSubmitFallback } from './compat/formSubmitFallback.ts'
 import { installMappHost } from './compat/hostBinding.ts'
+import { installTrustedTypesFallback } from './compat/trustedTypesFallback.ts'
 
 export interface MappClientOptions {
   endpoint: string
@@ -134,7 +135,9 @@ export function startMappClient(options: MappClientOptions): {
       assertActive()
       const releaseHost = installMappHost(host)
       const releaseForms = installFormSubmitFallback()
+      const releaseTrustedTypes = installTrustedTypesFallback()
       unbind = () => {
+        releaseTrustedTypes()
         releaseForms()
         releaseHost()
       }

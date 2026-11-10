@@ -14,6 +14,7 @@ describe('explicit client build configuration', () => {
     expect(aliases.map((alias) => alias.find)).toEqual([
       '@/lib/playbackSoundFactory',
       '@/lib/metadataFetch',
+      '@/lib/artwork',
       '@/lib/RoomCommands',
       '@/lib/roomCheck',
       '@/lib/audioUnlock',

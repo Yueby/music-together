@@ -8,6 +8,7 @@ import {
 import { Router, type Router as RouterType, type Request, type Response } from 'express'
 import type { ZodSchema } from 'zod'
 import { musicProvider } from '../services/musicProvider.js'
+import { fetchCoverImage } from '../services/coverProxy.js'
 import * as authService from '../services/authService.js'
 import { roomRepo } from '../repositories/roomRepository.js'
 import { logger } from '../utils/logger.js'
@@ -101,17 +102,6 @@ router.get(
 // 封面图片代理 — 解决外部 CDN（如 QQ 音乐 y.gtimg.cn）的 CORS 限制
 // AMLL 的 BackgroundRender 用 WebGL 纹理加载图片，需要同源或 CORS 允许
 // ---------------------------------------------------------------------------
-const ALLOWED_COVER_HOSTS = [
-  'y.gtimg.cn',
-  'p1.music.126.net',
-  'p2.music.126.net',
-  'p3.music.126.net',
-  'p4.music.126.net',
-  'imgessl.kugou.com',
-]
-
-const MAX_COVER_BYTES = 10 * 1024 * 1024
-
 router.get('/cover-proxy', coverProxyRateLimit, async (req: Request, res: Response) => {
   const imageUrl = req.query.url as string | undefined
   if (!imageUrl) {
@@ -120,42 +110,18 @@ router.get('/cover-proxy', coverProxyRateLimit, async (req: Request, res: Respon
   }
 
   try {
-    const parsed = new URL(imageUrl)
-    if (!ALLOWED_COVER_HOSTS.includes(parsed.hostname)) {
-      res.status(403).json({ error: 'Host not allowed' })
+    const cover = await fetchCoverImage(imageUrl)
+    if (!cover.ok) {
+      res.status(cover.status).json({ error: cover.error })
       return
     }
-
-    const response = await fetch(imageUrl, {
-      signal: AbortSignal.timeout(10_000),
-      headers: { 'User-Agent': 'Mozilla/5.0' },
-    })
-
-    if (!response.ok) {
-      res.status(response.status).json({ error: 'Upstream fetch failed' })
-      return
-    }
-
-    const contentType = response.headers.get('content-type') || ''
-    const contentLength = Number(response.headers.get('content-length') ?? 0)
-    if (!contentType.startsWith('image/') || contentLength > MAX_COVER_BYTES) {
-      res.status(413).json({ error: 'Invalid or oversized image' })
-      return
-    }
-
-    const arrayBuffer = await response.arrayBuffer()
-    if (arrayBuffer.byteLength > MAX_COVER_BYTES) {
-      res.status(413).json({ error: 'Image too large' })
-      return
-    }
-    const buffer = Buffer.from(arrayBuffer)
 
     // 透传 content-type，设置缓存（封面图不会频繁变化）
-    res.setHeader('Content-Type', contentType)
-    res.setHeader('Content-Length', String(buffer.length))
+    res.setHeader('Content-Type', cover.contentType)
+    res.setHeader('Content-Length', String(cover.body.length))
     res.setHeader('Cache-Control', 'public, max-age=86400') // 24h 缓存
     res.setHeader('Access-Control-Allow-Origin', '*')
-    res.status(200).end(buffer)
+    res.status(200).end(cover.body)
   } catch (err) {
     logger.error('Cover proxy failed', err, { imageUrl })
     if (!res.headersSent) {

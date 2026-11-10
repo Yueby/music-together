@@ -98,11 +98,13 @@ SDK 0.3 的受控动态字节读取和 Web Audio 已在早期探针中实测（�
 
 正式页面尚未挂载该桥接。
 
-### 只读搜索与歌词
+### 只读搜索、歌词与封面
 
-`shared/mappMetadata.ts` 集中固定 target、query allowlist、严格 schema 与 1MiB 预算。SDK 名称为 `musicSearch`、`musicLyric`，分别对应 `GET /api/music/search`、`GET /api/music/lyric`。查询拒绝未知和重复键；schema 解析显式采用 jitless，并沿用 Mapp 的 CSP 初始化策略。
+`shared/mappMetadata.ts` 集中固定 target、query allowlist、严格 schema 与 1MiB 预算。SDK 名称为 `musicSearch`、`musicLyric`、`musicCover`，分别对应 `GET /api/music/search`、`GET /api/music/lyric`、`GET /api/music/cover-proxy`。查询拒绝未知和重复键；schema 解析显式采用 jitless，并沿用 Mapp 的 CSP 初始化策略。
 
 Web 的 `metadataFetch` 默认原样委托 fetch；搜索、歌词 Hook 改用这一窄入口。`createMappMetadataFetch` 只调用 SDK bytes API，校验审核 origin、GET、JSON MIME、UTF-8、响应大小及 20 秒时限，传播取消并隔离晚结果。不会转发 credentials，也不会把未审核外部 TTML URL 当作网络目标；共享歌词 Hook 正常回退到服务端 LRC/YRC/KRC 数据。
+
+封面走同一类受控读取：`GET /api/music/cover-proxy?url=<封面 https 地址>`，平台鉴权通过后复用 Web 封面代理的主机白名单（`y.gtimg.cn`、`p1`~`p4.music.126.net`、`imgessl.kugou.com`）抓取并返回图片字节，上限 2MiB，限流沿用封面代理额度（每分钟 60 次）。微应用侧 `coverLoader` 通过 SDK 读取字节后生成 Blob URL（官方要求图片以 Blob 加载，不直连 CDN）：白名单主机的 `http://` 先升级为 `https://`，要求 200、`image/*`（排除 SVG）、非空且不超过 2MiB；同一地址只请求一次、失败不缓存、并发 4，宿主 dispose 时撤销全部 Blob URL 并取消在途请求。网页端 `artworkLoader` 默认直接返回原 URL，`useArtworkUrl` 同步返回，网页渲染不变。
 
 服务端 `createPlatformMetadataRouter` 默认未挂载，复用 `musicMetadataController` 的匿名目录搜索和歌词编排，不复制服务逻辑。显式 Authorization（含空/错误）、`mini_app_token` 查询参数或 Authorization 预检进入平台验证；正常 Web Cookie 请求与 Web 预检通过 `next('router')` 交还原链，不写头、不改变身份。平台验签检查 production/network.request、issuer/audience/app/time/Origin/GET/htu 与完整 query_keys，失败不降级 Cookie。认证限时 6 秒，处理限时 20 秒，JSON 响应不超过 1MiB，错误只返回固定 code。
 
@@ -122,13 +124,20 @@ Web 的 `metadataFetch` 默认原样委托 fetch；搜索、歌词 Hook 改用�
 
 ## 宿主能力与独立产物
 
-Web hostRuntime 保留全部原能力。初始 Mapp profile 仅启用已接入的房间、SDK 音频和公开搜索/歌词：账号与集合详情、系统 MediaSession、版本轮询、远程封面/背景、剪贴板及外链按宿主策略关闭。图片使用现有本地图标占位，不向未审核 CDN 发请求；现有 Web 导航、图片、账号与分享行为保留。集合缓存隔离与额外权限能力可在之后单独验证。
+Web hostRuntime 保留全部原能力。初始 Mapp profile 仅启用已接入的房间、SDK 音频和公开搜索/歌词：账号与集合详情、系统 MediaSession、版本轮询、剪贴板及外链按宿主策略关闭。封面不直连 CDN，而是经 `musicCover` 读字节转 Blob URL；封面读取失败时回退本地图标占位。现有 Web 导航、图片、账号与分享行为保留。
+
+### 平台运行环境限制与兜底
+
+微应用运行在 `sandbox="allow-scripts"` 的 iframe 中，并受平台 CSP 与 Trusted Types 约束（`autoplay` 权限策略为 `none`，需用户手势后才能发声）。这对共享的网页前端造成两类实际问题，由 `bootstrapClient` 在微应用里安装两个兜底，网页端不受影响：
+
+- **没有 `allow-forms`**：浏览器在派发 `submit` 事件之前就拒绝原生表单提交，建房、昵称、密码等对话框的 `onSubmit` 永远不会执行。`formSubmitFallback` 把提交按钮点击与（无提交按钮表单中的）回车转换成同一表单上的普通 `submit` 事件，输入法组合期间不触发，不产生导航。
+- **Trusted Types**：任何 `innerHTML` 赋值都会抛错，而歌词库清理歌词行（`innerHTML = ''`，切歌/重建歌词时）和 Radix 滚动区/下拉选择（`<style dangerouslySetInnerHTML>`，成员列表、设置等面板）都会触发，错误边界会接管整个界面。`trustedTypesFallback` 只处理两种安全等价情形：空字符串改用 `replaceChildren()`，`<style>` 元素改写 `textContent`；其余非空值保持原生行为（仍被拒绝）。不创建 Trusted Types policy，不引入任何 HTML 解析，卸载时恢复原 setter。`DOMParser.parseFromString`（PixiJS 适配器与 TTML 解析）同样受限，微应用不走 TTML，暂不处理。集合缓存隔离与额外权限能力可在之后单独验证。
 
 `pnpm --filter @music-together/mapp package` 构建并打包正式 UI，要求 `MAPP_ROOM_URL` 为审定的 WSS Socket.IO URL；mapp 不参与根目录 `pnpm build`，避免缺少该变量时拖垮主站构建。客户端复用 client workspace 已有 React/Tailwind/WASM 构建插件；Vite 8 的 IIFE 输出显式 `codeSplitting: false`，不生成运行时外部分包，CSS 单文件。客户端库模式显式构建 `process.env.NODE_ENV = "production"`，浏览器无需 Node 全局。定向构建和官方 SDK guard 已通过：ZIP 根目录仅五个必需文件，无外部分包。产物大小与 SHA-256 随代码变化，以 `dist/client-package/package.json` 为准；版本号取 manifest 的 `version`，沙箱构建由 ZIP 哈希区分，无需为每次测试升版本。
 
 真实 JS 产物另经离线 DOM／模拟 SDK 冒烟：大厅成功挂载，原样 Engine.IO/Socket.IO 握手后请求房间列表，lifecycle.ready 只在 UI commit 后通知，pagehide 关闭 SDK 连接。在该测试中禁止原生网络发送、音频创建、Cookie/原生存储、eval/Function 与 innerHTML 写入，未触发这些调用；Socket.IO 的空 XHR 特性探测与请求发送分开处理。此测试不替代官方平台 VM、真实 JWT、设备音频或跨端同房现场验收。
 
-产物为 `dist/client-web`、`dist/client-package`。client manifest 仅 `user.read`、`audio.webAudio`、`network.websocket`、`network.request`，声明 roomSocket、roomAudio、musicSearch、musicLyric；不含 remote_assets 或额外权限。打包继续由官方 SDK 校验（ZIP/单文件 32MiB、展开 128MiB）。共享纯 target 数据与 manifest 解析均独立于 CLI，避免打包入口循环加载。
+产物为 `dist/client-web`、`dist/client-package`。client manifest 仅 `user.read`、`audio.webAudio`、`network.websocket`、`network.request`，声明 roomSocket、roomAudio、musicSearch、musicLyric、musicCover；不含 remote_assets 或额外权限。打包继续由官方 SDK 校验（ZIP/单文件 32MiB、展开 128MiB）。共享纯 target 数据与 manifest 解析均独立于 CLI，避免打包入口循环加载。
 
 ## 验证与发布门禁
 
