@@ -362,6 +362,31 @@ class MusicProvider {
     return tracks
   }
 
+  /**
+   * Turn raw NetEase songs (`ar` / `al` shape, as returned by artist pages and recommendations) into Tracks that are
+   * registered like search results, so queueing them later is enriched exactly the same way. Entries without a usable
+   * id are dropped; the album artwork URL the response already carries saves a per-track cover lookup.
+   */
+  ingestNeteaseSongs(songs: unknown): Track[] {
+    if (!Array.isArray(songs)) return []
+    const tracks: Track[] = []
+    for (const song of songs) {
+      if (typeof song !== 'object' || song === null) continue
+      const raw = song as Record<string, any>
+      if (raw.id === undefined || raw.id === null) continue
+      const track = this.rawToTrack(raw, 'netease')
+      const picUrl = raw.al?.picUrl
+      if (typeof picUrl === 'string' && picUrl) {
+        track.cover = normalizeNeteaseCoverUrl(picUrl)
+        track.thumbnailCover = deriveThumbnailCoverUrl('netease', track.cover)
+      }
+      tracks.push(track)
+    }
+    for (const track of tracks) this.enrichFromRegistry(track)
+    this.registerTracks(tracks)
+    return tracks
+  }
+
   // ---------------------------------------------------------------------------
   // Public API — Search
   // ---------------------------------------------------------------------------

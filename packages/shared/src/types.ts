@@ -163,6 +163,20 @@ export interface MyPlatformAuth {
   vipType?: number
 }
 
+/** 歌手元数据（歌手搜索结果与歌手主页头部） */
+export interface Artist {
+  id: string
+  name: string
+  cover: string
+  /** Stable 120px artwork URL for list/search rendering. */
+  thumbnailCover?: string
+  source: MusicSource
+  albumCount?: number
+  songCount?: number
+  /** 简介（仅歌手主页提供，搜索结果不带） */
+  description?: string
+}
+
 /** 歌单元数据（用于歌单列表展示） */
 export interface Playlist {
   id: string

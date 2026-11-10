@@ -5,6 +5,8 @@ import {
   ttmlQuerySchema,
   coverQuerySchema,
   playlistQuerySchema,
+  artistQuerySchema,
+  artistPageQuerySchema,
 } from '@music-together/shared'
 import { Router, type Router as RouterType, type Request, type Response } from 'express'
 import type { ZodSchema } from 'zod'
@@ -14,7 +16,15 @@ import * as authService from '../services/authService.js'
 import { roomRepo } from '../repositories/roomRepository.js'
 import { logger } from '../utils/logger.js'
 import { coverProxyRateLimit } from '../middleware/httpRateLimiter.js'
-import { getMusicLyricMetadata, getMusicTtmlMetadata, searchMusicMetadata } from '../controllers/musicMetadataController.js'
+import { ArtistError } from '../services/artistService.js'
+import {
+  getArtistAlbumsMetadata,
+  getArtistMetadata,
+  getArtistSongsMetadata,
+  getMusicLyricMetadata,
+  getMusicTtmlMetadata,
+  searchMusicMetadata,
+} from '../controllers/musicMetadataController.js'
 
 const router: RouterType = Router()
 
@@ -78,6 +88,28 @@ router.get(
     res.json({ lines: result.lines })
   }),
 )
+
+/** Artist endpoints answer with a sanitized status instead of the generic 500. */
+function artistRoute<T>(
+  schema: ZodSchema<T>,
+  label: string,
+  load: (data: T) => Promise<unknown>,
+) {
+  return validated(schema, label, async (data, _req, res) => {
+    try {
+      const body = await load(data)
+      res.setHeader('Cache-Control', 'private, max-age=300')
+      res.json(body)
+    } catch (error) {
+      if (!(error instanceof ArtistError)) throw error
+      res.status(error.status).json({ error: error.code })
+    }
+  })
+}
+
+router.get('/artist', artistRoute(artistQuerySchema, 'Get artist', getArtistMetadata))
+router.get('/artist/songs', artistRoute(artistPageQuerySchema, 'Get artist songs', getArtistSongsMetadata))
+router.get('/artist/albums', artistRoute(artistPageQuerySchema, 'Get artist albums', getArtistAlbumsMetadata))
 
 router.get(
   '/cover',

@@ -1,21 +1,19 @@
 import { SERVER_URL } from '@/lib/config'
 import { metadataFetch } from '@/lib/metadataFetch'
-import type { MusicSource, Playlist, Track } from '@music-together/shared'
+import type { Artist, MusicSource, Playlist, Track } from '@music-together/shared'
 import { useCallback, useEffect, useRef, useState } from 'react'
 import { toast } from 'sonner'
 
 const PAGE_SIZE = 20
 
-type SearchResult = Track | Playlist
+export type SearchType = 'song' | 'album' | 'playlist' | 'artist'
+export type SearchResult = Track | Playlist | Artist
 
 /**
  * 搜索逻辑 hook — 管理搜索/翻页/abort/竞态保护。
  * 从 SearchDialog 中提取，使 UI 组件只关注渲染。
  */
-export function useSearch(
-  source: MusicSource,
-  type: 'song' | 'album' | 'playlist' = 'song',
-) {
+export function useSearch(source: MusicSource, type: SearchType = 'song') {
   const [results, setResults] = useState<SearchResult[]>([])
   const [loading, setLoading] = useState(false)
   const [loadingMore, setLoadingMore] = useState(false)
@@ -41,7 +39,7 @@ export function useSearch(
       searchKeyword: string,
       searchPage: number,
       signal: AbortSignal,
-      searchType: 'song' | 'album' | 'playlist'
+      searchType: SearchType,
     ): Promise<{ tracks: SearchResult[]; hasMore: boolean }> => {
       const res = await metadataFetch(
         `${SERVER_URL}/api/music/search?source=${searchSource}&keyword=${encodeURIComponent(searchKeyword)}&limit=${PAGE_SIZE}&page=${searchPage}&type=${searchType}`,
