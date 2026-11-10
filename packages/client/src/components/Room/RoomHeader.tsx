@@ -1,4 +1,4 @@
-import { Copy, Ellipsis, LogOut, Search, Settings, Users, Wifi, WifiOff } from 'lucide-react'
+import { CircleUserRound, Copy, Ellipsis, LogOut, Search, Settings, Users, Wifi, WifiOff } from 'lucide-react'
 import { useEffect, useState } from 'react'
 import { Button } from '@/components/ui/button'
 import {
@@ -19,11 +19,12 @@ import { toast } from 'sonner'
 interface RoomHeaderProps {
   onOpenSearch: () => void
   onOpenSettings: () => void
+  onOpenAccount: () => void
   onOpenMembers: () => void
   onLeaveRoom: () => void
 }
 
-export function RoomHeader({ onOpenSearch, onOpenSettings, onOpenMembers, onLeaveRoom }: RoomHeaderProps) {
+export function RoomHeader({ onOpenSearch, onOpenSettings, onOpenAccount, onOpenMembers, onLeaveRoom }: RoomHeaderProps) {
   // Fine-grained selectors to avoid re-renders from queue/playState changes
   const roomName = useRoomStore((s) => s.room?.name)
   const roomId = useRoomStore((s) => s.room?.id)
@@ -145,7 +146,24 @@ export function RoomHeader({ onOpenSearch, onOpenSettings, onOpenMembers, onLeav
           <TooltipContent>搜索点歌</TooltipContent>
         </Tooltip>
 
-        {/* Desktop: inline settings & leave buttons */}
+        {/* Desktop: inline account, settings & leave buttons */}
+        {hostRuntime.platformAccounts && (
+          <Tooltip>
+            <TooltipTrigger asChild>
+              <Button
+                variant="ghost"
+                size="icon"
+                className="hidden h-8 w-8 min-h-11 min-w-11 sm:flex sm:min-h-0 sm:min-w-0"
+                onClick={onOpenAccount}
+                aria-label="音乐账号"
+              >
+                <CircleUserRound className="h-4 w-4" />
+              </Button>
+            </TooltipTrigger>
+            <TooltipContent>音乐账号</TooltipContent>
+          </Tooltip>
+        )}
+
         <Tooltip>
           <TooltipTrigger asChild>
             <Button
@@ -189,6 +207,12 @@ export function RoomHeader({ onOpenSearch, onOpenSettings, onOpenMembers, onLeav
             </Button>
           </DropdownMenuTrigger>
           <DropdownMenuContent align="end">
+            {hostRuntime.platformAccounts && (
+              <DropdownMenuItem onClick={onOpenAccount}>
+                <CircleUserRound className="mr-2 h-4 w-4" />
+                音乐账号
+              </DropdownMenuItem>
+            )}
             <DropdownMenuItem onClick={onOpenSettings}>
               <Settings className="mr-2 h-4 w-4" />
               设置

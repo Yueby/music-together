@@ -80,52 +80,21 @@ describe('SettingsDialog hostRuntime platformAccounts isolation', () => {
     vi.unstubAllGlobals()
   })
 
-  it('renders accounts tab and mounts PlatformHub when platformAccounts is true (Web)', () => {
-    runtimeState.platformAccounts = true
+  it.each([true, false])(
+    'never shows an accounts tab or the platform hub, whatever the host says (platformAccounts=%s)',
+    (platformAccounts) => {
+      runtimeState.platformAccounts = platformAccounts
 
-    act(() => {
-      root.render(
-        <SettingsDialog
-          open={true}
-          onOpenChange={vi.fn()}
-          onUpdateSettings={vi.fn()}
-          initialTab="accounts"
-        />,
-      )
-    })
+      act(() => {
+        root.render(<SettingsDialog open={true} onOpenChange={vi.fn()} onUpdateSettings={vi.fn()} />)
+      })
 
-    const tabs = Array.from(container.querySelectorAll('button[role="tab"]'))
-    const tabTexts = tabs.map((t) => t.textContent)
-    expect(tabTexts.some((text) => text?.includes('账号'))).toBe(true)
-
-    const platformHub = container.querySelector('[data-testid="platform-hub"]')
-    expect(platformHub).not.toBeNull()
-  })
-
-  it('filters out accounts tab and does NOT mount PlatformHub when platformAccounts is false (Mapp)', () => {
-    runtimeState.platformAccounts = false
-
-    act(() => {
-      root.render(
-        <SettingsDialog
-          open={true}
-          onOpenChange={vi.fn()}
-          onUpdateSettings={vi.fn()}
-          initialTab="accounts"
-        />,
-      )
-    })
-
-    const tabs = Array.from(container.querySelectorAll('button[role="tab"]'))
-    const tabTexts = tabs.map((t) => t.textContent)
-    expect(tabTexts.some((text) => text?.includes('账号'))).toBe(false)
-
-    // PlatformHub must NOT be mounted
-    const platformHub = container.querySelector('[data-testid="platform-hub"]')
-    expect(platformHub).toBeNull()
-
-    // Fallback clamped tab should mount room settings instead
-    const roomSettings = container.querySelector('[data-testid="room-settings"]')
-    expect(roomSettings).not.toBeNull()
-  })
+      const tabTexts = Array.from(container.querySelectorAll('button[role="tab"]')).map((t) => t.textContent ?? '')
+      expect(tabTexts.some((text) => text.includes('账号'))).toBe(false)
+      expect(container.querySelector('[data-testid="platform-hub"]')).toBeNull()
+      // The room tab is the default, and the remaining tabs are still there.
+      expect(container.querySelector('[data-testid="room-settings"]')).not.toBeNull()
+      expect(tabTexts.join('|')).toMatch(/房间.*成员.*外观.*歌词/)
+    },
+  )
 })
