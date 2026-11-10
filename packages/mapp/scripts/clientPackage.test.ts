@@ -19,7 +19,7 @@ const template: MiniAppManifest = {
   style: 'app.css',
   permissions: [],
 }
-const permissions = ['user.read', 'audio.webAudio', 'network.websocket', 'network.request']
+const permissions = ['user.read', 'audio.webAudio', 'network.websocket', 'network.request', 'storage.read', 'storage.write']
 const endpoints = {
   roomAudio: {
     url: 'https://rooms.example.com/api/mapp/audio',
@@ -56,6 +56,10 @@ const endpoints = {
   musicPlaylist: {
     url: 'https://rooms.example.com/api/music/playlist',
     method: 'GET', query: ['source', 'id', 'type', 'limit', 'offset', 'total'], auth: 'platform',
+  },
+  musicMyPlaylist: {
+    url: 'https://rooms.example.com/api/music/playlist/mine',
+    method: 'GET', query: ['source', 'id', 'type', 'limit', 'offset', 'total', 'roomId'], auth: 'platform',
   },
 }
 const websockets = { roomSocket: { url: roomUrl, auth: 'platform' } }

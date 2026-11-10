@@ -59,7 +59,8 @@ export function PlatformHub() {
   const handleSelectPlaylist = useCallback(
     (pl: Playlist) => {
       setViewState({ type: 'detail', playlist: pl, source: activePlatform })
-      playlist.fetchPlaylistTracks(activePlatform, pl.id, pl.trackCount)
+      // These are the user's own lists: read with their login, which can include private tracks.
+      playlist.fetchPlaylistTracks(activePlatform, pl.id, pl.trackCount, 'playlist', true)
     },
     [activePlatform, playlist],
   )

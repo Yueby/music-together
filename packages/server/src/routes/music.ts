@@ -5,6 +5,7 @@ import {
   ttmlQuerySchema,
   coverQuerySchema,
   playlistQuerySchema,
+  myPlaylistQuerySchema,
   artistQuerySchema,
   artistPageQuerySchema,
 } from '@music-together/shared'
@@ -12,8 +13,6 @@ import { Router, type Router as RouterType, type Request, type Response } from '
 import type { ZodSchema } from 'zod'
 import { musicProvider } from '../services/musicProvider.js'
 import { fetchCoverImage } from '../services/coverProxy.js'
-import * as authService from '../services/authService.js'
-import { roomRepo } from '../repositories/roomRepository.js'
 import { logger } from '../utils/logger.js'
 import { coverProxyRateLimit } from '../middleware/httpRateLimiter.js'
 import { ArtistError } from '../services/artistService.js'
@@ -23,7 +22,9 @@ import {
   getArtistSongsMetadata,
   getMusicLyricMetadata,
   getMusicTtmlMetadata,
+  getMyPlaylistPageMetadata,
   getPlaylistPageMetadata,
+  PlaylistAccessError,
   searchMusicMetadata,
 } from '../controllers/musicMetadataController.js'
 
@@ -124,24 +125,22 @@ router.get(
 router.get(
   '/playlist',
   validated(playlistQuerySchema, 'Get playlist', async (data, _req, res) => {
-    const { source, id, limit, offset, total, roomId, type } = data
+    // Public lists only: this route never selects a music account.
+    res.json(await getPlaylistPageMetadata(data, null))
+  }),
+)
 
-    let cookie: string | null = null
-    if (roomId) {
-      const identityUserId = _req.identityUserId
-      if (!identityUserId) {
-        res.status(401).json({ error: 'Unauthorized' })
-        return
-      }
-      const room = roomRepo.get(roomId)
-      if (!room || !room.users.some((u) => u.id === identityUserId)) {
-        res.status(403).json({ error: 'Forbidden' })
-        return
-      }
-      cookie = authService.getUserCookie(identityUserId, source, roomId)
+router.get(
+  '/playlist/mine',
+  validated(myPlaylistQuerySchema, 'Get own playlist', async (data, req, res) => {
+    try {
+      // Private tracks must not be shared or cached beyond the caller.
+      res.setHeader('Cache-Control', 'private, no-store')
+      res.json(await getMyPlaylistPageMetadata(data, req.identityUserId))
+    } catch (error) {
+      if (!(error instanceof PlaylistAccessError)) throw error
+      res.status(error.status).json({ error: error.status === 401 ? 'Unauthorized' : 'Forbidden' })
     }
-
-    res.json(await getPlaylistPageMetadata({ source, id, limit, offset, total, type }, cookie))
   }),
 )
 

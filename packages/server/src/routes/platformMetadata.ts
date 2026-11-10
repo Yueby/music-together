@@ -11,7 +11,9 @@ import {
   getArtistSongsMetadata,
   getMusicLyricMetadata,
   getMusicTtmlMetadata,
+  getMyPlaylistPageMetadata,
   getPlaylistPageMetadata,
+  PlaylistAccessError,
   searchMusicMetadata,
 } from '../controllers/musicMetadataController.js'
 import { ArtistError } from '../services/artistService.js'
@@ -39,12 +41,17 @@ interface Options {
   artistSongs?: typeof getArtistSongsMetadata
   artistAlbums?: typeof getArtistAlbumsMetadata
   playlist?: typeof getPlaylistPageMetadata
+  myPlaylist?: typeof getMyPlaylistPageMetadata
   cover?: (url: string) => Promise<CoverResult>
 }
 type ParsedRequest = MappMetadataRequest
 /** Handler for a JSON target: receives exactly the query type the shared schema produces for it. */
 type JsonHandlers = {
-  [K in Exclude<ParsedRequest['kind'], 'cover'>]: (query: Extract<ParsedRequest, { kind: K }>['query']) => Promise<unknown>
+  [K in Exclude<ParsedRequest['kind'], 'cover'>]: (
+    query: Extract<ParsedRequest, { kind: K }>['query'],
+    /** The platform identity verified for this request, never anything from the query. */
+    caller: { userId: string },
+  ) => Promise<unknown>
 }
 
 const AUTH_TIMEOUT_MS = 6_000
@@ -92,6 +99,9 @@ function sendError(res: Response, error: unknown): void {
 
 /** Catalog failures (artist pages) as fixed codes; anything else keeps the generic failure. */
 function catalogError(error: unknown): unknown {
+  if (error instanceof PlaylistAccessError) {
+    return new MetadataError(error.status, error.status === 401 ? 'METADATA_UNAUTHORIZED' : 'METADATA_FORBIDDEN')
+  }
   if (!(error instanceof ArtistError)) return error
   if (error.code === 'ARTIST_UNSUPPORTED') return new MetadataError(400, 'METADATA_UNSUPPORTED')
   if (error.code === 'ARTIST_NOT_FOUND') return new MetadataError(404, 'METADATA_NOT_FOUND')
@@ -124,6 +134,7 @@ export function createPlatformMetadataRouter(options: Options): RouterType {
   const artistSongs = options.artistSongs ?? getArtistSongsMetadata
   const artistAlbums = options.artistAlbums ?? getArtistAlbumsMetadata
   const playlist = options.playlist ?? getPlaylistPageMetadata
+  const myPlaylist = options.myPlaylist ?? getMyPlaylistPageMetadata
   const cover = options.cover ?? ((url: string) => fetchPlatformCover(url))
   /** One entry per JSON target; the type forces every new target in the shared table to get a handler. */
   const handlers: JsonHandlers = {
@@ -139,6 +150,8 @@ export function createPlatformMetadataRouter(options: Options): RouterType {
     artistAlbums: (query) => artistAlbums(query),
     // Anonymous on purpose: personal playlists need an account and never use this public target.
     playlist: (query) => playlist(query, null),
+    // The only target whose answer depends on who asks: the account is looked up from the verified identity.
+    myPlaylist: async (query, caller) => myPlaylist(query, caller.userId),
   }
   const searchLimit = options.rateLimit ?? musicApiRateLimit
   const coverLimit = options.coverRateLimit ?? coverProxyRateLimit
@@ -212,7 +225,7 @@ export function createPlatformMetadataRouter(options: Options): RouterType {
   )
 
   // 3. Reuse the shared metadata controllers; covers answer with image bytes instead of JSON.
-  router.use(async (_req, res) => {
+  router.use(async (req, res) => {
     try {
       const parsed = res.locals.metadata as ParsedRequest
       if (parsed.kind === 'cover') {
@@ -223,9 +236,10 @@ export function createPlatformMetadataRouter(options: Options): RouterType {
         res.status(200).type(result.contentType).send(result.body)
         return
       }
-      const handler = handlers[parsed.kind] as (query: unknown) => Promise<unknown>
+      const handler = handlers[parsed.kind] as (query: unknown, caller: { userId: string }) => Promise<unknown>
+      const caller = { userId: req.identityUserId as string } // set from the verified token by the first middleware
       const work = Promise.resolve()
-        .then(() => handler(parsed.query))
+        .then(() => handler(parsed.query, caller))
         .catch((error: unknown) => {
           throw catalogError(error)
         })

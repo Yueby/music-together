@@ -5,7 +5,17 @@ import { startMappClient } from './bootstrapClient.ts'
 const fixtures = vi.hoisted(() => {
   const order: string[] = []
   const host = { connect: vi.fn(), dispose: vi.fn(), unlockAudio: vi.fn() }
-  const sdk = { ready: Promise.resolve(), lifecycle: { ready: vi.fn() } }
+  const sdk = {
+    ready: Promise.resolve(),
+    lifecycle: { ready: vi.fn() },
+    // Storage permissions are off by default; individual tests grant them.
+    permissions: { has: vi.fn((_permission: string) => false) },
+    localStorage: {
+      getItem: vi.fn(async (_key: string): Promise<string | null> => null),
+      setItem: vi.fn(async () => {}),
+      removeItem: vi.fn(async () => {}),
+    },
+  }
   return {
     order,
     host,
@@ -111,6 +121,34 @@ describe('formal Mapp client startup', () => {
     await client.dispose()
     expect(fixtures.order.slice(-3)).toEqual(['unmount', 'unbind', 'dispose'])
     expect(listeners.size).toBe(0)
+  })
+
+  it('restores the saved music-platform logins before the host exists, only when storage is permitted', async () => {
+    const { storageBackend, clearMemoryStorage } = await import('./compat/storageBackend.ts')
+    fixtures.sdk.localStorage.getItem.mockImplementation(async (key: string) =>
+      key === 'mt-auth-cookies' ? '[{"platform":"netease","cookie":"fixture"}]' : null,
+    )
+    fixtures.createHost.mockImplementation(() => {
+      // By the time the host (and so the UI) is built, the synchronous store already holds the login.
+      expect(storageBackend.getItem('mt-auth-cookies')).toContain('netease')
+      return fixtures.host
+    })
+    fixtures.sdk.permissions.has.mockImplementation((permission: string) => permission.startsWith('storage.'))
+    try {
+      const client = start()
+      await client.ready
+      expect(fixtures.sdk.localStorage.getItem).toHaveBeenCalledWith('mt-auth-cookies')
+      await client.dispose()
+    } finally {
+      clearMemoryStorage()
+    }
+  })
+
+  it('does not read persistent storage without the storage permissions', async () => {
+    const client = start()
+    await client.ready
+    expect(fixtures.sdk.localStorage.getItem).not.toHaveBeenCalled()
+    await client.dispose()
   })
 
   it('uses the existing default root and safely creates one when absent', async () => {

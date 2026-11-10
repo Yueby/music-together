@@ -221,6 +221,14 @@ describe('host capability guards on shared hooks', () => {
     expect(fixture.metadata).toHaveBeenCalledWith(expect.stringContaining('/api/music/playlist?'), {
       credentials: 'include',
     })
+    // The caller's own list is a different, identity-checked endpoint that carries the room.
+    await act(async () => {
+      await playlists.fetchPlaylistTracks('netease', 'fixture-own-list', 5, 'playlist', true)
+    })
+    const lastCall = fixture.metadata.mock.calls.at(-1) as unknown as [string]
+    const own = new URL(lastCall[0], 'https://music.test')
+    expect(own.pathname).toBe('/api/music/playlist/mine')
+    expect(own.searchParams.get('roomId')).toBe('ABC123')
     expect(globalThis.fetch).not.toHaveBeenCalled()
   })
 })

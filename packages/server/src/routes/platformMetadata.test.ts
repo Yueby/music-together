@@ -3,6 +3,7 @@ import type { NextFunction, Request, RequestHandler, Response } from 'express'
 import { afterEach, describe, expect, it, vi } from 'vitest'
 import { MAPP_METADATA_MAX_BYTES } from '@music-together/shared'
 import { createPlatformMetadataRouter } from './platformMetadata.js'
+import { PlaylistAccessError } from '../controllers/musicMetadataController.js'
 import { ArtistError } from '../services/artistService.js'
 import { musicProvider } from '../services/musicProvider.js'
 
@@ -100,6 +101,7 @@ function fixture(
   const artistSongs = vi.fn().mockResolvedValue({ items: [], hasMore: false })
   const artistAlbums = vi.fn().mockResolvedValue({ items: [], hasMore: false })
   const playlist = vi.fn().mockResolvedValue({ tracks: [], total: 0, offset: 0, hasMore: false })
+  const myPlaylist = vi.fn().mockResolvedValue({ tracks: [], total: 0, offset: 0, hasMore: false })
   const rateLimit = vi.fn<RequestHandler>((_req, _res, next) => next())
   const coverRateLimit = vi.fn<RequestHandler>((_req, _res, next) => next())
   const router = createPlatformMetadataRouter({
@@ -107,7 +109,9 @@ function fixture(
     verifyIdentity,
     rateLimit: changes.rateLimit ?? rateLimit,
     coverRateLimit,
-    ...(changes.defaults ? {} : { search, lyric, ttml, cover, artist, artistSongs, artistAlbums, playlist }),
+    ...(changes.defaults
+      ? {}
+      : { search, lyric, ttml, cover, artist, artistSongs, artistAlbums, playlist, myPlaylist }),
   })
   /** Resolves when the router either answers or hands the request back to the original chain. */
   const run = () =>
@@ -129,6 +133,7 @@ function fixture(
     artistSongs,
     artistAlbums,
     playlist,
+    myPlaylist,
     rateLimit,
     coverRateLimit,
     run,
@@ -168,6 +173,46 @@ describe('platform catalog targets (artist pages and public playlists)', () => {
       null,
     )
     expect(f.res.statusCode).toBe(200)
+  })
+
+  describe('own playlist target', () => {
+    const mine = '/api/music/playlist/mine?source=netease&id=42&roomId=ROOM01'
+
+    it('hands the verified platform identity, not anything from the query, to the controller', async () => {
+      const f = fixture({ raw: mine, userId: 'mapp_' + 'a'.repeat(32) })
+      expect(await f.run()).toBe('answered')
+      expect(f.myPlaylist).toHaveBeenCalledExactlyOnceWith(
+        { source: 'netease', id: '42', roomId: 'ROOM01', type: 'playlist', limit: 100, offset: 0, total: 0 },
+        'mapp_' + 'a'.repeat(32),
+      )
+      expect(f.res.statusCode).toBe(200)
+    })
+
+    it.each([
+      [new PlaylistAccessError(401), 401, 'METADATA_UNAUTHORIZED'],
+      [new PlaylistAccessError(403), 403, 'METADATA_FORBIDDEN'],
+    ])('maps %# to a fixed code', async (error, status, code) => {
+      const f = fixture({ raw: mine })
+      f.myPlaylist.mockImplementation(() => {
+        throw error
+      })
+      expect(await f.run()).toBe('answered')
+      expect(f.res.statusCode).toBe(status)
+      expect(f.res.body).toEqual({ code })
+    })
+
+    it('requires the room and refuses a caller-chosen identity in the query', async () => {
+      for (const path of [
+        '/api/music/playlist/mine?source=netease&id=42',
+        mine + '&userId=mapp_someone-else',
+        mine + '&cookie=MUSIC_U%3Dx',
+      ]) {
+        const f = fixture({ raw: path })
+        expect(await f.run()).toBe('answered')
+        expect(f.res.statusCode).toBe(400)
+        expect(f.myPlaylist).not.toHaveBeenCalled()
+      }
+    })
   })
 
   it.each([
@@ -700,7 +745,7 @@ describe('unmounted platform metadata router', () => {
     // The router applies musicApiRateLimit itself; mounting it after `/api/music` would count requests twice.
     expect(mount).toBeLessThan(index.indexOf("'/api/music'"))
     expect(web).not.toContain('verifyMusicMetadata')
-    expect(web).toContain('getUserCookie')
+    expect(web).toContain('getMyPlaylistPageMetadata')
     expect(web).toContain('searchMusicMetadata(data)')
     expect(web).toContain('getMusicLyricMetadata(data)')
     expect(web).toContain('getMusicTtmlMetadata(data)')

@@ -40,6 +40,11 @@ describe('reviewed metadata read contract', () => {
         endpoint: 'musicPlaylist',
         queryKeys: ['source', 'id', 'type', 'limit', 'offset', 'total'],
       },
+      myPlaylist: {
+        path: '/api/music/playlist/mine',
+        endpoint: 'musicMyPlaylist',
+        queryKeys: ['source', 'id', 'type', 'limit', 'offset', 'total', 'roomId'],
+      },
     })
   })
 
@@ -73,6 +78,11 @@ describe('reviewed metadata read contract', () => {
       'playlist',
       { source: 'tencent', id: 'abc', type: 'album', limit: 100, offset: 0, total: 0 },
     ],
+    [
+      '/api/music/playlist/mine?source=kugou&id=9&roomId=ROOM01',
+      'myPlaylist',
+      { source: 'kugou', id: '9', roomId: 'ROOM01', type: 'playlist', limit: 100, offset: 0, total: 0 },
+    ],
   ])('parses %s with every key present, defaults included', (raw, kind, query) => {
     expect(parseMappMetadataRequest(raw)).toMatchObject({ kind, query })
   })
@@ -85,6 +95,8 @@ describe('reviewed metadata read contract', () => {
     '/api/music/playlist?source=netease&id=1&limit=201',
     '/api/music/playlist?source=netease&id=1&roomId=ABC123',
     '/api/music/playlist?source=netease&id=1&type=artist',
+    '/api/music/playlist/mine?source=netease&id=1',
+    '/api/music/playlist/mine?source=netease&id=1&roomId=ABC123&userId=mapp_x',
   ])('rejects %s', (raw) => {
     expect(() => parseMappMetadataRequest(raw)).toThrow()
   })

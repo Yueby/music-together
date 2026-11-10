@@ -28,6 +28,12 @@ export const MAPP_METADATA_TARGETS = {
     endpoint: 'musicPlaylist',
     queryKeys: ['source', 'id', 'type', 'limit', 'offset', 'total'],
   },
+  /** One page of the caller's own playlist: needs the verified identity and a room whose account pool holds the login. */
+  myPlaylist: {
+    path: '/api/music/playlist/mine',
+    endpoint: 'musicMyPlaylist',
+    queryKeys: ['source', 'id', 'type', 'limit', 'offset', 'total', 'roomId'],
+  },
 } as const
 
 /** Music CDNs the cover endpoint (Web and platform) may fetch from, and the mini-app may ask for. One list for both. */

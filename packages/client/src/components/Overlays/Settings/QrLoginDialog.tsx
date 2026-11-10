@@ -1,5 +1,6 @@
 import { Button } from '@/components/ui/button'
 import { Dialog, DialogContent, DialogDescription, DialogHeader, DialogTitle } from '@/components/ui/dialog'
+import { useDataImageUrl } from '@/hooks/useDataImageUrl'
 import { PLATFORM_LABELS } from '@/lib/platform'
 import type { MusicSource } from '@music-together/shared'
 import { QR_STATUS, QR_TIMING } from '@music-together/shared'
@@ -28,6 +29,9 @@ export function QrLoginDialog({
   onCheckStatus,
 }: QrLoginDialogProps) {
   const pollRef = useRef<ReturnType<typeof setInterval> | null>(null)
+  // The server sends the QR code as a base64 data URL; a Blob URL is shown on every host (a locked-down CSP may
+  // refuse data: images).
+  const qrSrc = useDataImageUrl(qrData?.qrimg)
   const label = PLATFORM_LABELS[platform] ?? platform
   const scanApp = platform === 'tencent' ? '手机QQ' : `${label} App`
   const checkQrStatus = useEffectEvent((key: string) => onCheckStatus(key))
@@ -86,10 +90,10 @@ export function QrLoginDialog({
           {/* QR Code */}
           <div className="relative flex h-52 w-52 items-center justify-center rounded-lg border bg-white">
             {isLoading && <Loader2 className="text-muted-foreground h-8 w-8 animate-spin" />}
-            {!isLoading && qrData?.qrimg && (
+            {!isLoading && qrSrc && (
               <>
                 <img
-                  src={qrData.qrimg}
+                  src={qrSrc}
                   alt={`${label}登录二维码`}
                   className="h-full w-full rounded-lg object-contain p-2"
                 />

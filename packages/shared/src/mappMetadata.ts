@@ -5,6 +5,7 @@ import {
   ttmlQuerySchema,
   artistQuerySchema,
   artistPageQuerySchema,
+  myPlaylistQuerySchema,
   playlistQuerySchema,
 } from './schemas.js'
 
@@ -30,11 +31,17 @@ export const MAPP_PLAYLIST_PAGE_MAX = 200
  * (`total` defaults to 0 = unknown). Personal playlists need an account and do not use this target.
  */
 export const mappMetadataPlaylistQuerySchema = playlistQuerySchema
-  .omit({ roomId: true, limit: true, total: true })
+  .omit({ limit: true, total: true })
   .extend({
     limit: z.coerce.number().int().min(1).max(MAPP_PLAYLIST_PAGE_MAX).default(100),
     total: z.coerce.number().int().min(0).default(0),
   })
+  .strict()
+
+/** The caller's own playlist: same paging as the public target, plus the room that holds the account. */
+export const mappMetadataMyPlaylistQuerySchema = myPlaylistQuerySchema
+  .omit({ limit: true })
+  .extend({ limit: z.coerce.number().int().min(1).max(MAPP_PLAYLIST_PAGE_MAX).default(100) })
   .strict()
 
 /** Absolute https URL without credentials, fragment or whitespace. The host allowlist is enforced by the server. */
@@ -64,6 +71,7 @@ export const MAPP_METADATA_SCHEMAS = {
   artistSongs: mappMetadataArtistPageQuerySchema,
   artistAlbums: mappMetadataArtistPageQuerySchema,
   playlist: mappMetadataPlaylistQuerySchema,
+  myPlaylist: mappMetadataMyPlaylistQuerySchema,
 } as const satisfies Record<keyof typeof MAPP_METADATA_TARGETS, z.ZodType>
 
 export type MappMetadataKind = keyof typeof MAPP_METADATA_TARGETS

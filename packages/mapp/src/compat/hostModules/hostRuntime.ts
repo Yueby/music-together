@@ -6,8 +6,9 @@ import type { HostRuntime } from '../../../../client/src/lib/hostRuntime'
  */
 export const hostRuntime: HostRuntime = Object.freeze({
   kind: 'mapp',
-  // Music-platform login is not bridged through the platform connection yet.
-  platformAccounts: false,
+  // Music-platform login (QR, cookie, own playlists) runs over the reviewed room connection; the login is kept in the
+  // SDK's app-scoped storage.
+  platformAccounts: true,
   nativeMediaSession: false,
   versionCheck: false,
   // The platform CSP forbids eval, which PixiJS needs; the mesh renderer is plain WebGL.

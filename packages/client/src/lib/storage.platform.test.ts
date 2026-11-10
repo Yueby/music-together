@@ -32,12 +32,15 @@ describe('shared settings facade with the micro-app memory backend', () => {
     expect(storage.getUserId()).toBe('')
   })
 
-  it('never stores platform credentials or duplicates the session rejoin ticket', () => {
+  it('keeps music-platform logins like the Web client does, but never duplicates the session rejoin ticket', () => {
     storage.setAuthCookies([{ platform: 'netease', cookie: 'fixture-only-credential' }])
     storage.upsertAuthCookie('tencent', 'another-fixture')
     storage.setRejoinToken('ABC123', 'fixture-only-ticket', Date.now() + 60_000)
-    expect(storage.getAuthCookies()).toEqual([])
+    expect(storage.getAuthCookies().map((entry) => entry.platform)).toEqual(['netease', 'tencent'])
+    expect(storage.hasAuthCookie('netease')).toBe(true)
+    storage.removeAuthCookie('netease')
     expect(storage.hasAuthCookie('netease')).toBe(false)
+    // The ticket is short-lived and owned by the room session; it is never persisted by the settings facade.
     expect(storage.getRejoinToken('ABC123')).toBeNull()
   })
 

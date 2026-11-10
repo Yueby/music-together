@@ -165,13 +165,27 @@ export const coverQuerySchema = z.object({
   size: z.coerce.number().int().min(16).max(2000).default(300),
 })
 
+/**
+ * A page of the caller's *own* playlist (private tracks included). Always scoped to a room: the room's account pool
+ * is where the caller's music-platform login lives. Public lists use `playlistQuerySchema` and never carry a room.
+ */
+export const myPlaylistQuerySchema = z.object({
+  source: musicSourceSchema,
+  id: z.string().min(1).max(LIMITS.PLAYLIST_ID_MAX_LENGTH),
+  limit: z.coerce.number().int().min(1).max(1000).default(100),
+  offset: z.coerce.number().int().min(0).default(0),
+  total: z.coerce.number().int().min(0).default(0),
+  roomId: z.string().min(1).max(10),
+  type: z.enum(['playlist', 'album']).optional().default('playlist'),
+})
+
+/** A page of a public playlist or album. Anonymous by design: it never selects a music account. */
 export const playlistQuerySchema = z.object({
   source: musicSourceSchema,
   id: z.string().min(1).max(LIMITS.PLAYLIST_ID_MAX_LENGTH),
   limit: z.coerce.number().int().min(1).max(1000).default(100),
   offset: z.coerce.number().int().min(0).default(0),
   total: z.coerce.number().int().min(0).optional(),
-  roomId: z.string().min(1).max(10).optional(),
   type: z.enum(['playlist', 'album']).optional().default('playlist'),
 })
 
