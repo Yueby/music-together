@@ -12,3 +12,6 @@
 *.yaml text eol=lf
 *.yml text eol=lf
 *.patch text eol=lf
+
+# 官方 SDK 发行文件保持原样，不做换行转换
+vendor/** -text
