@@ -1,4 +1,5 @@
 import { MarqueeText } from '@/components/ui/marquee-text'
+import { hostRuntime } from '@/lib/hostRuntime'
 import { cn } from '@/lib/utils'
 import { usePlayerStore } from '@/stores/playerStore'
 import { Disc3 } from 'lucide-react'
@@ -29,9 +30,9 @@ export function NowPlaying({ compact = false, onCoverClick }: NowPlayingProps) {
     setCoverError(false)
   }, [currentTrack?.id])
 
-  const showCover = currentTrack?.cover && !coverError
+  const showCover = Boolean(hostRuntime.remoteArtwork && currentTrack?.cover && !coverError)
 
-  const coverContent = showCover ? (
+  const coverContent = showCover && currentTrack ? (
     <img
       src={currentTrack.cover}
       alt={currentTrack.title}

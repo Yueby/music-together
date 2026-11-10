@@ -12,6 +12,7 @@ import * as authService from '../services/authService.js'
 import { roomRepo } from '../repositories/roomRepository.js'
 import { logger } from '../utils/logger.js'
 import { coverProxyRateLimit } from '../middleware/httpRateLimiter.js'
+import { getMusicLyricMetadata, searchMusicMetadata } from '../controllers/musicMetadataController.js'
 
 const router: RouterType = Router()
 
@@ -42,17 +43,7 @@ function validated<T>(
 router.get(
   '/search',
   validated(searchQuerySchema, 'Search', async (data, _req, res) => {
-    const { source, keyword, limit: pageSize, page: pageNum, type } = data
-    if (type === 'album') {
-      const albums = await musicProvider.searchAlbum(source, keyword, pageSize, pageNum)
-      res.json({ tracks: albums, page: pageNum, hasMore: albums.length >= pageSize })
-    } else if (type === 'playlist') {
-      const playlists = await musicProvider.searchPlaylist(source, keyword, pageSize, pageNum)
-      res.json({ tracks: playlists, page: pageNum, hasMore: playlists.length >= pageSize })
-    } else {
-      const tracks = await musicProvider.search(source, keyword, pageSize, pageNum)
-      res.json({ tracks, page: pageNum, hasMore: tracks.length >= pageSize })
-    }
+    res.json(await searchMusicMetadata(data))
   }),
 )
 
@@ -68,9 +59,7 @@ router.get(
 router.get(
   '/lyric',
   validated(lyricQuerySchema, 'Get lyric', async (data, _req, res) => {
-    const { source, lyricId } = data
-    const result = await musicProvider.getLyric(source, lyricId)
-    res.json(result)
+    res.json(await getMusicLyricMetadata(data))
   }),
 )
 

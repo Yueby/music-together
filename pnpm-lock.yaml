@@ -195,8 +195,33 @@ importers:
         specifier: ^3.6.0
         version: 3.6.0(vite@8.3.5(@types/node@26.6.6)(esbuild@0.28.2)(jiti@2.7.0)(tsx@4.23.15))
 
+  packages/mapp:
+    dependencies:
+      '@discourse-mini-app/sdk':
+        specifier: file:../../vendor/discourse-mini-app-sdk
+        version: file:vendor/discourse-mini-app-sdk
+      '@music-together/shared':
+        specifier: workspace:*
+        version: link:../shared
+      zod:
+        specifier: ^4.6.7
+        version: 4.6.7
+    devDependencies:
+      '@types/node':
+        specifier: ^26.6.6
+        version: 26.6.6
+      typescript:
+        specifier: npm:@typescript/typescript6@~6.0.2
+        version: '@typescript/typescript6@6.0.2'
+      vite:
+        specifier: ^8.3.5
+        version: 8.3.5(@types/node@26.6.6)(esbuild@0.28.2)(jiti@2.7.0)(tsx@4.23.15)
+
   packages/server:
     dependencies:
+      '@discourse-mini-app/sdk':
+        specifier: file:../../vendor/discourse-mini-app-sdk
+        version: file:vendor/discourse-mini-app-sdk
       '@meting/core':
         specifier: ^1.6.2
         version: 1.6.2
@@ -566,6 +591,9 @@ packages:
   '@csstools/css-tokenizer@4.0.2':
     resolution: {integrity: sha512-OoKoR0f76dCY666JlcbhmVTs2drYj1GUXZTYTcbUgJjh9Nv41aFfZ21bPQTERm5+L5cBDo466NltB2lplS5GBw==}
     engines: {node: '>=20.19.0'}
+
+  '@discourse-mini-app/sdk@file:vendor/discourse-mini-app-sdk':
+    resolution: {directory: vendor/discourse-mini-app-sdk, type: directory}
 
   '@dotenvx/dotenvx@1.75.1':
     resolution: {integrity: sha512-/BITOC9dmS/edY2zQwZNicQ059O6RKabtQfyEafV0nGtfYRNHYy1DIPiYVcov40+tob9hfmBnbR963dS+EQ1DQ==}
@@ -5578,6 +5606,8 @@ snapshots:
   '@csstools/css-tokenizer@3.0.4': {}
 
   '@csstools/css-tokenizer@4.0.2': {}
+
+  '@discourse-mini-app/sdk@file:vendor/discourse-mini-app-sdk': {}
 
   '@dotenvx/dotenvx@1.75.1':
     dependencies:

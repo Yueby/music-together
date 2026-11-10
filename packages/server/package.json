@@ -9,6 +9,7 @@
     "start": "node dist/index.js"
   },
   "dependencies": {
+    "@discourse-mini-app/sdk": "file:../../vendor/discourse-mini-app-sdk",
     "@meting/core": "^1.6.2",
     "@music-together/shared": "workspace:*",
     "@neteasecloudmusicapienhanced/api": "^4.41.1",

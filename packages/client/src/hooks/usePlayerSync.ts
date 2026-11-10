@@ -32,7 +32,7 @@ import { usePlayerStore } from '@/stores/playerStore'
 import { useRoomStore } from '@/stores/roomStore'
 import type { ScheduledPlayState, ServerToClientEvents } from '@music-together/shared'
 import { EVENTS } from '@music-together/shared'
-import type { Howl } from 'howler'
+import type { PlaybackSound } from '@/lib/PlaybackSound'
 import { useEffect, useRef, type RefObject } from 'react'
 
 // ---------------------------------------------------------------------------
@@ -75,9 +75,9 @@ function clamp(value: number, limit: number): number {
  * rate correction is automatically disabled and only hard seek is used.
  */
 export function usePlayerSync(
-  howlRef: RefObject<Howl | null>,
+  howlRef: RefObject<PlaybackSound | null>,
   soundIdRef: RefObject<number | undefined>,
-  setDesiredPlayback: (shouldPlay: boolean) => void,
+  setDesiredPlayback: (shouldPlay: boolean, getSeekTime?: () => number) => void,
   setScheduledPlayback: (getSeekTime: () => number) => void,
 ) {
   const { socket } = useSocketContext()
@@ -141,6 +141,7 @@ export function usePlayerSync(
           isCalibrated() ? getServerTime() : Date.now(),
         )
         if (data.playState.isPlaying) setScheduledPlayback(getSeekTime)
+        else setDesiredPlayback(false, () => data.playState.currentTime)
         const targetTime = data.playState.isPlaying ? getSeekTime() : data.playState.currentTime
         // A late load starts once from onload, using the elapsed position.
         if (howlRef.current && (!data.playState.isPlaying || howlRef.current.state() === 'loaded')) {
@@ -184,6 +185,7 @@ export function usePlayerSync(
 
       scheduledTimerRef.current = setTimeout(() => {
         if (actionIdRef.current !== id) return // stale callback
+        setDesiredPlayback(false, () => data.playState.currentTime)
         if (howlRef.current) {
           if (soundIdRef.current !== undefined) howlRef.current.pause(soundIdRef.current)
           // Sync to the server's authoritative time snapshot even when the

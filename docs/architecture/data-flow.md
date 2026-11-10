@@ -41,7 +41,7 @@ graph TB
 
 | 分类         | 客户端 → 服务端                                                                                                                     | 服务端 → 客户端                                                                                                                            |
 | ------------ | ----------------------------------------------------------------------------------------------------------------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------ |
-| **Room**     | `room:create`, `room:join`, `room:leave`, `room:list`, `room:settings`, `room:set_role`                                             | `room:created`, `room:state`, `room:user_joined`, `room:user_left`, `room:settings`, `room:error`, `room:list_update`, `room:role_changed` |
+| **Room**     | `room:create`, `room:join`, `room:leave`, `room:list`, `room:settings`, `room:set_role`                                             | `room:created`, `room:state`, `room:user_joined`, `room:user_left`, `room:settings`, `room:error`, `room:list_update`, `room:role_changed`, `room:rejoin_token` |
 | **Player**   | `player:play`, `player:pause`, `player:seek`, `player:next`, `player:prev`, `player:sync`, `player:sync_request`, `player:set_mode` | `player:play`, `player:pause`, `player:resume`, `player:seek`, `player:sync_response`                                                      |
 | **Queue**    | `queue:add`, `queue:add_batch`, `queue:remove`, `queue:reorder`, `queue:clear`                                                      | `queue:updated`                                                                                                                            |
 | **Chat**     | `chat:message`                                                                                                                      | `chat:message`, `chat:history`                                                                                                             |
@@ -49,6 +49,10 @@ graph TB
 | **Auth**     | `auth:request_qr`, `auth:check_qr`, `auth:set_cookie`, `auth:logout`, `auth:get_status`                                             | `auth:qr_generated`, `auth:qr_status`, `auth:set_cookie_result`, `auth:status_update`, `auth:my_status`                                    |
 | **Playlist** | `playlist:get_my`                                                                                                                   | `playlist:my_list`                                                                                                                         |
 | **NTP**      | `ntp:ping`                                                                                                                          | `ntp:pong`                                                                                                                                 |
+
+平台接入另外定义服务端事件 `identity:ready({ userId })`：仅在显式启用的平台身份适配成功连接后发送，用于确认服务器映射的身份，不含 Cookie、JWT 或房间票据。默认网页 Cookie 路径与现有启动入口保持原样，不会自动启用平台身份。平台入口的事件白名单排除音乐凭据／个人歌单操作，具体房间权限仍由原控制器裁决。实现与启用边界见 [微应用兼容层](mini-app-compatibility.md)。
+
+搜索和歌词另外提供仅在配置 `MAPP_*` 环境变量后才挂载的 `platformMetadata` 路由：复用原匿名 metadata controller；有显式平台认证标记时按受控 JWT 验证，普通 Web Cookie 请求继续原链。只读 target/query 合同位于 shared `mappMetadata.ts`，未开放歌单详情、账号、任意图片或 TTML 地址。该路径与媒体读取、宿主装配的状态见 [微应用兼容层](mini-app-compatibility.md)。
 
 ## 关键数据模型
 
@@ -276,5 +280,6 @@ Conductor（当前 `hostId` 对应用户）**自适应频率**上报当前播放
 | `/api/music/playlist`      | GET  | 获取歌单曲目列表（`source` + `id` + `limit` + `offset`），分页返回 `{ tracks, total, offset, hasMore }` |
 | `/api/rooms/:roomId/check` | GET  | 房间预检（存在性 + 是否需要密码），用于分享链接直接访问时的前置校验                                     |
 | `/api/health`              | GET  | 健康检查                                                                                                |
+| `/api/mapp/audio`          | GET  | 可选平台 JWT 房间音频响应，query 为 `roomId`、`trackId`；仅配置 `MAPP_*` 环境变量后挂载，默认关闭          |
 
 ---

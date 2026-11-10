@@ -76,16 +76,26 @@ function AnimatedRoutes() {
   )
 }
 
+export interface AppSurfaceProps {
+  onReset?: () => void
+}
+
+export function AppSurface({ onReset = () => window.location.reload() }: AppSurfaceProps) {
+  return (
+    <TooltipProvider>
+      <ErrorBoundary FallbackComponent={ErrorFallback} onReset={onReset}>
+        <AnimatedRoutes />
+      </ErrorBoundary>
+      <Toaster position="top-center" richColors />
+    </TooltipProvider>
+  )
+}
+
 export default function App() {
   return (
     <BrowserRouter>
       <SocketProvider>
-        <TooltipProvider>
-          <ErrorBoundary FallbackComponent={ErrorFallback} onReset={() => window.location.reload()}>
-            <AnimatedRoutes />
-          </ErrorBoundary>
-          <Toaster position="top-center" richColors />
-        </TooltipProvider>
+        <AppSurface />
       </SocketProvider>
     </BrowserRouter>
   )

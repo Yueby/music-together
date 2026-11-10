@@ -43,9 +43,22 @@ IDENTITY_COOKIE_SECURE
 AUTO_FALLBACK_ENABLED
 ```
 
+### Discourse 微应用入口（可选，默认关闭）
+
+微应用与网页端共用同一个服务、域名和端口，无需另起同步服务或为 Cloudflare 增加路径分流。设置下面变量后才会接受平台 JWT：
+
+```text
+MAPP_ISSUER      论坛 https 地址（可带子目录）
+MAPP_AUDIENCE    本服务的公开 https origin（主机名不能与论坛相同）
+MAPP_APP_ID      平台应用页分配的 UUIDv7
+MAPP_JWKS_FILE   可选，容器内只读公钥文件的绝对路径
+```
+
+四项全部不设置即关闭；只设置一部分或值非法时服务会拒绝启动。使用 `MAPP_JWKS_FILE` 时把公钥文件只读挂载进容器（如 `-v ./platform-jwks.json:/run/keys/platform-jwks.json:ro`）；不设置则从论坛 `/mini-app-api/jwks` 获取公钥。日志和代理不要记录带 `mini_app_token` 的完整 query。详见 [微应用兼容层](mini-app-compatibility.md)。
+
 ## Docker 多阶段构建
 
-- `deps`：锁定 pnpm 11.21.0 并执行 frozen install。
+- `deps`：锁定 pnpm 11.21.0 并执行 frozen install；需先复制仓库根 `vendor/`（官方 SDK 的 `file:` 依赖）。
 - `build`：构建 shared、server 和 client。
 - `production`：只安装服务端生产依赖链，复制构建产物。
 - 运行时使用非 root `node` 用户。

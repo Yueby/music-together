@@ -1,6 +1,7 @@
 import { useSocketContext } from '@/providers/SocketProvider'
 import { useRoomStore } from '@/stores/roomStore'
 import { storage } from '@/lib/storage'
+import { hostRuntime } from '@/lib/hostRuntime'
 import { ERROR_CODE, EVENTS } from '@music-together/shared'
 import type { AudioQuality, RoomAutoFallbackEvent, RoomState, User, UserRole } from '@music-together/shared'
 import { useEffect, useRef } from 'react'
@@ -28,6 +29,7 @@ export function useRoomState() {
 
   useEffect(() => {
     const resendCookies = () => {
+      if (!hostRuntime.platformAccounts) return
       const storedCookies = storage.getAuthCookies()
       for (const { platform, cookie } of storedCookies) {
         socket.emit(EVENTS.AUTH_SET_COOKIE, { platform, cookie })
@@ -51,6 +53,7 @@ export function useRoomState() {
     }
 
     const onRejoinToken = (data: { roomId: string; token: string; expiresAt: number }) => {
+      if (hostRuntime.kind === 'mapp') return
       storage.setRejoinToken(data.roomId, data.token, data.expiresAt)
     }
 

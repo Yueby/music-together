@@ -2,6 +2,7 @@ import { useContainerPortrait } from '@/hooks/useContainerPortrait'
 import { useCoverWidth } from '@/hooks/useCoverWidth'
 import { useVote } from '@/hooks/useVote'
 import { SERVER_URL } from '@/lib/config'
+import { hostRuntime } from '@/lib/hostRuntime'
 import { cn } from '@/lib/utils'
 import { usePlayerStore } from '@/stores/playerStore'
 import { useSettingsStore } from '@/stores/settingsStore'
@@ -83,7 +84,10 @@ export function AudioPlayer({
 
   // 封面 URL 代理：解决 QQ 音乐 / 酷狗等 CDN 的 CORS 限制
   const proxiedCover = useMemo(
-    () => (currentTrack?.cover ? getProxiedCoverUrl(currentTrack.cover) : undefined),
+    () => {
+      if (!hostRuntime.remoteArtwork) return undefined
+      return currentTrack?.cover ? getProxiedCoverUrl(currentTrack.cover) : undefined
+    },
     [currentTrack?.cover],
   )
 

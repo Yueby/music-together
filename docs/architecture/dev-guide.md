@@ -68,6 +68,21 @@ packages/client/dist/
 
 服务端生产构建会引用 `shared/dist`；Express 在存在 `client/dist/index.html` 时托管前端 SPA。
 
+## 微应用打包
+
+`packages/mapp` 把现有网页前端适配为论坛微应用，后端与网页端共用同一个服务；它不参与根目录 `pnpm build`。
+
+```bash
+pnpm --filter @music-together/mapp typecheck
+pnpm exec vitest run packages/mapp
+
+# 使用社区应用页分配的真实 ID 与审定的 WSS 地址生成沙箱上传包
+MINI_APP_ID=平台应用ID MAPP_ROOM_URL='wss://你的域名/socket.io/?EIO=4&transport=websocket' \
+  pnpm --filter @music-together/mapp package
+```
+
+上传 ZIP 位于 `packages/mapp/dist/client-package/app.zip`；版本号取 `manifest.json`（`0.2.0`），沙箱测试无需传 `MINI_APP_VERSION`。主站后端需配置 `MAPP_ISSUER`、`MAPP_AUDIENCE`、`MAPP_APP_ID`（可选 `MAPP_JWKS_FILE`）才会接受平台连接，详见 [微应用兼容层](mini-app-compatibility.md)。本地预览不模拟平台 API；权限、出声和资源访问必须在真实 sandbox 检查。详见 [mapp README](../../packages/mapp/README.md)。
+
 ## 添加 shadcn/ui 组件
 
 ```bash

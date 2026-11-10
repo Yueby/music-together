@@ -1,10 +1,11 @@
 import type { MusicSource } from '@music-together/shared'
+import storageBackend from '@/lib/storageBackend'
 
 const PREFIX = 'mt-'
 
 function safeGet(key: string): string | null {
   try {
-    return localStorage.getItem(`${PREFIX}${key}`)
+    return storageBackend.getItem(`${PREFIX}${key}`)
   } catch {
     return null
   }
@@ -12,7 +13,7 @@ function safeGet(key: string): string | null {
 
 function safeSet(key: string, value: string): void {
   try {
-    localStorage.setItem(`${PREFIX}${key}`, value)
+    storageBackend.setItem(`${PREFIX}${key}`, value)
   } catch {
     // quota exceeded or blocked
   }
@@ -20,7 +21,7 @@ function safeSet(key: string, value: string): void {
 
 function safeRemove(key: string): void {
   try {
-    localStorage.removeItem(`${PREFIX}${key}`)
+    storageBackend.removeItem(`${PREFIX}${key}`)
   } catch {
     // blocked
   }

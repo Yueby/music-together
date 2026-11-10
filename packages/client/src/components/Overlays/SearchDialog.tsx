@@ -11,6 +11,7 @@ import { Tabs, TabsList, TabsTrigger } from '@/components/ui/tabs'
 import { VirtualTrackList, type VirtualTrackListRef } from '@/components/VirtualTrackList'
 import { PLATFORM_ACTIVE, PLATFORM_TEXT } from '@/lib/platform'
 import { cn, trackKey } from '@/lib/utils'
+import { hostRuntime } from '@/lib/hostRuntime'
 import { useRoomStore } from '@/stores/roomStore'
 import { useSearch } from '@/hooks/useSearch'
 import { usePlaylist } from '@/hooks/usePlaylist'
@@ -165,6 +166,7 @@ export function SearchDialog({ open, onOpenChange, onAddToQueue, onInsertAfterCu
   )
 
   const handleSelectAlbum = (album: Playlist) => {
+    if (!hostRuntime.collections) return
     setSelectedAlbum(album)
     fetchPlaylistTracks(source, album.id, album.trackCount, searchType as 'album' | 'playlist')
   }
@@ -207,7 +209,7 @@ export function SearchDialog({ open, onOpenChange, onAddToQueue, onInsertAfterCu
         </ResponsiveDialogHeader>
 
         <ResponsiveDialogBody className="flex min-h-0 flex-1 flex-col gap-4 overflow-hidden">
-          {selectedAlbum ? (
+          {selectedAlbum && hostRuntime.collections ? (
             <PlaylistDetail
               playlist={selectedAlbum}
               tracks={playlistTracks}
@@ -227,6 +229,7 @@ export function SearchDialog({ open, onOpenChange, onAddToQueue, onInsertAfterCu
               <Tabs
                 value={searchType}
                 onValueChange={(v) => {
+                  if (!hostRuntime.collections && v !== 'song') return
                   setSearchType(v as 'song' | 'album' | 'playlist')
                   resetState()
                   setAddedIds(new Set())
@@ -234,8 +237,12 @@ export function SearchDialog({ open, onOpenChange, onAddToQueue, onInsertAfterCu
               >
                 <TabsList className="w-full">
                   <TabsTrigger value="song" className="flex-1 text-xs sm:text-sm">单曲</TabsTrigger>
-                  <TabsTrigger value="album" className="flex-1 text-xs sm:text-sm">专辑</TabsTrigger>
-                  <TabsTrigger value="playlist" className="flex-1 text-xs sm:text-sm">歌单</TabsTrigger>
+                  {hostRuntime.collections && (
+                    <>
+                      <TabsTrigger value="album" className="flex-1 text-xs sm:text-sm">专辑</TabsTrigger>
+                      <TabsTrigger value="playlist" className="flex-1 text-xs sm:text-sm">歌单</TabsTrigger>
+                    </>
+                  )}
                 </TabsList>
               </Tabs>
 
@@ -291,10 +298,11 @@ export function SearchDialog({ open, onOpenChange, onAddToQueue, onInsertAfterCu
                         {(results as Playlist[]).map((album, index) => (
                           <button
                             key={`${album.id}-${index}`}
-                            className="hover:bg-accent flex w-full min-w-0 items-center gap-3 overflow-hidden rounded-lg p-2 text-left transition-colors"
+                            className="hover:bg-accent flex w-full min-w-0 items-center gap-3 overflow-hidden rounded-lg p-2 text-left transition-colors disabled:pointer-events-none disabled:opacity-50"
                             onClick={() => handleSelectAlbum(album)}
+                            disabled={!hostRuntime.collections}
                           >
-                            {album.thumbnailCover ?? album.cover ? (
+                            {hostRuntime.remoteArtwork && (album.thumbnailCover ?? album.cover) ? (
                               <img
                                 src={album.thumbnailCover ?? album.cover}
                                 alt={album.name}

@@ -5,6 +5,7 @@ import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@
 import { Tooltip, TooltipContent, TooltipTrigger } from '@/components/ui/tooltip'
 import { Separator } from '@/components/ui/separator'
 import { Switch } from '@/components/ui/switch'
+import { hostRuntime } from '@/lib/hostRuntime'
 import { storage } from '@/lib/storage'
 import { usePlayerStore } from '@/stores/playerStore'
 import { useRoomStore } from '@/stores/roomStore'
@@ -66,6 +67,7 @@ export function RoomSettingsSection({ onUpdateSettings }: RoomSettingsSectionPro
   }, [room?.hasPassword])
 
   const copyRoomLink = () => {
+    if (!hostRuntime.clipboard) return
     const url = `${window.location.origin}/room/${room?.id}`
     navigator.clipboard.writeText(url)
     toast.success('房间链接已复制')
@@ -164,20 +166,22 @@ export function RoomSettingsSection({ onUpdateSettings }: RoomSettingsSectionPro
         <SettingRow label="房间号">
           <div className="flex items-center gap-2">
             <code className="rounded bg-muted px-2 py-0.5 text-sm">{room?.id}</code>
-            <Tooltip>
-              <TooltipTrigger asChild>
-                <Button
-                  variant="ghost"
-                  size="icon"
-                  className="h-7 w-7"
-                  onClick={copyRoomLink}
-                  aria-label="复制房间链接"
-                >
-                  <Copy className="h-3.5 w-3.5" />
-                </Button>
-              </TooltipTrigger>
-              <TooltipContent>复制房间链接</TooltipContent>
-            </Tooltip>
+            {hostRuntime.clipboard && (
+              <Tooltip>
+                <TooltipTrigger asChild>
+                  <Button
+                    variant="ghost"
+                    size="icon"
+                    className="h-7 w-7"
+                    onClick={copyRoomLink}
+                    aria-label="复制房间链接"
+                  >
+                    <Copy className="h-3.5 w-3.5" />
+                  </Button>
+                </TooltipTrigger>
+                <TooltipContent>复制房间链接</TooltipContent>
+              </Tooltip>
+            )}
           </div>
         </SettingRow>
 
@@ -225,20 +229,27 @@ export function RoomSettingsSection({ onUpdateSettings }: RoomSettingsSectionPro
                 <Lock className="h-3 w-3" /> 已设置
               </Badge>
               {roomPassword && (
-                <Tooltip>
-                  <TooltipTrigger asChild>
-                    <code
-                      className="cursor-pointer rounded bg-muted px-2 py-0.5 text-xs transition-colors hover:bg-muted/80"
-                      onClick={() => {
-                        navigator.clipboard.writeText(roomPassword)
-                        toast.success('密码已复制')
-                      }}
-                    >
-                      {roomPassword}
-                    </code>
-                  </TooltipTrigger>
-                  <TooltipContent>点击复制密码</TooltipContent>
-                </Tooltip>
+                hostRuntime.clipboard ? (
+                  <Tooltip>
+                    <TooltipTrigger asChild>
+                      <code
+                        className="cursor-pointer rounded bg-muted px-2 py-0.5 text-xs transition-colors hover:bg-muted/80"
+                        onClick={() => {
+                          if (!hostRuntime.clipboard) return
+                          navigator.clipboard.writeText(roomPassword)
+                          toast.success('密码已复制')
+                        }}
+                      >
+                        {roomPassword}
+                      </code>
+                    </TooltipTrigger>
+                    <TooltipContent>点击复制密码</TooltipContent>
+                  </Tooltip>
+                ) : (
+                  <code className="rounded bg-muted px-2 py-0.5 text-xs">
+                    {roomPassword}
+                  </code>
+                )
               )}
             </div>
           ) : (

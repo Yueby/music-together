@@ -3,6 +3,7 @@ import { Button } from '@/components/ui/button'
 import { Drawer, DrawerContent, DrawerHeader, DrawerTitle } from '@/components/ui/drawer'
 import { Tooltip, TooltipContent, TooltipTrigger } from '@/components/ui/tooltip'
 import { cn } from '@/lib/utils'
+import { hostRuntime } from '@/lib/hostRuntime'
 import { usePlayerStore } from '@/stores/playerStore'
 import { useRoomStore } from '@/stores/roomStore'
 import { useSocketContext } from '@/providers/SocketProvider'
@@ -247,7 +248,7 @@ export function QueueDrawer({ open, onOpenChange, onRemoveFromQueue, onReorderQu
 
                     {/* Cover + source badge */}
                     <div className="relative shrink-0">
-                      {track.thumbnailCover ?? track.cover ? (
+                      {hostRuntime.remoteArtwork && (track.thumbnailCover ?? track.cover) ? (
                         <img
                           src={track.thumbnailCover ?? track.cover}
                           alt={track.title}
@@ -261,7 +262,7 @@ export function QueueDrawer({ open, onOpenChange, onRemoveFromQueue, onReorderQu
                       <div
                         className={cn(
                           'flex h-9 w-9 items-center justify-center rounded bg-muted',
-                          (track.thumbnailCover ?? track.cover) && 'hidden',
+                          hostRuntime.remoteArtwork && (track.thumbnailCover ?? track.cover) && 'hidden',
                         )}
                       >
                         <Music className="h-4 w-4 text-muted-foreground" />

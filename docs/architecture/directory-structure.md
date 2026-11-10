@@ -8,8 +8,10 @@ music-together/
 ├── .github/             # CI、Dependabot、PR/Issue 模板
 ├── packages/
 │   ├── client/          # React 前端
+│   ├── mapp/            # Discourse 微应用适配与打包（独立 ZIP，不参与主站构建）
 │   ├── server/          # Node.js 后端
 │   └── shared/          # 共享类型、事件、Schema 与权限
+├── vendor/              # 官方 Discourse Mini App SDK 原样发行文件（file: 依赖，镜像构建需复制）
 ├── docs/                # 架构与开发文档
 ├── AGENTS.md            # 项目级 AI/Agent 工作约束
 ├── CONTRIBUTING.md      # 贡献指南
@@ -26,7 +28,8 @@ music-together/
 ```
 src/
 ├── main.tsx                    # 入口：ReactDOM.createRoot
-├── App.tsx                     # 根组件：Router + Provider + ErrorBoundary + Suspense 懒加载
+├── App.tsx                     # Web Router/Provider；共享 AppSurface 与原路由/错误边界
+├── platform/                   # MappApp MemoryRouter 壳与可等待 React commit 的挂载器
 ├── index.css                   # 全局样式：Tailwind + 配色变量 + 自定义动画
 │
 ├── pages/                      # 页面级组件
@@ -136,7 +139,8 @@ src/
 │   └── settingsStore.ts        #   设置（歌词参数、背景参数，持久化到 localStorage）
 │
 ├── providers/                  # React Context Provider
-│   ├── SocketProvider.tsx      #   Socket.IO 连接管理，提供 socket + isConnected + 断线/重连 Toast
+│   ├── SocketProvider.tsx      #   Web 连接/Cookie 引导；SocketStateProvider 为同一 Context 的纯状态出口
+│   ├── MappSocketProvider.tsx  #   外部微应用会话订阅与身份就绪连接态投影，不接管其生命周期
 │   └── AbilityProvider.tsx     #   CASL 权限上下文（基于 currentUser.role）
 │
 └── lib/                        # 工具库
@@ -144,7 +148,16 @@ src/
     ├── constants.ts            #   命名常量（定时器、阈值、布局尺寸）
     ├── clockSync.ts            #   NTP 时钟同步引擎（采样、offset 计算、getServerTime）
     ├── resetStores.ts          #   全局 store 重置工具
-    ├── socket.ts               #   Socket.IO 客户端实例
+    ├── hostRuntime.ts          #   Web 默认能力；Mapp 按审核通路选择对应 profile
+├── MetadataTransport.ts    #   搜索/歌词读取的最窄响应接口
+├── metadataFetch.ts        #   Web 默认 fetch 委托，Mapp 使用 SDK 对应实现
+├── StorageAdapter.ts       #   设置存储后端接口
+├── storageBackend.ts       #   默认浏览器存储操作，原 storage facade 复用
+├── RoomCommands.ts         #   统一房间命令边界及 Web 默认事件透传
+├── PlaybackSound.ts        #   共享播放器最窄媒体对象接口
+├── playbackSoundFactory.ts #   默认 Web Howler 创建入口，宿主可选择对应媒体实现
+├── socket.ts               #   Socket.IO 网页客户端实例
+├── platform/SdkRoomSocket.ts #   可注入的微应用 SDK Socket.IO 传输（不替换网页实例）
     ├── storage.ts              #   localStorage 封装（带类型校验）
     ├── platform.ts             #   平台常量（PLATFORM_LABELS / PLATFORM_SHORT_LABELS / PLATFORM_COLORS / VIP_LABELS / 状态查找函数）
     ├── format.ts               #   格式化工具（时间、文本等）
@@ -166,6 +179,7 @@ src/
 │   ├── queueController.ts      #   队列管理（add/remove/reorder/clear）
 │   ├── chatController.ts       #   聊天消息（含限流反馈）
 │   ├── voteController.ts       #   投票系统（发起/投票/超时/执行，支持 set-mode / play-track / remove-track 投票）
+│   ├── musicMetadataController.ts # 匿名目录搜索/歌词编排，由 Web 与可选平台入口复用
 │   ├── authController.ts       #   平台认证（QR 登录/Cookie 管理/状态查询；支持网易云/酷狗/QQ 音乐三平台；策略模式——通过 AUTH_PROVIDERS 映射表统一处理；fast path: 内存池命中跳过 API；slow path: getUserInfo + 任意失败重试 1 次）
 │   └── playlistController.ts   #   歌单管理（获取用户歌单列表 via Socket，使用 getUserCookie 取请求者自己的 cookie，歌单私有）
 │
@@ -177,6 +191,8 @@ src/
 │   ├── chatService.ts          #   聊天消息处理 + HTML 转义（含系统消息）
 │   ├── syncService.ts          #   播放位置估算工具（estimateCurrentTime）
 │   ├── musicProvider.ts        #   音乐数据聚合（3 层引用式 LRU 缓存 + 外部 API 超时保护 + 歌单分页获取；Netease 歌单使用 ncmApi.playlist_track_all 分块请求突破 1000 首限制，Kugou 用户歌单使用原生 API (get_other_list_file_nofilt) + Meting fallback，Tencent 使用 Meting 原始模式保留 VIP/时长字段）
+│   ├── platformMediaService.ts #   可选房间音频读取授权、取链与有界流响应（默认未挂载）
+│   ├── mediaSourceRequest.ts   #   音乐 CDN HTTPS/公网 DNS 固定及音频响应校验
 │   ├── authService.ts          #   Cookie 池管理（房间级作用域；getAnyCookie 用于 VIP 播放共享，getUserCookie 用于歌单等用户私有操作）
 │   ├── authProvider.ts         #   统一认证接口（AuthProvider 接口定义 + GetUserInfoResult/UserInfoData 共享类型 + AUTH_PROVIDERS 策略映射表）
 │   ├── neteaseAuthService.ts   #   网易云 API 认证（QR / Cookie 验证 / 用户信息 / 用户歌单列表；getUserInfo 返回 { ok, data? } | { ok: false, reason: 'expired' | 'error' } 区分过期与临时故障）
@@ -195,11 +211,14 @@ src/
 │   ├── types.ts                #   TypedServer, TypedSocket, HandlerContext
 │   ├── withRoom.ts             #   房间成员身份校验
 │   ├── withControl.ts          #   操作权限校验（包装 withRoom）
+│   ├── socketIdentity.ts       #   网页 Cookie 身份；可选平台 JWT resolver 默认关闭
 │   ├── socketRateLimiter.ts    #   Socket 事件按 identity 限流 + 多连接安全清理
-│   └── httpRateLimiter.ts      #   音乐 REST / 封面代理的 identity/IP 限流
+│   └── httpRateLimiter.ts      #   音乐 REST / 封面代理 / 平台媒体流的 identity/IP 限流
 │
 ├── routes/                     # Express REST 路由
 │   ├── music.ts                #   GET /api/music/search|url|lyric|cover|playlist|ttml（统一 validated() 路由包装器消除重复 try/catch + Zod 模式）
+│   ├── platformMedia.ts        #   可选 GET /api/mapp/audio（显式身份验证器，默认未挂载）
+│   ├── platformMetadata.ts     #   可选搜索/歌词平台认证（限流复用 musicApiRateLimit），普通 Web Cookie 请求继续原链
 │   └── rooms.ts                #   GET /api/rooms/:roomId/check（房间预检）
 │
 ├── types/
@@ -207,7 +226,8 @@ src/
 │
 └── utils/
     ├── logger.ts               #   结构化日志（基于 pino，info/warn/error + JSON context）
-    └── roomUtils.ts            #   房间数据转换纯函数（toPublicRoomState / toPublicRoomStateForOwner，密码仅 owner 可见）
+    ├── roomUtils.ts            #   房间数据转换纯函数（toPublicRoomState / toPublicRoomStateForOwner，密码仅 owner 可见）
+    └── withTimeout.ts          #   Promise 限时包装（平台身份验证、元数据、媒体链路共用）
 ```
 
 ## packages/shared/src/ — 共享代码
@@ -220,8 +240,15 @@ src/
 ├── socket-types.ts    # Socket.IO 类型：ServerToClientEvents, ClientToServerEvents
 ├── constants.ts       # 业务常量：LIMITS（长度/数量限制）, TIMING（同步间隔/宽限期）, NTP（时钟同步参数）, QR_STATUS（扫码状态码）, QR_TIMING（轮询间隔）
 ├── schemas.ts         # Zod 验证 schema
+├── mappMetadata.ts    # 平台只读元数据 target/query 合同与大小预算
 └── abilities.ts       # CASL 权限定义（Actions incl. set-mode, Subjects, defineAbilityFor）
 ```
+
+## packages/mapp/ — 微应用适配与打包
+
+mapp 只是把现有网页前端适配为论坛微应用并打包的外壳，后端与网页端共用同一个服务。`src/` 放启动入口（`bootstrapClient`、`clientMain`）、CSP 初始化与微应用样式，`scripts/` 放客户端 manifest 生成与 SDK 打包入口。单 IIFE 与 CSS 输出到 `dist/client-web/`，运行 ZIP 输出到 `dist/client-package/`。概览见 [mini-app.md](mini-app.md)。
+
+`src/compat/` 放置 SDK 房间连接绑定、RoomSession、RoomAudioSource、WebAudioPlayer（Web Audio 内核）、MappAudioEngine、MappPlaybackSoundFactory、MappRoomCommands、metadataFetch、roomCheck、MappHost、hostBinding/hostModules 与内存 storageBackend。平台 JWT 验签位于 `packages/server/src/services/platformAuth.ts`，由主站后端按环境变量启用。契约和发布门禁见 [mini-app-compatibility.md](mini-app-compatibility.md)。
 
 ## 测试文件
 
@@ -231,6 +258,7 @@ Vitest 测试与源码就近放置：
 packages/shared/src/*.test.ts
 packages/server/src/**/*.test.ts
 packages/client/src/**/*.test.tsx
+packages/mapp/{src,scripts}/**/*.test.ts
 ```
 
 默认测试使用 Node 或 jsdom 环境，并 mock 外部音乐服务。

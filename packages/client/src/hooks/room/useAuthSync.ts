@@ -1,6 +1,7 @@
 import { useSocketContext } from '@/providers/SocketProvider'
 import { useRoomStore } from '@/stores/roomStore'
 import { storage } from '@/lib/storage'
+import { hostRuntime } from '@/lib/hostRuntime'
 import { EVENTS } from '@music-together/shared'
 import type { MusicSource } from '@music-together/shared'
 import { useEffect, useRef } from 'react'
@@ -31,6 +32,7 @@ export function useAuthSync() {
   const pendingAutoResendRef = useRef(0)
 
   useEffect(() => {
+    if (!hostRuntime.platformAccounts) return
     const onAuthCookieResult = (data: {
       success: boolean
       message: string

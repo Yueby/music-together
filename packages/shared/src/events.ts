@@ -1,4 +1,7 @@
 export const EVENTS = {
+  // Platform connection identity (emitted only by the opt-in identity adapter)
+  IDENTITY_READY: 'identity:ready',
+
   // Room lifecycle
   ROOM_CREATE: 'room:create',
   ROOM_CREATED: 'room:created',

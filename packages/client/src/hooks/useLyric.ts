@@ -1,4 +1,5 @@
 import { SERVER_URL } from '@/lib/config'
+import { metadataFetch } from '@/lib/metadataFetch'
 import { findClosestLyricLine } from '@/lib/lyricMatching'
 import { usePlayerStore } from '@/stores/playerStore'
 import { useSettingsStore } from '@/stores/settingsStore'
@@ -86,7 +87,7 @@ export function useLyric() {
               ? SignalFactory.any([controller.signal, timeoutSignal])
               : controller.signal
 
-          const ttmlRes = await fetch(ttmlUrl, { signal: ttmlSignal })
+          const ttmlRes = await metadataFetch(ttmlUrl, { signal: ttmlSignal })
 
           if (ttmlRes.ok) {
             const ttmlText = await ttmlRes.text()
@@ -118,7 +119,7 @@ export function useLyric() {
 
       if (track.lyricId) {
         try {
-          const res = await fetch(
+          const res = await metadataFetch(
             `${SERVER_URL}/api/music/lyric?source=${track.source}&lyricId=${encodeURIComponent(track.lyricId)}`,
             { signal: controller.signal, credentials: 'include' },
           )

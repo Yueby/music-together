@@ -1,4 +1,5 @@
 import { useSocketContext } from '@/providers/SocketProvider'
+import { hostRuntime } from '@/lib/hostRuntime'
 import { usePlayerStore } from '@/stores/playerStore'
 import { useRoomStore } from '@/stores/roomStore'
 import type { VoteAction } from '@music-together/shared'
@@ -83,7 +84,7 @@ export function useMediaSession({ play, pause, next, prev, seek }: MediaSessionC
   // Register action handlers based on the current ability.
   // Re-runs on permission change so role up/down takes effect immediately.
   useEffect(() => {
-    if (!('mediaSession' in navigator)) return
+    if (!hostRuntime.nativeMediaSession || !('mediaSession' in navigator)) return
     const ms = navigator.mediaSession
 
     // play / pause — direct control or vote fallback (resume/pause).
@@ -139,7 +140,7 @@ export function useMediaSession({ play, pause, next, prev, seek }: MediaSessionC
   // Metadata — current track info for the OS notification bar.
   const currentTrack = usePlayerStore((s) => s.currentTrack)
   useEffect(() => {
-    if (!('mediaSession' in navigator)) return
+    if (!hostRuntime.nativeMediaSession || !('mediaSession' in navigator)) return
     const ms = navigator.mediaSession
 
     if (currentTrack) {
@@ -161,7 +162,7 @@ export function useMediaSession({ play, pause, next, prev, seek }: MediaSessionC
   // Playback state.
   const isPlaying = usePlayerStore((s) => s.isPlaying)
   useEffect(() => {
-    if (!('mediaSession' in navigator)) return
+    if (!hostRuntime.nativeMediaSession || !('mediaSession' in navigator)) return
     navigator.mediaSession.playbackState = isPlaying ? 'playing' : 'paused'
 
     return () => {
@@ -179,7 +180,7 @@ export function useMediaSession({ play, pause, next, prev, seek }: MediaSessionC
   const prevPositionRef = useRef(currentTime)
 
   useEffect(() => {
-    if (!('mediaSession' in navigator)) return
+    if (!hostRuntime.nativeMediaSession || !('mediaSession' in navigator)) return
     if (!duration || !isFinite(duration)) return
 
     const playStateChanged = isPlaying !== prevIsPlayingRef.current

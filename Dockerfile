@@ -6,6 +6,8 @@ COPY pnpm-lock.yaml pnpm-workspace.yaml package.json ./
 COPY packages/shared/package.json packages/shared/
 COPY packages/server/package.json packages/server/
 COPY packages/client/package.json packages/client/
+# server 依赖固定在 vendor/ 的官方微应用 SDK（file: 依赖，安装前必须存在）
+COPY vendor/ vendor/
 RUN pnpm install --frozen-lockfile
 
 # ---- 阶段 2: 构建 ----
@@ -27,6 +29,7 @@ COPY pnpm-lock.yaml pnpm-workspace.yaml package.json ./
 COPY packages/shared/package.json packages/shared/
 COPY packages/server/package.json packages/server/
 COPY packages/client/package.json packages/client/
+COPY vendor/ vendor/
 
 # 只安装 server 的生产依赖（三个点表示包含依赖链，即 shared）
 RUN pnpm install --frozen-lockfile --prod --filter @music-together/server...

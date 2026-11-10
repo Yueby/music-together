@@ -24,7 +24,7 @@
 
 - **前端**: React 19 + Vite 7 + TypeScript 5.9 + Tailwind CSS v4 + shadcn/ui + Zustand
 - **后端**: Node.js + Express 4 + Socket.IO 4 + @meting/core
-- **Monorepo**: pnpm workspaces（3 个包：`client`、`server`、`shared`）
+- **Monorepo**: pnpm workspaces（`client`、`server`、`shared`，以及独立的微应用验证包 `mapp`）
 
 ---
 
@@ -34,7 +34,7 @@
 
 | 章节            | 文件                                                          | 内容                                                                              |
 | --------------- | ------------------------------------------------------------- | --------------------------------------------------------------------------------- |
-| 2. 目录结构     | [directory-structure.md](architecture/directory-structure.md) | client / server / shared 三包目录树                                               |
+| 2. 目录结构     | [directory-structure.md](architecture/directory-structure.md) | client / server / shared / mapp 目录树                                             |
 | 3. 架构与数据流 | [data-flow.md](architecture/data-flow.md)                     | 分层架构、Socket 事件清单、核心类型定义、NTP 同步、播放同步、播放模式、音频质量等 |
 | 4. 第三方库依赖 | [dependencies.md](architecture/dependencies.md)               | 前端/后端/共享/开发依赖清单                                                       |
 | 5. 设计模式     | [design-patterns.md](architecture/design-patterns.md)         | Zustand Store、Hook 组合、Dialog、Provider、分层架构、Repository 等               |
@@ -42,3 +42,5 @@
 | 7. UI 设计规范  | [ui-design.md](architecture/ui-design.md)                     | 组件库、颜色系统、动画、歌词、响应式                                              |
 | 8. 开发指南     | [dev-guide.md](architecture/dev-guide.md)                     | 快速启动、构建、添加组件、注意事项                                                |
 | 9. 部署方案     | [deployment.md](architecture/deployment.md)                   | Docker、CORS、Watchtower、1Panel                                                  |
+| 10. 微应用概览  | [mini-app.md](architecture/mini-app.md)                       | 微应用定位、SDK 版本与官方能力核查、早期 sandbox 验证结论                           |
+| 11. 微应用兼容  | [mini-app-compatibility.md](architecture/mini-app-compatibility.md) | SDK Socket.IO 传输、可信身份、同房业务复用、启用与部署、连接恢复边界             |

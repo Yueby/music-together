@@ -20,6 +20,7 @@ import type {
 
 /** 服务端 → 客户端 事件接口 */
 export interface ServerToClientEvents {
+  [EVENTS.IDENTITY_READY]: (data: { userId: string }) => void
   [EVENTS.ROOM_CREATED]: (data: { roomId: string; userId: string }) => void
   [EVENTS.ROOM_STATE]: (room: RoomState) => void
   [EVENTS.ROOM_REJOIN_TOKEN]: (data: { roomId: string; token: string; expiresAt: number }) => void

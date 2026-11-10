@@ -168,3 +168,9 @@ export const voteStartSchema = z.discriminatedUnion('action', [
 export const voteCastSchema = z.object({
   approve: z.boolean(),
 })
+
+/** Mini-app room media request: only server room/track identifiers; arrays (duplicate query keys) are invalid. */
+export const mappRoomMediaQuerySchema = z.strictObject({
+  roomId: z.string().regex(/^[A-Z0-9_-]{6}$/),
+  trackId: z.string().min(1).max(200),
+})

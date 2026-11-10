@@ -48,6 +48,10 @@ QQ 音乐搜索使用腾讯 `zzc` 签名访问 `musics.fcg`，避免未签名 `m
 | @casl/ability | ^7.1.0 | 前后端共享 RBAC 能力定义 |
 | zod | ^4.6.7 | 前后端共享 Schema |
 
+## 微应用依赖
+
+`packages/mapp` 使用原生 TypeScript、现有 Vite 8 工具链及固定在仓库根 `vendor/` 的 `@discourse-mini-app/sdk@0.3.0`。SDK 通过 `file:` 依赖解析：`packages/mapp` 用它的平台客户端与 ZIP 打包入口，`packages/server` 用它的 `/server` 验签入口（平台 JWT 验证）；运行时音频内核使用原生 Web Audio。浏览器显式复用 `zod@^4.6.7` 并在 Schema 初始化前关闭 JIT，以适配沙箱 CSP。该包通过 `tsc6` 执行独立类型检查；因 `file:` 依赖，Dockerfile 在安装依赖前需复制 `vendor/`。构建及 SDK 来源见 [mini-app.md](mini-app.md)。
+
 ## 开发与测试工具
 
 | 库 | 位置 | 用途 |
