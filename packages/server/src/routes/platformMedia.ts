@@ -3,6 +3,7 @@ import { mappRoomMediaQuerySchema } from '@music-together/shared'
 import { createPlatformMediaService } from '../services/platformMediaService.js'
 import { MediaError } from '../services/mediaSourceRequest.js'
 import { mediaStreamRateLimit } from '../middleware/httpRateLimiter.js'
+import { logger } from '../utils/logger.js'
 import { withTimeout } from '../utils/withTimeout.js'
 
 export interface RoomMediaIdentityInput {
@@ -32,10 +33,15 @@ function sendError(res: Response, error: unknown): void {
     return
   }
   const safe = error instanceof MediaError ? error : new MediaError('MEDIA_FAILED', 502)
+  // Fixed codes only (no URL, cookie or provider text): enough to tell which stage failed. Auth rejections and
+  // client cancellations are routine and stay quiet.
+  if (safe.status !== 401 && safe.status !== 499) logger.warn('Platform audio request failed', { code: safe.code, status: safe.status })
   // A failure after header preparation must not advertise the upstream length/type.
   for (const name of ['Content-Length', 'Content-Type', 'Content-Encoding']) res.removeHeader(name)
   res.setHeader('Cache-Control', 'no-store')
-  res.status(safe.status).json({ code: safe.code })
+  // Cloudflare replaces an origin 502/504 with its own error page, which carries no CORS headers: the browser then
+  // reports a bare CORS failure and the fixed code below never arrives. 503 is passed through untouched.
+  res.status(safe.status === 502 || safe.status === 504 ? 503 : safe.status).json({ code: safe.code })
 }
 
 /**

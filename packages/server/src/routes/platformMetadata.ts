@@ -1,6 +1,10 @@
 import { Router, type Request, type RequestHandler, type Response, type Router as RouterType } from 'express'
 import { MAPP_METADATA_MAX_BYTES, MAPP_METADATA_TARGETS, parseMappMetadataRequest } from '@music-together/shared'
-import { getMusicLyricMetadata, searchMusicMetadata } from '../controllers/musicMetadataController.js'
+import {
+  getMusicLyricMetadata,
+  getMusicTtmlMetadata,
+  searchMusicMetadata,
+} from '../controllers/musicMetadataController.js'
 import { coverProxyRateLimit, musicApiRateLimit } from '../middleware/httpRateLimiter.js'
 import { fetchPlatformCover, type CoverResult } from '../services/coverProxy.js'
 import { withTimeout } from '../utils/withTimeout.js'
@@ -20,6 +24,7 @@ interface Options {
   coverRateLimit?: RequestHandler
   search?: typeof searchMusicMetadata
   lyric?: typeof getMusicLyricMetadata
+  ttml?: typeof getMusicTtmlMetadata
   cover?: (url: string) => Promise<CoverResult>
 }
 type ParsedRequest = ReturnType<typeof parseMappMetadataRequest>
@@ -74,7 +79,7 @@ function coverError(status: number): MetadataError {
 const TARGET_PATHS = new Set<string>(Object.values(MAPP_METADATA_TARGETS).map((target) => target.path))
 
 /**
- * Unmounted by default. Handles only the exact external metadata paths (search, lyric, cover).
+ * Unmounted by default. Handles only the exact external metadata paths (search, lyric, TTML, cover).
  * Mount it before the generic music API rate limiter: it applies the same
  * limiter itself, keyed by the verified platform identity.
  */
@@ -85,6 +90,7 @@ export function createPlatformMetadataRouter(options: Options): RouterType {
   }
   const search = options.search ?? searchMusicMetadata
   const lyric = options.lyric ?? getMusicLyricMetadata
+  const ttml = options.ttml ?? getMusicTtmlMetadata
   const cover = options.cover ?? ((url: string) => fetchPlatformCover(url))
   const searchLimit = options.rateLimit ?? musicApiRateLimit
   const coverLimit = options.coverRateLimit ?? coverProxyRateLimit
@@ -169,8 +175,13 @@ export function createPlatformMetadataRouter(options: Options): RouterType {
         res.status(200).type(result.contentType).send(result.body)
         return
       }
-      const { kind, query } = parsed
-      const work = Promise.resolve().then<unknown>(() => (kind === 'search' ? search(query) : lyric(query)))
+      const work = Promise.resolve().then<unknown>(async () => {
+        if (parsed.kind === 'search') return search(parsed.query)
+        if (parsed.kind === 'lyric') return lyric(parsed.query)
+        const found = await ttml(parsed.query)
+        if (!found.ok) throw new MetadataError(502, 'METADATA_FAILED')
+        return { lines: found.lines }
+      })
       const json = JSON.stringify(
         await withTimeout(work, REQUEST_TIMEOUT_MS, new MetadataError(504, 'METADATA_TIMEOUT')),
       )

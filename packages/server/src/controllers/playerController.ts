@@ -81,6 +81,8 @@ export function registerPlayerController(io: TypedServer, socket: TypedSocket) {
       ctx.room.playMode = parsed.data.mode
       // Broadcast updated room state so all clients see the new play mode
       ctx.io.to(ctx.roomId).emit(EVENTS.ROOM_STATE, roomService.toPublicRoomState(ctx.room))
+      // The mode decides what comes next (and whether it is known in advance).
+      void playerService.preloadUpcoming(ctx.io, ctx.roomId)
       logger.info(`Play mode set to ${parsed.data.mode}`, {
         roomId: ctx.roomId,
       })

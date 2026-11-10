@@ -153,6 +153,20 @@ describe('createMappCoverLoader', () => {
     expect(request).toHaveBeenCalledTimes(6)
   })
 
+  it('serves the most recent request first when reads are waiting, so the current cover is not stuck behind thumbnails', async () => {
+    const replies = Array.from({ length: 7 }, () => deferred<ReturnType<typeof image>>())
+    let call = 0
+    const { loader, request } = setup(vi.fn(() => replies[call++].promise))
+    const loads = [0, 1, 2, 3, 4, 5].map((i) => loader.load(`https://p1.music.126.net/thumb-${i}.jpg`))
+    await flush()
+    const current = loader.load('https://p1.music.126.net/current.jpg')
+    replies[0].resolve(image())
+    await flush()
+    expect(request.mock.calls[4][1].query.url).toBe('https://p1.music.126.net/current.jpg')
+    replies.forEach((reply) => reply.resolve(image()))
+    await Promise.all([...loads, current])
+  })
+
   it('cancels an unfinished read when its only caller aborts, and a later caller starts over', async () => {
     const reply = deferred<ReturnType<typeof image>>()
     const request = vi.fn().mockReturnValueOnce(reply.promise).mockResolvedValueOnce(image())
@@ -204,6 +218,39 @@ describe('createMappCoverLoader', () => {
     controller.abort()
     await expect(loader.load(COVER, controller.signal)).rejects.toMatchObject({ name: 'AbortError' })
     expect(request).not.toHaveBeenCalled()
+  })
+
+  describe('cache size', () => {
+    const TWO_MIB = 2 * 1024 * 1024
+    const cover = (n: number) => `https://p1.music.126.net/abc/${n}.jpg`
+
+    it('revokes the least recently used covers once the cached bytes pass the budget', async () => {
+      const { loader } = setup(vi.fn(async () => image(TWO_MIB)))
+      for (let n = 1; n <= 24; n++) await loader.load(cover(n)) // 48 MiB: exactly at the budget
+      expect(revoked).toEqual([])
+      await loader.load(cover(25)) // 50 MiB: the oldest goes
+      expect(revoked).toEqual(['blob:cover-1'])
+    })
+
+    it('counts a repeated request as use, so a cover still on screen outlives older ones', async () => {
+      const { loader, request } = setup(vi.fn(async () => image(TWO_MIB)))
+      for (let n = 1; n <= 24; n++) await loader.load(cover(n))
+      await loader.load(cover(1)) // cache hit: now the most recently used
+      expect(request).toHaveBeenCalledTimes(24)
+      await loader.load(cover(25))
+      expect(revoked).toEqual(['blob:cover-2'])
+      // The evicted one is read again on demand; the kept one is still served from the cache.
+      await loader.load(cover(2))
+      expect(request).toHaveBeenCalledTimes(26)
+      await expect(loader.load(cover(1))).resolves.toBe('blob:cover-1')
+    })
+
+    it('forgets evicted bytes, so the budget is not exhausted by covers that are already gone', async () => {
+      const { loader } = setup(vi.fn(async () => image(TWO_MIB)))
+      for (let n = 1; n <= 60; n++) await loader.load(cover(n))
+      // 60 × 2 MiB = 120 MiB loaded; at most 24 of them (48 MiB) stay alive.
+      expect(revoked).toHaveLength(36)
+    })
   })
 
   it('revokes every Blob URL, aborts in-flight reads and refuses later loads on dispose', async () => {

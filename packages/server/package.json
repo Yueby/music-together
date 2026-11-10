@@ -9,10 +9,12 @@
     "start": "node dist/index.js"
   },
   "dependencies": {
+    "@applemusic-like-lyrics/ttml": "1.0.1",
     "@discourse-mini-app/sdk": "file:../../vendor/discourse-mini-app-sdk",
     "@meting/core": "^1.6.2",
     "@music-together/shared": "workspace:*",
     "@neteasecloudmusicapienhanced/api": "^4.41.1",
+    "@xmldom/xmldom": "^0.9.12",
     "cors": "^2.8.6",
     "dotenv": "^18.0.9",
     "escape-html": "^1.0.3",

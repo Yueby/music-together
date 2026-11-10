@@ -11,7 +11,7 @@ import {
 const search = '/api/music/search?source=netease&keyword=fixture'
 const lyric = '/api/music/lyric?source=tencent&lyricId=fixture'
 describe('reviewed metadata read contract', () => {
-  it('publishes only search, lyric and cover targets, a one MiB JSON limit and a two MiB cover limit', () => {
+  it('publishes only search, lyric, TTML and cover targets, a one MiB JSON limit and a two MiB cover limit', () => {
     expect(MAPP_METADATA_MAX_BYTES).toBe(1024 * 1024)
     expect(MAPP_COVER_MAX_BYTES).toBe(2 * 1024 * 1024)
     expect(MAPP_METADATA_TARGETS).toEqual({
@@ -21,8 +21,31 @@ describe('reviewed metadata read contract', () => {
         queryKeys: ['source', 'keyword', 'limit', 'page', 'type'],
       },
       lyric: { path: '/api/music/lyric', endpoint: 'musicLyric', queryKeys: ['source', 'lyricId'] },
+      ttml: { path: '/api/music/ttml', endpoint: 'musicTtml', queryKeys: ['source', 'id'] },
       cover: { path: '/api/music/cover-proxy', endpoint: 'musicCover', queryKeys: ['url'] },
     })
+  })
+  it.each(['netease', 'tencent'])('accepts a TTML request for %s with a plain song id', (source) => {
+    expect(parseMappMetadataRequest(`/api/music/ttml?source=${source}&id=Ab_12-3`)).toMatchObject({
+      kind: 'ttml',
+      query: { source, id: 'Ab_12-3' },
+    })
+  })
+  it.each([
+    '/api/music/ttml',
+    '/api/music/ttml?source=kugou&id=1',
+    '/api/music/ttml?source=netease',
+    '/api/music/ttml?source=netease&id=',
+    '/api/music/ttml?source=netease&id=../etc',
+    '/api/music/ttml?source=netease&id=1%2F..%2F2',
+    '/api/music/ttml?source=netease&id=1.ttml',
+    '/api/music/ttml?source=netease&id=' + '1'.repeat(65),
+    '/api/music/ttml?source=netease&id=1&id=2',
+    '/api/music/ttml?source=netease&id=1&url=https://evil.test/x.ttml',
+    '/api/music/ttml?source=netease&id=1&roomId=ABC123',
+    '/api/music/ttml/?source=netease&id=1',
+  ])('rejects unreviewed TTML target %#', (raw) => {
+    expect(() => parseMappMetadataRequest(raw)).toThrow()
   })
   it('accepts a single plain https cover URL, whatever its host (the server owns the allowlist)', () => {
     const cover = 'https://p1.music.126.net/a/b.jpg?param=200y200'
@@ -69,7 +92,6 @@ describe('reviewed metadata read contract', () => {
     '/api/music/url?source=netease&urlId=fixture',
     '/api/music/cover?source=netease&picId=fixture',
     '/api/music/playlist?source=netease&id=fixture',
-    '/api/music/ttml?url=https://evil.test',
     '/api/rooms',
     '/api/check',
     '/api/version',

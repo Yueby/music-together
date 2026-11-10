@@ -525,3 +525,90 @@ describe('MappAudioEngine thin WebAudioPlayer adapter', () => {
     await g.engine.dispose()
   })
 })
+
+describe('MappAudioEngine preloading the announced next track', () => {
+  const preload = (trackId: string) => ({ roomId: 'AB12_-', trackId, mode: 'bytes' as const })
+
+  it('reads the bytes ahead of time and hands them to the load of that very track without another request', async () => {
+    const f = environment()
+    f.engine.preloadRoomTrack(preload('next'))
+    await vi.waitFor(() => expect(f.request).toHaveBeenCalledOnce())
+    expect(f.request.mock.calls[0][1]).toMatchObject({ query: { roomId: 'AB12_-', trackId: 'next' } })
+
+    expect(await f.engine.loadRoomTrack(input('next'))).toBe(true)
+    expect(f.request).toHaveBeenCalledOnce()
+    expect(f.context.decodeAudioData).toHaveBeenCalledOnce()
+    expect(f.engine.snapshot()).toMatchObject({ trackId: 'next', loading: false, errorCode: null })
+    await f.engine.dispose()
+  })
+
+  it('takes over a transfer that is still running instead of starting a second one', async () => {
+    const f = environment()
+    const reply = deferred<typeof response>()
+    f.request.mockReturnValueOnce(reply.promise)
+    f.engine.preloadRoomTrack(preload('next'))
+    const loading = f.engine.loadRoomTrack(input('next'))
+    reply.resolve(response)
+    expect(await loading).toBe(true)
+    expect(f.request).toHaveBeenCalledOnce()
+    await f.engine.dispose()
+  })
+
+  it('announces each track once and keeps only the newest announcement', async () => {
+    const f = environment()
+    f.engine.preloadRoomTrack(preload('a'))
+    f.engine.preloadRoomTrack(preload('a'))
+    expect(f.request).toHaveBeenCalledOnce()
+    const aborted = f.request.mock.calls[0][1]!.signal!
+    f.engine.preloadRoomTrack(preload('b'))
+    expect(aborted.aborted).toBe(true)
+    expect(f.request).toHaveBeenCalledTimes(2)
+    // The superseded track now loads on its own.
+    expect(await f.engine.loadRoomTrack(input('a'))).toBe(true)
+    expect(f.request).toHaveBeenCalledTimes(3)
+    await f.engine.dispose()
+  })
+
+  it('falls back to a normal read when the preload failed or is for another track', async () => {
+    const f = environment()
+    f.request.mockRejectedValueOnce(new Error('network down'))
+    f.engine.preloadRoomTrack(preload('next'))
+    await vi.waitFor(() => expect(f.request).toHaveBeenCalledOnce())
+    expect(await f.engine.loadRoomTrack(input('next'))).toBe(true)
+    expect(f.request).toHaveBeenCalledTimes(2)
+
+    f.engine.preloadRoomTrack(preload('other'))
+    expect(await f.engine.loadRoomTrack(input('different'))).toBe(true)
+    expect(f.request).toHaveBeenCalledTimes(4)
+    await f.engine.dispose()
+  })
+
+  it('cancels a transfer it took over when the load is cancelled, and never preloads the loaded track', async () => {
+    const f = environment()
+    const reply = deferred<typeof response>()
+    f.request.mockReturnValueOnce(reply.promise)
+    f.engine.preloadRoomTrack(preload('next'))
+    const signal = f.request.mock.calls[0][1]!.signal!
+    const loading = f.engine.loadRoomTrack(input('next'))
+    f.engine.cancel()
+    expect(await loading).toBe(false)
+    expect(signal.aborted).toBe(true)
+
+    await f.engine.loadRoomTrack(input('current'))
+    f.request.mockClear()
+    f.engine.preloadRoomTrack(preload('current'))
+    expect(f.request).not.toHaveBeenCalled()
+    await f.engine.dispose()
+  })
+
+  it('stops preloading after dispose and aborts the one in flight', async () => {
+    const f = environment()
+    f.request.mockReturnValueOnce(new Promise(() => {}))
+    f.engine.preloadRoomTrack(preload('next'))
+    const signal = f.request.mock.calls[0][1]!.signal!
+    await f.engine.dispose()
+    expect(signal.aborted).toBe(true)
+    f.engine.preloadRoomTrack(preload('later'))
+    expect(f.request).toHaveBeenCalledOnce()
+  })
+})

@@ -93,6 +93,7 @@ function fixture(
   const verifyIdentity = vi.fn().mockResolvedValue({ userId: changes.userId ?? uid() })
   const search = vi.fn().mockResolvedValue({ tracks: [], page: 1, hasMore: false })
   const lyric = vi.fn().mockResolvedValue({ lyric: '[00:01]fixture', tlyric: '', romalrc: '', yrc: '' })
+  const ttml = vi.fn().mockResolvedValue({ ok: true, lines: [{ words: [{ word: 'Hello' }] }] })
   const cover = vi.fn().mockResolvedValue({ ok: true, contentType: 'image/jpeg', body: Buffer.from([1, 2, 3]) })
   const rateLimit = vi.fn<RequestHandler>((_req, _res, next) => next())
   const coverRateLimit = vi.fn<RequestHandler>((_req, _res, next) => next())
@@ -101,7 +102,7 @@ function fixture(
     verifyIdentity,
     rateLimit: changes.rateLimit ?? rateLimit,
     coverRateLimit,
-    ...(changes.defaults ? {} : { search, lyric, cover }),
+    ...(changes.defaults ? {} : { search, lyric, ttml, cover }),
   })
   /** Resolves when the router either answers or hands the request back to the original chain. */
   const run = () =>
@@ -111,8 +112,59 @@ function fixture(
       router(req as unknown as Request, res as unknown as Response, done)
       finish()
     })
-  return { req, res, verifyIdentity, search, lyric, cover, rateLimit, coverRateLimit, run }
+  return { req, res, verifyIdentity, search, lyric, ttml, cover, rateLimit, coverRateLimit, run }
 }
+
+const ttmlRaw = '/api/music/ttml?source=netease&id=1234'
+
+describe('platform TTML target', () => {
+  it('verifies the identity, applies the music limiter and answers with the parsed lyric lines as JSON', async () => {
+    const f = fixture({ raw: ttmlRaw })
+    expect(await f.run()).toBe('answered')
+    expect(f.verifyIdentity).toHaveBeenCalledExactlyOnceWith({
+      url: ttmlRaw,
+      origin,
+      authorization: 'Bearer fixture-token',
+      method: 'GET',
+    })
+    expect(f.ttml).toHaveBeenCalledExactlyOnceWith({ source: 'netease', id: '1234' })
+    expect(f.rateLimit).toHaveBeenCalledOnce()
+    expect(f.coverRateLimit).not.toHaveBeenCalled()
+    expect(f.res.statusCode).toBe(200)
+    expect(f.res.body).toEqual({ lines: [{ words: [{ word: 'Hello' }] }] })
+    expect(f.res.headers).toMatchObject({
+      'content-type': 'json',
+      'cache-control': 'private, no-store, no-transform',
+      'access-control-allow-origin': origin,
+    })
+  })
+
+  it('answers a song without a library entry with 200 and null lines, not an error', async () => {
+    const f = fixture({ raw: ttmlRaw })
+    f.ttml.mockResolvedValue({ ok: true, lines: null })
+    expect(await f.run()).toBe('answered')
+    expect(f.res.statusCode).toBe(200)
+    expect(f.res.body).toEqual({ lines: null })
+  })
+
+  it('answers an unavailable library with a fixed 502 code', async () => {
+    const f = fixture({ raw: ttmlRaw })
+    f.ttml.mockResolvedValue({ ok: false })
+    expect(await f.run()).toBe('answered')
+    expect(f.res.statusCode).toBe(502)
+    expect(f.res.body).toEqual({ code: 'METADATA_FAILED' })
+  })
+
+  it('rejects a TTML request carrying a URL or any extra query key before touching the library', async () => {
+    for (const extra of ['&url=https://evil.test/x.ttml', '&roomId=ABC123', '&id=2']) {
+      const f = fixture({ raw: ttmlRaw + extra })
+      expect(await f.run()).toBe('answered')
+      expect(f.res.statusCode).toBe(400)
+      expect(f.ttml).not.toHaveBeenCalled()
+      expect(f.verifyIdentity).not.toHaveBeenCalled()
+    }
+  })
+})
 
 const coverImage = 'https://p1.music.126.net/a/b.jpg?param=200y200'
 const coverRaw = '/api/music/cover-proxy?url=' + encodeURIComponent(coverImage)
@@ -286,7 +338,7 @@ describe('unmounted platform metadata router', () => {
     '/',
     '/api/music/url?source=netease&urlId=x',
     '/api/music/cover?source=netease&picId=x',
-    '/api/music/ttml?url=https://evil.test',
+    '/api/music/ttml/?source=netease&id=1',
     '/api/music/playlist?source=netease&id=x',
     '/api/rooms',
     '/api/auth/status',
@@ -561,5 +613,6 @@ describe('unmounted platform metadata router', () => {
     expect(web).toContain('getUserCookie')
     expect(web).toContain('searchMusicMetadata(data)')
     expect(web).toContain('getMusicLyricMetadata(data)')
+    expect(web).toContain('getMusicTtmlMetadata(data)')
   })
 })

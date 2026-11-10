@@ -38,7 +38,12 @@ export interface RoomAudioResult {
 // The reviewed endpoint is GET /api/mapp/audio with platform auth; only its SDK name is used here.
 const ENDPOINT = 'roomAudio'
 export const ROOM_AUDIO_MAX_BYTES = 32 * 1024 * 1024
-const TIMEOUT_MS = 45_000
+/** The server may keep a request in line for up to 15 s before it starts relaying, and may be asked once more. */
+const TIMEOUT_MS = 75_000
+/** 429: no relay slot became free in time; 503: the upstream CDN hiccuped. Both usually pass within seconds. */
+const RETRYABLE_STATUSES = new Set([429, 503])
+const MAX_ATTEMPTS = 2
+const RETRY_DELAY_MS = 2_000
 
 function sdkError(error: unknown): RoomAudioError {
   if (error instanceof RoomAudioError) return error
@@ -115,12 +120,19 @@ export async function readRoomAudio(options: ReadRoomAudioOptions): Promise<Room
   let stream: ReadableStream<Uint8Array> | undefined
   let reader: ReadableStreamDefaultReader<Uint8Array> | undefined
   try {
-    let bytes: Uint8Array<ArrayBuffer>
-    if (mode === 'bytes') {
-      const response = await wait(sdk.http.request(ENDPOINT, { ...request, responseType: 'bytes' }))
-      checkResponse(response)
-      bytes = Uint8Array.from(response.body)
-    } else {
+    let bytes!: Uint8Array<ArrayBuffer>
+    for (let attempt = 1; ; attempt++) {
+      const mayRetry = attempt < MAX_ATTEMPTS
+      if (mode === 'bytes') {
+        const response = await wait(sdk.http.request(ENDPOINT, { ...request, responseType: 'bytes' }))
+        if (mayRetry && RETRYABLE_STATUSES.has(response.status)) {
+          await wait(new Promise<void>((resolve) => setTimeout(resolve, RETRY_DELAY_MS)))
+          continue
+        }
+        checkResponse(response)
+        bytes = Uint8Array.from(response.body)
+        break
+      }
       const pending = sdk.http.stream(ENDPOINT, request)
       // A response that arrives after cancellation is never read; release its body.
       void pending.then(
@@ -130,10 +142,18 @@ export async function readRoomAudio(options: ReadRoomAudioOptions): Promise<Room
         () => {},
       )
       const response = await wait(pending)
+      if (mayRetry && RETRYABLE_STATUSES.has(response.status)) {
+        void response.body.cancel().catch(() => {})
+        await wait(new Promise<void>((resolve) => setTimeout(resolve, RETRY_DELAY_MS)))
+        continue
+      }
       stream = response.body
       checkResponse(response)
       reader = stream.getReader()
-      bytes = Uint8Array.from(await readChunks(reader, wait))
+      // readChunks already merges into a fresh array that nothing else references; copying it again would only
+      // add another whole track (up to 32 MiB) to the peak memory of a sandboxed frame.
+      bytes = await readChunks(reader, wait)
+      break
     }
     if (!bytes.byteLength) throw new RoomAudioError('EMPTY_AUDIO')
     if (bytes.byteLength > ROOM_AUDIO_MAX_BYTES) throw new RoomAudioError('PAYLOAD_TOO_LARGE')

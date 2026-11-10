@@ -1,6 +1,6 @@
 import '../cspValidation.ts'
 import type { HttpResponse, MiniAppSDK } from '@discourse-mini-app/sdk'
-import { MAPP_COVER_MAX_BYTES, MAPP_METADATA_TARGETS } from '@music-together/shared'
+import { COVER_HOST_ALLOWLIST, MAPP_COVER_MAX_BYTES, MAPP_METADATA_TARGETS } from '@music-together/shared'
 import type { ArtworkLoader } from '../../../client/src/lib/artwork.ts'
 
 type CoverSDK = {
@@ -11,20 +11,18 @@ type CoverSDK = {
 /** The reviewed `musicCover` endpoint declared in the manifest (one dynamic query key: `url`). */
 const COVER_ENDPOINT = MAPP_METADATA_TARGETS.cover.endpoint
 const COVER_QUERY_KEY = MAPP_METADATA_TARGETS.cover.queryKeys[0]
-/** Same allow-list the server applies; a cover from any other host never reaches the network. */
-const COVER_HOSTS = new Set([
-  'y.gtimg.cn',
-  'p1.music.126.net',
-  'p2.music.126.net',
-  'p3.music.126.net',
-  'p4.music.126.net',
-  'imgessl.kugou.com',
-])
+/** The very list the server applies (shared, so the two cannot drift): any other host never reaches the network. */
+const COVER_HOSTS: ReadonlySet<string> = new Set(COVER_HOST_ALLOWLIST)
 const MAX_COVER_BYTES = MAPP_COVER_MAX_BYTES
 /** The server only accepts a plain absolute https URL of at most this length. */
 const MAX_URL_LENGTH = 2048
 const MAX_CONCURRENT = 4
 const TIMEOUT_MS = 15_000
+/**
+ * Blob URLs keep their bytes alive until revoked. Past this total the least recently requested covers are revoked,
+ * so browsing long result lists in a sandboxed frame cannot grow without bound (about a hundred 600px covers).
+ */
+const MAX_CACHED_BYTES = 48 * 1024 * 1024
 
 type Failure =
   | 'ARTWORK_ORIGIN_REJECTED'
@@ -77,8 +75,8 @@ function sdkFailure(error: unknown): Error {
   return failure('ARTWORK_REQUEST_FAILED')
 }
 
-/** Returns a Blob URL for an accepted response; anything else is a fixed error code. */
-function toObjectUrl(response: HttpResponse<Uint8Array>): string {
+/** Returns a Blob URL (and its size) for an accepted response; anything else is a fixed error code. */
+function toObjectUrl(response: HttpResponse<Uint8Array>): { objectUrl: string; bytes: number } {
   const contentType = Object.entries(response.headers)
     .find(([key]) => key.toLowerCase() === 'content-type')?.[1]
     ?.split(';')[0]
@@ -90,7 +88,10 @@ function toObjectUrl(response: HttpResponse<Uint8Array>): string {
   }
   if (response.body.byteLength === 0) throw failure('ARTWORK_RESPONSE_REJECTED')
   if (response.body.byteLength > MAX_COVER_BYTES) throw failure('ARTWORK_TOO_LARGE')
-  return URL.createObjectURL(new Blob([response.body as BlobPart], { type: contentType }))
+  return {
+    objectUrl: URL.createObjectURL(new Blob([response.body as BlobPart], { type: contentType })),
+    bytes: response.body.byteLength,
+  }
 }
 
 interface Entry {
@@ -100,6 +101,7 @@ interface Entry {
   waiters: number
   settled: boolean
   objectUrl?: string
+  bytes: number
 }
 
 export interface MappCoverLoader extends ArtworkLoader {
@@ -119,7 +121,9 @@ export function createMappCoverLoader({ sdk }: { sdk: CoverSDK }): MappCoverLoad
 
   const release = () => {
     active--
-    queue.shift()?.grant()
+    // Newest first: what was asked for last is what is on screen now (the track that just started), while
+    // thumbnails of a list scrolled past a moment ago can wait.
+    queue.pop()?.grant()
   }
 
   /** A slot is held only while a request is running; an entry cancelled while queued never starts. */
@@ -146,7 +150,7 @@ export function createMappCoverLoader({ sdk }: { sdk: CoverSDK }): MappCoverLoad
     })
   }
 
-  async function read(url: string, signal: AbortSignal): Promise<string> {
+  async function read(url: string, signal: AbortSignal): Promise<{ objectUrl: string; bytes: number }> {
     await acquire(signal)
     try {
       if (signal.aborted) throw cancelled()
@@ -189,20 +193,37 @@ export function createMappCoverLoader({ sdk }: { sdk: CoverSDK }): MappCoverLoad
     }
   }
 
+  let cachedBytes = 0
+
+  /** Revokes the least recently requested finished covers until the cache fits; `keep` is never evicted. */
+  function evict(keep: Entry): void {
+    for (const [url, entry] of entries) {
+      if (cachedBytes <= MAX_CACHED_BYTES) return
+      if (entry === keep || !entry.settled || !entry.objectUrl) continue
+      URL.revokeObjectURL(entry.objectUrl)
+      cachedBytes -= entry.bytes
+      entries.delete(url)
+    }
+  }
+
   function start(url: string): Entry {
     const controller = new AbortController()
     const entry: Entry = {
       controller,
       waiters: 0,
       settled: false,
+      bytes: 0,
       promise: read(url, controller.signal).then(
-        (objectUrl) => {
+        ({ objectUrl, bytes }) => {
           entry.settled = true
           if (disposed) {
             URL.revokeObjectURL(objectUrl)
             throw failure('ARTWORK_DISPOSED')
           }
           entry.objectUrl = objectUrl
+          entry.bytes = bytes
+          cachedBytes += bytes
+          evict(entry)
           return objectUrl
         },
         (error: unknown) => {
@@ -229,7 +250,13 @@ export function createMappCoverLoader({ sdk }: { sdk: CoverSDK }): MappCoverLoad
       } catch (error) {
         return Promise.reject(error)
       }
-      const entry = entries.get(url) ?? start(url)
+      const known = entries.get(url)
+      if (known) {
+        // Reinsert so iteration order is least → most recently requested.
+        entries.delete(url)
+        entries.set(url, known)
+      }
+      const entry = known ?? start(url)
       entry.waiters++
       return new Promise<string>((resolve, reject) => {
         let done = false
@@ -268,6 +295,7 @@ export function createMappCoverLoader({ sdk }: { sdk: CoverSDK }): MappCoverLoad
         if (entry.objectUrl) URL.revokeObjectURL(entry.objectUrl)
       }
       entries.clear()
+      cachedBytes = 0
     },
   }
 }

@@ -97,6 +97,15 @@ export function createMappPlaybackSoundFactory(options: MappPlaybackSoundFactory
   return {
     allowLoadRetry: false,
     supportsHtml5Analysis: false,
+    preload(track) {
+      const roomId = options.getRoomId()
+      if (disposed || roomId === null) return
+      try {
+        engine.preloadRoomTrack({ roomId, trackId: track.id, mode: options.mode ?? 'stream' })
+      } catch {
+        // Best effort: the real load reads the track itself.
+      }
+    },
     create(track, soundOptions) {
       if (owner) {
         retire(owner)

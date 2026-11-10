@@ -2,6 +2,7 @@ import {
   searchQuerySchema,
   urlQuerySchema,
   lyricQuerySchema,
+  ttmlQuerySchema,
   coverQuerySchema,
   playlistQuerySchema,
 } from '@music-together/shared'
@@ -13,7 +14,7 @@ import * as authService from '../services/authService.js'
 import { roomRepo } from '../repositories/roomRepository.js'
 import { logger } from '../utils/logger.js'
 import { coverProxyRateLimit } from '../middleware/httpRateLimiter.js'
-import { getMusicLyricMetadata, searchMusicMetadata } from '../controllers/musicMetadataController.js'
+import { getMusicLyricMetadata, getMusicTtmlMetadata, searchMusicMetadata } from '../controllers/musicMetadataController.js'
 
 const router: RouterType = Router()
 
@@ -61,6 +62,20 @@ router.get(
   '/lyric',
   validated(lyricQuerySchema, 'Get lyric', async (data, _req, res) => {
     res.json(await getMusicLyricMetadata(data))
+  }),
+)
+
+router.get(
+  '/ttml',
+  validated(ttmlQuerySchema, 'Get TTML', async (data, _req, res) => {
+    const result = await getMusicTtmlMetadata(data)
+    if (!result.ok) {
+      res.status(502).json({ error: 'TTML unavailable' })
+      return
+    }
+    // A song without a library entry is a normal answer (`lines: null`), not an error the browser would log.
+    res.setHeader('Cache-Control', `private, max-age=${result.lines ? 3600 : 600}`)
+    res.json({ lines: result.lines })
   }),
 )
 

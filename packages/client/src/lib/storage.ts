@@ -75,7 +75,6 @@ const BG_RENDERERS = ['pixi', 'mesh'] as const
 /** 所有持久化设置项的默认值 — 供 store 层的 resettable 工厂使用 */
 export const SETTING_DEFAULTS = {
   ttmlEnabled: true,
-  ttmlDbUrl: 'https://amlldb.bikonoo.com/ncm-lyrics/%s.ttml',
   lyricAlignAnchor: 'center' as 'top' | 'center' | 'bottom',
   lyricAlignPosition: 0.5,
   lyricEnableSpring: true,
@@ -180,9 +179,6 @@ export const storage = {
   // TTML 在线逐词歌词
   getTtmlEnabled: () => safeGet('ttmlEnabled') !== 'false', // 默认开启
   setTtmlEnabled: (v: boolean) => safeSet('ttmlEnabled', String(v)),
-
-  getTtmlDbUrl: () => safeGet('ttmlDbUrl') || SETTING_DEFAULTS.ttmlDbUrl,
-  setTtmlDbUrl: (v: string) => safeSet('ttmlDbUrl', v),
 
   // Background settings
   getBgRenderer: () => safeEnum('bgRenderer', BG_RENDERERS, SETTING_DEFAULTS.bgRenderer),

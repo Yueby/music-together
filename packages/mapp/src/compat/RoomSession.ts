@@ -1,7 +1,22 @@
 import '../cspValidation.ts'
-import { EVENTS, type ClientToServerEvents, type ServerToClientEvents } from '@music-together/shared'
+import { ERROR_CODE, EVENTS, type ClientToServerEvents, type ServerToClientEvents } from '@music-together/shared'
 import type { SdkRoomSocket } from '../../../client/src/lib/platform/SdkRoomSocket.ts'
 import { createMappRoomSocket, type MappRoomSocketOptions } from './roomSocket.ts'
+
+/** Errors the server sends for actions inside a room; none of them is an outcome of creating or joining one. */
+const IN_ROOM_ACTION_ERRORS: ReadonlySet<string> = new Set([
+  ERROR_CODE.INVALID_DATA,
+  ERROR_CODE.NOT_IN_ROOM,
+  ERROR_CODE.NOT_OWNER,
+  ERROR_CODE.NO_PERMISSION,
+  ERROR_CODE.SET_ROLE_FAILED,
+  ERROR_CODE.QUEUE_FULL,
+  ERROR_CODE.STREAM_FAILED,
+  ERROR_CODE.RATE_LIMITED,
+  ERROR_CODE.NO_VOTE_NEEDED,
+  ERROR_CODE.VOTE_IN_PROGRESS,
+  ERROR_CODE.ALREADY_VOTED,
+])
 
 export type MappRoomSessionStatus =
   | 'idle'
@@ -197,8 +212,10 @@ export function createMappRoomSession(options: MappRoomSessionOptions): MappRoom
     if (pending?.roomId === data.roomId) pending.ticket = ticket
     if (confirmed?.roomId === data.roomId) recovery = { ...confirmed, ticket }
   }
-  const onRoomError = (): void => {
-    if (pending) failRequest()
+  const onRoomError: ServerToClientEvents[typeof EVENTS.ROOM_ERROR] = ({ code }) => {
+    // The server reuses ROOM_ERROR for in-room actions (queue, chat, voting, roles). A late one from the room we
+    // just left says nothing about the create/join in flight, so only errors that can belong to it end it.
+    if (pending && !IN_ROOM_ACTION_ERRORS.has(code)) failRequest()
   }
 
   socket.on('connect', reconcile)

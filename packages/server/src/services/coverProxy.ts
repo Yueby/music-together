@@ -1,17 +1,11 @@
-import { MAPP_COVER_MAX_BYTES } from '@music-together/shared'
+import { COVER_HOST_ALLOWLIST, MAPP_COVER_MAX_BYTES } from '@music-together/shared'
+import { readBounded } from '../utils/readBounded.js'
 
 /**
  * Cover image fetching shared by the Web `/api/music/cover-proxy` route and the platform adapter.
- * Only the music CDNs below are ever contacted.
+ * Only the music CDNs of the shared allowlist (the one the mini-app checks too) are ever contacted.
  */
-export const ALLOWED_COVER_HOSTS = [
-  'y.gtimg.cn',
-  'p1.music.126.net',
-  'p2.music.126.net',
-  'p3.music.126.net',
-  'p4.music.126.net',
-  'imgessl.kugou.com',
-]
+export const ALLOWED_COVER_HOSTS: readonly string[] = COVER_HOST_ALLOWLIST
 
 export const MAX_WEB_COVER_BYTES = 10 * 1024 * 1024
 
@@ -36,41 +30,36 @@ export function limitCoverSize(imageUrl: string): string {
 
 export type CoverResult = { ok: true; contentType: string; body: Buffer } | { ok: false; status: number; error: string }
 
-/** Reads at most `maxBytes`; returns undefined as soon as the body is known to be larger. */
-async function readBounded(response: Response, maxBytes: number): Promise<Buffer | undefined> {
-  if (!response.body) return Buffer.alloc(0)
-  const reader = response.body.getReader()
-  const chunks: Uint8Array[] = []
-  let total = 0
-  for (;;) {
-    const { done, value } = await reader.read()
-    if (done) break
-    total += value.byteLength
-    if (total > maxBytes) {
-      await reader.cancel().catch(() => {})
-      return undefined
-    }
-    chunks.push(value)
-  }
-  return Buffer.concat(chunks)
-}
+const MAX_COVER_REDIRECTS = 3
 
 /**
  * Throws on an invalid URL or a network failure/timeout; callers map that to their own error response.
- * Redirects are followed by the platform `fetch` (unchanged Web behaviour).
+ * Redirects are followed by hand and must land on the same allowlist over https: a CDN answering with a
+ * redirect must not be able to move the server's request to another host.
  */
 export async function fetchCoverImage(
   imageUrl: string,
   maxBytes: number = MAX_WEB_COVER_BYTES,
   fetcher: typeof fetch = fetch,
 ): Promise<CoverResult> {
-  const parsed = new URL(imageUrl)
-  if (!ALLOWED_COVER_HOSTS.includes(parsed.hostname)) return { ok: false, status: 403, error: 'Host not allowed' }
+  let target = new URL(imageUrl)
+  if (!ALLOWED_COVER_HOSTS.includes(target.hostname)) return { ok: false, status: 403, error: 'Host not allowed' }
 
-  const response = await fetcher(imageUrl, {
-    signal: AbortSignal.timeout(10_000),
-    headers: { 'User-Agent': 'Mozilla/5.0' },
-  })
+  const signal = AbortSignal.timeout(10_000)
+  let response: Response | undefined
+  for (let hop = 0; hop <= MAX_COVER_REDIRECTS; hop++) {
+    response = await fetcher(target.toString(), { signal, redirect: 'manual', headers: { 'User-Agent': 'Mozilla/5.0' } })
+    if (response.status < 300 || response.status >= 400) break
+    const location = response.headers.get('location')
+    await response.body?.cancel().catch(() => {})
+    const next = location ? new URL(location, target) : undefined
+    if (!next || next.protocol !== 'https:' || !ALLOWED_COVER_HOSTS.includes(next.hostname)) {
+      return { ok: false, status: 403, error: 'Host not allowed' }
+    }
+    target = next
+    response = undefined
+  }
+  if (!response) return { ok: false, status: 502, error: 'Too many redirects' }
   if (!response.ok) return { ok: false, status: response.status, error: 'Upstream fetch failed' }
 
   const contentType = response.headers.get('content-type') || ''

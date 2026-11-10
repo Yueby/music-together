@@ -57,4 +57,40 @@ describe('default Web playback sound factory', () => {
     expect(options.onpause).not.toHaveBeenCalled()
     expect(options.onend).not.toHaveBeenCalled()
   })
+
+  describe('preload', () => {
+    class FakeAudio {
+      static instances: FakeAudio[] = []
+      preload = ''
+      src = ''
+      removeAttribute = vi.fn((name: string) => {
+        if (name === 'src') this.src = ''
+      })
+      load = vi.fn()
+      constructor() {
+        FakeAudio.instances.push(this)
+      }
+    }
+    beforeEach(() => {
+      FakeAudio.instances = []
+      vi.stubGlobal('Audio', FakeAudio)
+    })
+
+    it('opens the next stream for its metadata only, and keeps a single warm element', () => {
+      playbackSoundFactory.preload!(track)
+      expect(FakeAudio.instances[0]).toMatchObject({ preload: 'metadata', src: track.streamUrl })
+      playbackSoundFactory.preload!({ ...track, id: 'later', streamUrl: 'https://audio.example.test/later' })
+      expect(FakeAudio.instances[0].removeAttribute).toHaveBeenCalledWith('src')
+      expect(FakeAudio.instances[1].src).toBe('https://audio.example.test/later')
+    })
+
+    it('releases the warm element when the real sound is created, and ignores a track without a URL', () => {
+      playbackSoundFactory.preload!(track)
+      playbackSoundFactory.create(track, { src: [track.streamUrl!] })
+      expect(FakeAudio.instances[0].load).toHaveBeenCalled()
+      expect(FakeAudio.instances[0].src).toBe('')
+      playbackSoundFactory.preload!({ ...track, streamUrl: undefined })
+      expect(FakeAudio.instances).toHaveLength(1)
+    })
+  })
 })

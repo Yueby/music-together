@@ -150,6 +150,9 @@ export function createMappHost(options: MappHostOptions): MappHost {
           currentSound = audio.create(track, soundOptions)
           return currentSound
         },
+        preload(track) {
+          if (!disposed) audio.preload?.(track)
+        },
       },
       isAudioUnlocked: () => !disposed && unlocked,
       async unlockAudio() {

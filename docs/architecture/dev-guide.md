@@ -33,6 +33,9 @@ pnpm dev:server
 | `REJOIN_TTL_MS` | 重连票据有效期 | `60000` |
 | `IDENTITY_COOKIE_SECURE` | 强制 Secure Cookie | 自动判断 |
 | `AUTO_FALLBACK_ENABLED` | 网易云/QQ 自动换源 | `true` |
+| `MAPP_AUDIO_MAX_BITRATE` | 微应用音频接口的最高码率（128/192/320/999） | `128` |
+| `MAPP_MAX_STREAMS` | 微应用音频同时转发的路数（1–32），超出的请求排队 15 秒 | `8` |
+| `TTML_DB_BASE_URL` | TTML 逐词歌词库 https 地址，服务端代理读取 | `https://amlldb.bikonoo.com` |
 
 客户端可通过 `VITE_SERVER_URL` 覆盖后端地址；默认使用当前访问地址自动推导。
 

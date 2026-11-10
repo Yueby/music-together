@@ -1,6 +1,12 @@
 import type { MiniAppSDK } from '@discourse-mini-app/sdk'
 import { WebAudioPlayer, type WebAudioPlayerSnapshot } from './WebAudioPlayer.ts'
-import { readRoomAudio, RoomAudioError, type ReadRoomAudioOptions, type RoomAudioErrorCode } from './RoomAudioSource.ts'
+import {
+  readRoomAudio,
+  RoomAudioError,
+  type ReadRoomAudioOptions,
+  type RoomAudioErrorCode,
+  type RoomAudioResult,
+} from './RoomAudioSource.ts'
 
 export type MappAudioEngineErrorCode =
   | RoomAudioErrorCode
@@ -37,6 +43,14 @@ export interface MappAudioEngineOptions {
 
 export type LoadRoomTrackOptions = Omit<ReadRoomAudioOptions, 'sdk'>
 
+/** The bytes of the announced next track, being fetched (or already fetched) ahead of its turn. */
+interface PreloadedTrack {
+  roomId: string
+  trackId: string
+  controller: AbortController
+  result: Promise<RoomAudioResult>
+}
+
 /** Transport/lifetime adapter only. WebAudioPlayer retains all audio-clock and source scheduling. */
 export class MappAudioEngine {
   private readonly player: WebAudioPlayer
@@ -49,6 +63,8 @@ export class MappAudioEngine {
   private trackId: string | null = null
   private loading = false
   private errorCode: MappAudioEngineErrorCode | null = null
+  /** At most one: the compressed bytes only (decoded audio is far larger), so memory stays bounded. */
+  private preloaded: PreloadedTrack | null = null
 
   constructor(options: MappAudioEngineOptions) {
     this.sdk = options.sdk
@@ -84,7 +100,7 @@ export class MappAudioEngine {
       this.player.pause()
       this.notify()
       if (!this.current(generation)) return false
-      const result = await readRoomAudio({ ...options, sdk: this.sdk, signal: controller.signal })
+      const result = await this.readTrackBytes(options, controller)
       if (!this.current(generation)) return false
       const loaded = await this.decode(result.bytes, controller.signal)
       if (!this.current(generation)) return false
@@ -108,6 +124,61 @@ export class MappAudioEngine {
       options.signal?.removeEventListener('abort', abort)
       if (this.current(generation)) this.controller = null
     }
+  }
+
+  /**
+   * Fetch the bytes of the track that will probably play next while the current one plays. Downloading a whole file
+   * through the SDK takes seconds; loadRoomTrack takes these bytes over when that track's turn comes, and only the
+   * decoding is left. A failed or superseded preload costs nothing: the real load simply reads the track itself.
+   */
+  preloadRoomTrack(options: Omit<LoadRoomTrackOptions, 'signal'>): void {
+    if (this.disposed) return
+    const known = this.preloaded
+    if (known && known.roomId === options.roomId && known.trackId === options.trackId) return
+    if (this.trackId === options.trackId) return
+    this.discardPreload()
+    const controller = new AbortController()
+    const entry: PreloadedTrack = {
+      roomId: options.roomId,
+      trackId: options.trackId,
+      controller,
+      result: readRoomAudio({ ...options, sdk: this.sdk, signal: controller.signal }),
+    }
+    // A failed read is forgotten, so the real load starts its own.
+    entry.result.catch(() => {
+      if (this.preloaded === entry) this.preloaded = null
+    })
+    this.preloaded = entry
+  }
+
+  private discardPreload(): void {
+    this.preloaded?.controller.abort()
+    this.preloaded = null
+  }
+
+  /** The preloaded bytes when they are for this very track, otherwise a normal read. */
+  private async readTrackBytes(options: LoadRoomTrackOptions, controller: AbortController): Promise<RoomAudioResult> {
+    const preloaded = this.preloaded
+    if (preloaded && preloaded.roomId === options.roomId && preloaded.trackId === options.trackId) {
+      // The load now owns the transfer: cancelling the load cancels it.
+      this.preloaded = null
+      const cancelPreload = () => preloaded.controller.abort()
+      controller.signal.addEventListener('abort', cancelPreload, { once: true })
+      try {
+        return await Promise.race([
+          preloaded.result,
+          new Promise<never>((_, reject) =>
+            controller.signal.addEventListener('abort', () => reject(new RoomAudioError('ABORTED')), { once: true }),
+          ),
+        ])
+      } catch (error) {
+        if (controller.signal.aborted) throw error
+        // The preload failed on its own; fall through to a direct read.
+      } finally {
+        controller.signal.removeEventListener('abort', cancelPreload)
+      }
+    }
+    return readRoomAudio({ ...options, sdk: this.sdk, signal: controller.signal })
   }
 
   cancel(): void {
@@ -188,6 +259,7 @@ export class MappAudioEngine {
     if (this.disposal) return this.disposal
     this.disposed = true
     this.invalidate()
+    this.discardPreload()
     this.trackId = null
     this.loading = false
     this.errorCode = 'DISPOSED'

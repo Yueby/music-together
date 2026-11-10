@@ -57,6 +57,41 @@ describe('fetchCoverImage', () => {
     })
   })
 
+  describe('redirects', () => {
+    const redirect = (location: string) => new Response(null, { status: 302, headers: { location } })
+
+    it('follows a redirect that stays on the allowlist over https', async () => {
+      const fetch = vi.fn<typeof fetch>().mockResolvedValueOnce(redirect('https://p2.music.126.net/b.jpg'))
+      fetch.mockResolvedValueOnce(image())
+      await expect(fetchCoverImage(url, undefined, fetch)).resolves.toMatchObject({ ok: true })
+      expect(fetch.mock.calls.map(([target]) => String(target))).toEqual([url, 'https://p2.music.126.net/b.jpg'])
+      expect(fetch.mock.calls[0][1]).toMatchObject({ redirect: 'manual' })
+    })
+
+    it.each([
+      'https://evil.test/a.jpg',
+      'http://p2.music.126.net/a.jpg',
+      'https://127.0.0.1/a.jpg',
+      'https://p2.music.126.net.evil.test/a.jpg',
+    ])('refuses a redirect to %s without contacting it', async (location) => {
+      const fetch = vi.fn<typeof fetch>().mockResolvedValue(redirect(location))
+      await expect(fetchCoverImage(url, undefined, fetch)).resolves.toEqual({
+        ok: false,
+        status: 403,
+        error: 'Host not allowed',
+      })
+      expect(fetch).toHaveBeenCalledOnce()
+    })
+
+    it('gives up on a redirect loop and on a redirect without a location', async () => {
+      const loop = vi.fn<typeof fetch>().mockImplementation(async () => redirect(url))
+      await expect(fetchCoverImage(url, undefined, loop)).resolves.toMatchObject({ ok: false })
+      expect(loop).toHaveBeenCalledTimes(4)
+      const bare = vi.fn<typeof fetch>().mockResolvedValue(new Response(null, { status: 302 }))
+      await expect(fetchCoverImage(url, undefined, bare)).resolves.toMatchObject({ ok: false, status: 403 })
+    })
+  })
+
   it.each([{ 'content-type': 'text/html' }, {}])('rejects a non-image response %#', async (headers) => {
     await expect(fetchCoverImage(url, undefined, fetcher(image('<html>', headers)))).resolves.toEqual({
       ok: false,

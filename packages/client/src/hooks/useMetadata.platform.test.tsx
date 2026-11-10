@@ -17,10 +17,7 @@ vi.mock('@/lib/metadataFetch', () => ({
 vi.mock('sonner', () => ({ toast: { error: vi.fn() } }))
 vi.mock('@/stores/settingsStore', () => ({
   useSettingsStore: {
-    getState: () => ({
-      ttmlEnabled: true,
-      ttmlDbUrl: 'https://unreviewed.example.test/ncm-lyrics/%s.ttml',
-    }),
+    getState: () => ({ ttmlEnabled: true }),
   },
 }))
 
@@ -36,9 +33,23 @@ const track: Track = {
   urlId: '1',
   lyricId: 'fixture-lyric',
 }
-function response(value: unknown) {
+/** What `/api/music/ttml` returns: the server parses the library file, the client never sees XML. */
+const wordByWordLines = [
+  {
+    startTime: 500,
+    endTime: 2500,
+    words: [
+      { word: 'Hello ', startTime: 500, endTime: 1500 },
+      { word: 'world', startTime: 1500, endTime: 2500 },
+    ],
+  },
+]
+const endpointsOf = (mock: { mock: { calls: unknown[][] } }) => mock.mock.calls.map(([endpoint]) => endpoint).sort()
+const serverLyric = { lyric: '[00:00.00]Fixture line', tlyric: '', romalrc: '', yrc: '' }
+
+function response(value: unknown, status = 200) {
   return {
-    status: 200,
+    status,
     headers: { 'content-type': 'application/json; charset=utf-8' },
     body: Uint8Array.from(new TextEncoder().encode(JSON.stringify(value))),
   }
@@ -128,18 +139,76 @@ describe('shared search and lyric hooks with reviewed SDK metadata requests', ()
     expect(globalThis.fetch).not.toHaveBeenCalled()
   })
 
-  it('uses the approved lyric target and falls back from an unreviewed TTML URL without requesting it', async () => {
-    request.mockResolvedValueOnce(response({ lyric: '[00:00.00]Fixture line', tlyric: '', romalrc: '', yrc: '' }))
-    await act(async () => lyric.fetchLyric(track))
-    expect(request).toHaveBeenCalledExactlyOnceWith(
-      'musicLyric',
-      expect.objectContaining({
-        query: { source: 'netease', lyricId: 'fixture-lyric' },
-        responseType: 'bytes',
-      }),
+  it('requests word-by-word TTML through the reviewed endpoint, never a library URL, and uses its lines', async () => {
+    request.mockImplementation(async (endpoint) =>
+      endpoint === 'musicTtml' ? response({ lines: wordByWordLines }) : response(serverLyric),
     )
+    await act(async () => lyric.fetchLyric(track))
+    expect(request).toHaveBeenCalledWith(
+      'musicTtml',
+      expect.objectContaining({ query: { source: 'netease', id: '1' }, responseType: 'bytes' }),
+    )
+    expect(usePlayerStore.getState().ttmlLines).toEqual(wordByWordLines)
+    expect(usePlayerStore.getState().lyricLoading).toBe(false)
+    expect(globalThis.fetch).not.toHaveBeenCalled()
+  })
+
+  it('starts the server lyric request together with TTML so a slow library never delays it', async () => {
+    let finishTtml!: (value: ReturnType<typeof response>) => void
+    request.mockImplementation((endpoint) =>
+      endpoint === 'musicTtml'
+        ? new Promise((resolve) => {
+            finishTtml = resolve
+          })
+        : Promise.resolve(response(serverLyric)),
+    )
+    const pending = act(async () => lyric.fetchLyric(track))
+    await settle()
+    expect(endpointsOf(request)).toEqual(['musicLyric', 'musicTtml'])
+    finishTtml(response({ lines: null }))
+    await pending
+    expect(usePlayerStore.getState().lyric).toBe('[00:00.00]Fixture line')
+  })
+
+  it.each([
+    ['has no entry for the song', () => response({ lines: null })],
+    ['is unavailable', () => response({ code: 'METADATA_FAILED' }, 502)],
+    ['answers with nothing usable', () => response({ lines: [] })],
+  ])('falls back to the server lyric when the TTML library %s', async (_name, ttmlAnswer) => {
+    request.mockImplementation(async (endpoint) => (endpoint === 'musicTtml' ? ttmlAnswer() : response(serverLyric)))
+    await act(async () => lyric.fetchLyric(track))
+    expect(request).toHaveBeenCalledWith(
+      'musicLyric',
+      expect.objectContaining({ query: { source: 'netease', lyricId: 'fixture-lyric' }, responseType: 'bytes' }),
+    )
+    expect(usePlayerStore.getState().ttmlLines).toBeNull()
     expect(usePlayerStore.getState().lyric).toBe('[00:00.00]Fixture line')
     expect(usePlayerStore.getState().lyricLoading).toBe(false)
     expect(globalThis.fetch).not.toHaveBeenCalled()
+  })
+
+  it('drops everything when the track changes while TTML is still loading', async () => {
+    let finishTtml!: (value: ReturnType<typeof response>) => void
+    request.mockImplementation((endpoint) =>
+      endpoint === 'musicTtml'
+        ? new Promise((resolve) => {
+            finishTtml = resolve
+          })
+        : Promise.resolve(response(serverLyric)),
+    )
+    const first = act(async () => lyric.fetchLyric(track))
+    await settle()
+    request.mockImplementation(async () => response({ lyric: '[00:00.00]Second', tlyric: '', romalrc: '', yrc: '' }))
+    await act(async () => lyric.fetchLyric({ ...track, source: 'kugou', id: 'second' }))
+    finishTtml(response({ lines: wordByWordLines }))
+    await first
+    expect(usePlayerStore.getState().ttmlLines).toBeNull()
+    expect(usePlayerStore.getState().lyric).toBe('[00:00.00]Second')
+  })
+
+  it('skips TTML for sources without a library', async () => {
+    request.mockResolvedValueOnce(response(serverLyric))
+    await act(async () => lyric.fetchLyric({ ...track, source: 'kugou' }))
+    expect(request).toHaveBeenCalledExactlyOnceWith('musicLyric', expect.anything())
   })
 })

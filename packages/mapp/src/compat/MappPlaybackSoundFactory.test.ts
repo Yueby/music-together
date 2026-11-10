@@ -45,6 +45,7 @@ function environment(mode?: 'bytes' | 'stream') {
   const engine = {
     snapshot: vi.fn(() => snapshot),
     loadRoomTrack: vi.fn(async (_input: { roomId: string; trackId: string; mode: 'bytes' | 'stream' }) => true),
+    preloadRoomTrack: vi.fn((_input: { roomId: string; trackId: string; mode: 'bytes' | 'stream' }) => {}),
     play: vi.fn(async () => {
       snapshot.audio.status = 'playing'
       emit()
@@ -92,6 +93,35 @@ function environment(mode?: 'bytes' | 'stream') {
 
 beforeEach(() => {
   mocks.construct.mockReset()
+})
+
+describe('MappPlaybackSoundFactory preload', () => {
+  it('passes the announced track to the engine for the current room, and never its URL', () => {
+    const f = environment('bytes')
+    f.factory.preload!(track('netease:2'))
+    expect(f.engine.preloadRoomTrack).toHaveBeenCalledExactlyOnceWith({
+      roomId: 'AB12_-',
+      trackId: 'netease:2',
+      mode: 'bytes',
+    })
+  })
+
+  it('does nothing outside a room, after dispose, or when the engine refuses', async () => {
+    const f = environment()
+    const preload = f.engine.preloadRoomTrack
+    f.getRoomId.mockReturnValueOnce(null)
+    f.factory.preload!(track())
+    expect(preload).not.toHaveBeenCalled()
+
+    preload.mockImplementationOnce(() => {
+      throw new Error('refused')
+    })
+    expect(() => f.factory.preload!(track())).not.toThrow()
+
+    await f.factory.dispose()
+    f.factory.preload!(track())
+    expect(preload).toHaveBeenCalledTimes(1)
+  })
 })
 
 describe('MappPlaybackSoundFactory shared engine handles', () => {

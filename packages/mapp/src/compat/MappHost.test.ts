@@ -89,6 +89,7 @@ function fixture() {
   const audio = {
     allowLoadRetry: false,
     supportsHtml5Analysis: false,
+    preload: vi.fn<(track: Track) => void>(),
     create: vi.fn((_track: Track, _options: PlaybackSoundOptions): PlaybackSound => {
       const handle = { unload: vi.fn() } as unknown as PlaybackSound
       handles.push(handle)
@@ -281,6 +282,16 @@ describe('MappHost thin composition', () => {
       expect(f.session.leaveRoom).not.toHaveBeenCalled()
     },
   )
+
+  it('forwards the announced next track to the audio factory until the host is disposed', async () => {
+    const f = fixture()
+    const host = f.make()
+    host.playbackSoundFactory.preload!(track)
+    expect(f.audio.preload).toHaveBeenCalledExactlyOnceWith(track)
+    await host.dispose()
+    host.playbackSoundFactory.preload!(track)
+    expect(f.audio.preload).toHaveBeenCalledOnce()
+  })
 
   it('keeps media for same-room status changes and clears identity on dispose', async () => {
     const f = fixture()

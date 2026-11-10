@@ -1,11 +1,17 @@
 import { z } from 'zod'
-import { searchQuerySchema, lyricQuerySchema } from './schemas.js'
+import { searchQuerySchema, lyricQuerySchema, ttmlQuerySchema } from './schemas.js'
 
 import { MAPP_METADATA_TARGETS } from './mappMetadataTargets.js'
-export { MAPP_COVER_MAX_BYTES, MAPP_METADATA_MAX_BYTES, MAPP_METADATA_TARGETS } from './mappMetadataTargets.js'
+export {
+  COVER_HOST_ALLOWLIST,
+  MAPP_COVER_MAX_BYTES,
+  MAPP_METADATA_MAX_BYTES,
+  MAPP_METADATA_TARGETS,
+} from './mappMetadataTargets.js'
 
 export const mappMetadataSearchQuerySchema = searchQuerySchema.strict()
 export const mappMetadataLyricQuerySchema = lyricQuerySchema.strict()
+export const mappMetadataTtmlQuerySchema = ttmlQuerySchema.strict()
 
 /** Absolute https URL without credentials, fragment or whitespace. The host allowlist is enforced by the server. */
 function isPlainHttpsUrl(value: string): boolean {
@@ -50,6 +56,13 @@ export function parseMappMetadataRequest(rawUrl: string) {
       kind: 'lyric' as const,
       target: MAPP_METADATA_TARGETS.lyric,
       query: mappMetadataLyricQuerySchema.parse(query, { jitless: true }),
+    }
+  }
+  if (rawPath === MAPP_METADATA_TARGETS.ttml.path) {
+    return {
+      kind: 'ttml' as const,
+      target: MAPP_METADATA_TARGETS.ttml,
+      query: mappMetadataTtmlQuerySchema.parse(query, { jitless: true }),
     }
   }
   if (rawPath === MAPP_METADATA_TARGETS.cover.path) {

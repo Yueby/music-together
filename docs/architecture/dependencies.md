@@ -37,6 +37,8 @@
 | qrcode | ^1.5.4 | 酷狗登录二维码编码 |
 | escape-html | ^1.0.3 | 聊天内容转义 |
 
+服务端的 TTML 逐词歌词解析使用 `@applemusic-like-lyrics/ttml`（与客户端歌词包内置版本一致，固定 1.0.1）并注入 `@xmldom/xmldom` 作为 DOMParser（Node 没有内置的，微应用的 Trusted Types 也不允许在客户端解析）。
+
 酷狗 KRC 获取、解密和逐词解析由 `packages/server/src/services/kugouLyricService.ts` 内置实现，不再依赖已停止维护的 `request` 生态。
 
 QQ 音乐搜索使用腾讯 `zzc` 签名访问 `musics.fcg`，避免未签名 `musicu.fcg` 返回业务码 `2001` 和空列表。

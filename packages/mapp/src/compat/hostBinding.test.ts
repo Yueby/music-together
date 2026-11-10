@@ -21,7 +21,7 @@ function fixture() {
   const socket = { fixture: 'socket' }
   const host = {
     session: { socket },
-    playbackSoundFactory: { create: vi.fn(() => sound) },
+    playbackSoundFactory: { create: vi.fn(() => sound), preload: vi.fn() },
     metadataFetch: vi.fn(async () => response),
     roomCommands: { create: vi.fn(() => true), join: vi.fn(() => true), leave: vi.fn() },
     roomCheck: vi.fn(async () => ({ name: 'Fixture', hasPassword: true, userCount: 0 })),
@@ -60,6 +60,9 @@ describe('selected micro-app host modules', () => {
     expect(f.host.playbackSoundFactory.create).toHaveBeenCalledExactlyOnceWith(track, options)
     expect(playbackSoundFactory.allowLoadRetry).toBe(false)
     expect(playbackSoundFactory.supportsHtml5Analysis).toBe(false)
+    // The announced next track must reach the host too, or the shared hook's preload silently does nothing.
+    playbackSoundFactory.preload!(track)
+    expect(f.host.playbackSoundFactory.preload).toHaveBeenCalledExactlyOnceWith(track)
     const init = { signal: new AbortController().signal, credentials: 'include' as const }
     expect(await metadataFetch('/api/music/search', init)).toBe(f.response)
     expect(f.host.metadataFetch).toHaveBeenCalledExactlyOnceWith('/api/music/search', init)

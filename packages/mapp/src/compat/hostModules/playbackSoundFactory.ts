@@ -5,4 +5,5 @@ export const playbackSoundFactory: PlaybackSoundFactory = {
   allowLoadRetry: false,
   supportsHtml5Analysis: false,
   create: (track, options) => getMappHost().playbackSoundFactory.create(track, options),
+  preload: (track) => getMappHost().playbackSoundFactory.preload?.(track),
 }

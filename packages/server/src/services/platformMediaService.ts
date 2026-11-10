@@ -1,41 +1,118 @@
-import { Transform } from 'node:stream'
+import { once } from 'node:events'
+import { PassThrough, Readable, Transform } from 'node:stream'
 import { pipeline } from 'node:stream/promises'
 import type { Response } from 'express'
-import type { MusicSource } from '@music-together/shared'
+import type { AudioQuality, MusicSource } from '@music-together/shared'
+import { config } from '../config.js'
 import { roomRepo } from '../repositories/roomRepository.js'
 import type { RoomRepository } from '../repositories/types.js'
 import { musicProvider } from './musicProvider.js'
 import { getAnyCookie } from './authService.js'
 import { MAX_MEDIA_BYTES, MediaError, requestMediaSource } from './mediaSourceRequest.js'
+import { resolveStreamUrl } from './streamUrlResolver.js'
 
-const STREAM_TIMEOUT_MS = 30_000
-const MAX_STREAMS = 8
+/** Resolving the signed URL (provider calls, including bitrate fallbacks). */
+const RESOLVE_TIMEOUT_MS = 20_000
+/** Absolute cap for one request including the transfer: a 32 MiB track must survive a slow connection. */
+const STREAM_TIMEOUT_MS = 5 * 60_000
 const MAX_STREAMS_PER_USER = 2
+/** Requests allowed to wait for a slot; a queued request is only a pending socket, but the line must stay bounded. */
+const MAX_QUEUED = 64
+/** How long a request may wait for a slot before it is turned away. */
+const QUEUE_TIMEOUT_MS = 15_000
 
-/** Concurrent-stream cap. The request rate is limited by `mediaStreamRateLimit`. */
+interface SlotOptions {
+  maxStreams?: number
+  maxQueued?: number
+  queueTimeoutMs?: number
+}
+
+/**
+ * Concurrent-stream cap with a FIFO line. A whole room starts the same track at the same moment, so a full house is
+ * the normal case rather than abuse: the overflow waits briefly for a free slot instead of being rejected. A user's
+ * own concurrent requests (running or waiting) are still capped. The request rate is limited by `mediaStreamRateLimit`.
+ */
 export class StreamSlots {
   private total = 0
   private perUser = new Map<string, number>()
-  acquire(userId: string): () => void {
+  private waiting: Array<() => void> = []
+  private readonly maxStreams: number
+  private readonly maxQueued: number
+  private readonly queueTimeoutMs: number
+
+  constructor(options: SlotOptions = {}) {
+    this.maxStreams = options.maxStreams ?? config.mapp.maxStreams
+    this.maxQueued = options.maxQueued ?? MAX_QUEUED
+    this.queueTimeoutMs = options.queueTimeoutMs ?? QUEUE_TIMEOUT_MS
+  }
+
+  async acquire(userId: string, signal?: AbortSignal): Promise<() => void> {
+    if (signal?.aborted) throw new MediaError('MEDIA_ABORTED', 499)
     const own = this.perUser.get(userId) ?? 0
-    if (this.total >= MAX_STREAMS || own >= MAX_STREAMS_PER_USER) throw new MediaError('MEDIA_BUSY', 429)
-    this.total++
+    if (own >= MAX_STREAMS_PER_USER) throw new MediaError('MEDIA_BUSY', 429)
     this.perUser.set(userId, own + 1)
+    const forgetUser = () => {
+      const left = (this.perUser.get(userId) ?? 1) - 1
+      if (left) this.perUser.set(userId, left)
+      else this.perUser.delete(userId)
+    }
+    if (this.total < this.maxStreams) {
+      this.total++
+    } else {
+      try {
+        await this.wait(signal)
+      } catch (error) {
+        forgetUser()
+        throw error
+      }
+    }
     let released = false
     return () => {
       if (released) return
       released = true
       this.total--
-      const left = (this.perUser.get(userId) ?? 1) - 1
-      if (left) this.perUser.set(userId, left)
-      else this.perUser.delete(userId)
+      forgetUser()
+      this.grantNext()
     }
+  }
+
+  /** Resolves once a slot has been handed over (already counted in `total`). */
+  private wait(signal?: AbortSignal): Promise<void> {
+    if (this.waiting.length >= this.maxQueued) return Promise.reject(new MediaError('MEDIA_BUSY', 429))
+    if (signal?.aborted) return Promise.reject(new MediaError('MEDIA_ABORTED', 499))
+    return new Promise<void>((resolve, reject) => {
+      const cleanup = () => {
+        clearTimeout(timer)
+        signal?.removeEventListener('abort', onAbort)
+      }
+      const grant = () => {
+        cleanup()
+        this.total++
+        resolve()
+      }
+      const leave = (error: MediaError) => {
+        cleanup()
+        const index = this.waiting.indexOf(grant)
+        if (index >= 0) this.waiting.splice(index, 1)
+        reject(error)
+      }
+      const onAbort = () => leave(new MediaError('MEDIA_ABORTED', 499))
+      const timer = setTimeout(() => leave(new MediaError('MEDIA_BUSY', 429)), this.queueTimeoutMs)
+      signal?.addEventListener('abort', onAbort, { once: true })
+      this.waiting.push(grant)
+    })
+  }
+
+  private grantNext(): void {
+    while (this.total < this.maxStreams && this.waiting.length > 0) this.waiting.shift()!()
   }
 }
 const sharedSlots = new StreamSlots()
 
 /** Legacy provider promises cannot be cancelled: stop waiting for them, and ignore their late result. */
 function abortable<T>(work: Promise<T>, signal: AbortSignal): Promise<T> {
+  // Whatever happens, `work` must always have a rejection handler: once we stop waiting, its failure is not ours.
+  work.catch(() => {})
   return new Promise((resolve, reject) => {
     const abort = () => reject(new MediaError('MEDIA_ABORTED', 499))
     if (signal.aborted) return abort()
@@ -73,6 +150,8 @@ interface Dependencies {
   cookie: (source: MusicSource, roomId: string) => string | null
   request: typeof requestMediaSource
   slots: StreamSlots
+  /** Ceiling for the bitrate served here; the room's own quality still applies below it. */
+  maxBitrate: AudioQuality
 }
 export interface RoomMediaInput {
   userId: string
@@ -87,6 +166,7 @@ export function createPlatformMediaService(dependencies: Partial<Dependencies> =
     cookie: getAnyCookie,
     request: requestMediaSource,
     slots: sharedSlots,
+    maxBitrate: config.mapp.audioMaxBitrate,
     ...dependencies,
   }
   return {
@@ -113,33 +193,50 @@ export function createPlatformMediaService(dependencies: Partial<Dependencies> =
           const current = accessibleTrack()
           if (current.source !== source || current.urlId !== urlId) throw new MediaError('MEDIA_FORBIDDEN', 403)
         }
-        release = deps.slots.acquire(input.userId)
+        release = await deps.slots.acquire(input.userId, signal)
         const url = await abortable(
-          deps.provider.getStreamUrl(source, urlId, room!.audioQuality, deps.cookie(source, input.roomId) ?? undefined),
-          signal,
+          resolveStreamUrl(
+            deps.provider,
+            source,
+            urlId,
+            // The whole file travels through this server before the mini-app can play it: cap the size.
+            Math.min(room!.audioQuality, deps.maxBitrate) as AudioQuality,
+            deps.cookie(source, input.roomId) ?? undefined,
+          ),
+          AbortSignal.any([signal, AbortSignal.timeout(RESOLVE_TIMEOUT_MS)]),
         )
         check()
         if (!url) throw new MediaError('MEDIA_SOURCE_UNAVAILABLE', 502)
         const upstream = await deps.request(source, url, signal)
         try {
           check()
+          // Upstream and guard run into a staging stream first. A failure before the first byte (upstream
+          // reset, empty body, access lost) then still reaches the caller as an error response with CORS headers:
+          // piping straight into `res` would destroy its socket instead, and a proxy in front turns that into a
+          // bare 502 that the browser can only report as a CORS error.
+          const staged = new PassThrough()
+          const transfer = pipeline(upstream.body, guardedBytes(upstream.length, check), staged, { signal })
+          transfer.catch(() => {}) // its outcome is observed through `staged`
+          const chunks = staged[Symbol.asyncIterator]()
+          const first = await chunks.next()
+          if (first.done) throw new MediaError('MEDIA_LENGTH_REJECTED', 502)
           res.status(200)
           res.setHeader('Content-Type', upstream.contentType)
           if (upstream.length !== undefined) res.setHeader('Content-Length', upstream.length)
           res.setHeader('Content-Encoding', 'identity')
           res.setHeader('Cache-Control', 'private, no-store, no-transform')
           res.setHeader('X-Content-Type-Options', 'nosniff')
+          if (!res.write(first.value)) await once(res, 'drain', { signal })
           // pipeline applies backpressure, propagates cancellation and destroys both ends on failure.
-          await pipeline(upstream.body, guardedBytes(upstream.length, check), res, { signal })
+          await pipeline(Readable.from(chunks), res, { signal })
         } finally {
           upstream.body.destroy()
         }
       } catch (error) {
-        throw signal.aborted
-          ? new MediaError('MEDIA_ABORTED', 499)
-          : error instanceof MediaError
-            ? error
-            : new MediaError('MEDIA_SOURCE_REJECTED', 502)
+        if (signal.aborted) throw new MediaError('MEDIA_ABORTED', 499)
+        // Only the URL-resolution deadline can abort while the request itself is still live.
+        if (error instanceof MediaError && error.code === 'MEDIA_ABORTED') throw new MediaError('MEDIA_SOURCE_TIMEOUT', 504)
+        throw error instanceof MediaError ? error : new MediaError('MEDIA_SOURCE_REJECTED', 502)
       } finally {
         release?.()
       }

@@ -7,6 +7,8 @@ import { createPlatformMediaRouter } from './platformMedia.js'
 import { MediaError } from '../services/mediaSourceRequest.js'
 
 vi.mock('../services/musicProvider.js', () => ({ musicProvider: { getStreamUrl: vi.fn() } }))
+const log = vi.hoisted(() => ({ warn: vi.fn(), info: vi.fn(), error: vi.fn(), debug: vi.fn() }))
+vi.mock('../utils/logger.js', () => ({ logger: log }))
 afterEach(() => vi.useRealTimers())
 
 const origin = 'https://linux.do'
@@ -284,14 +286,31 @@ describe('unmounted roomAudio/platform router', () => {
     expect(f.res.headers['content-length']).toBeUndefined()
     expect(f.res.headers['content-type']).toBeUndefined()
     expect(f.res.headers['access-control-allow-origin']).toBe(origin)
+    // The failing stage is logged by its fixed code and status only.
+    expect(log.warn).toHaveBeenCalledWith('Platform audio request failed', { code: 'MEDIA_SOURCE_DENIED', status: 403 })
   })
 
   it('does not leak unexpected service errors', async () => {
     const f = fixture()
     f.stream.mockRejectedValue(new Error('https://secret/?signed=token'))
     await f.run()
-    expect(f.res.statusCode).toBe(502)
+    // Upstream failures leave as 503: a 502/504 would be swallowed by Cloudflare's own error page (no CORS headers).
+    expect(f.res.statusCode).toBe(503)
     expect(f.res.payload).toEqual({ code: 'MEDIA_FAILED' })
+    expect(log.warn).toHaveBeenCalledWith('Platform audio request failed', { code: 'MEDIA_FAILED', status: 502 })
+  })
+
+  it.each([
+    [502, 503],
+    [504, 503],
+    [403, 403],
+    [429, 429],
+  ])('sends an internal %i as %i on the wire', async (internal, wire) => {
+    const f = fixture()
+    f.stream.mockRejectedValue(new MediaError('MEDIA_SOURCE_TIMEOUT', internal))
+    await f.run()
+    expect(f.res.statusCode).toBe(wire)
+    expect(f.res.headers['access-control-allow-origin']).toBe(origin)
   })
 
   it('cancels the service when the client disconnects', async () => {

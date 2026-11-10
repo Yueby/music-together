@@ -6,9 +6,21 @@ export const MAPP_METADATA_TARGETS = {
     queryKeys: ['source', 'keyword', 'limit', 'page', 'type'],
   },
   lyric: { path: '/api/music/lyric', endpoint: 'musicLyric', queryKeys: ['source', 'lyricId'] },
+  /** Word-by-word TTML lyrics, served from the operator-configured TTML library. */
+  ttml: { path: '/api/music/ttml', endpoint: 'musicTtml', queryKeys: ['source', 'id'] },
   /** Binary response (an image), unlike the JSON search/lyric targets. */
   cover: { path: '/api/music/cover-proxy', endpoint: 'musicCover', queryKeys: ['url'] },
 } as const
+
+/** Music CDNs the cover endpoint (Web and platform) may fetch from, and the mini-app may ask for. One list for both. */
+export const COVER_HOST_ALLOWLIST: readonly string[] = [
+  'y.gtimg.cn',
+  'p1.music.126.net',
+  'p2.music.126.net',
+  'p3.music.126.net',
+  'p4.music.126.net',
+  'imgessl.kugou.com',
+]
 
 /** Platform cover responses are capped lower than the Web proxy: they are held in memory as Blob URLs. */
 export const MAPP_COVER_MAX_BYTES = 2 * 1024 * 1024

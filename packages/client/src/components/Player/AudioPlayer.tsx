@@ -1,6 +1,7 @@
 import { useContainerPortrait } from '@/hooks/useContainerPortrait'
 import { useCoverWidth } from '@/hooks/useCoverWidth'
 import { useArtworkUrl } from '@/hooks/useArtworkUrl'
+import { useBackgroundAlbum } from '@/hooks/useBackgroundAlbum'
 import { useVote } from '@/hooks/useVote'
 import { SERVER_URL } from '@/lib/config'
 import { usesMeshRenderer } from '@/lib/backgroundRenderer'
@@ -94,6 +95,8 @@ export function AudioPlayer({
     [artwork, coverUrl],
   )
 
+  const backgroundAlbum = useBackgroundAlbum(proxiedCover, Boolean(coverUrl))
+
   // Mobile: toggle between cover view and lyric view
   const [lyricExpanded, setLyricExpanded] = useState(false)
 
@@ -123,12 +126,12 @@ export function AudioPlayer({
   return (
     <div className="relative flex h-full flex-col overflow-hidden">
       {/* AMLL fluid dynamic background powered by pixi.js */}
-      {proxiedCover && (
+      {backgroundAlbum && (
         <div className="pointer-events-none absolute inset-0 z-0 opacity-80 saturate-[1.3]">
           {/* Decorative only: if the renderer cannot start (e.g. a host forbidding WebGL setup), drop it quietly. */}
           <ErrorBoundary fallback={null} resetKeys={[proxiedCover]}>
             <BackgroundRender
-              album={proxiedCover}
+              album={backgroundAlbum}
               renderer={usesMeshRenderer(bgRenderer, hostRuntime) ? MeshGradientRenderer : PixiRenderer}
               playing={isPlaying}
               hasLyric={hasLyrics}

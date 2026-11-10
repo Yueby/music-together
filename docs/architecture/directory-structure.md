@@ -110,7 +110,8 @@ src/
 │   ├── useSocketEvent.ts       #   通用 Socket 事件订阅工具 Hook（自动 on/off，ref 稳定）
 │   ├── usePlayer.ts            #   播放器主 hook（组合 useHowl + useLyric + usePlayerSync）
 │   ├── useHowl.ts              #   Howler.js 音频实例管理
-│   ├── useLyric.ts             #   歌词加载（TTML → 平台逐词 YRC/KRC → LRC）
+│   ├── useLyric.ts             #   歌词加载（服务端 TTML 代理 → 平台逐词 YRC/KRC → LRC）
+│   ├── useBackgroundAlbum.ts   #   流体背景的封面来源：需读字节的宿主把 Blob URL 转成已加载的 `<img>`（避免库内 fetch 被 CSP 拦截）
 │   ├── usePlayerSync.ts        #   播放同步（Scheduled Execution + conductor 上报 + 周期性漂移校正）
 │   ├── useClockSync.ts         #   NTP 时钟同步 hook（校准客户端时钟与服务器对齐）
 │   ├── useRoom.ts              #   房间组合 hook（编排 5 个子 hook，对外 API 不变）
@@ -201,6 +202,7 @@ src/
 │   ├── kugouAuthService.ts    #   酷狗 API 认证（QR 扫码登录 + VIP 检查 + 用户昵称(RSA) + 用户歌单列表 + 歌单歌曲获取；kugouRequest 含 HTTP 状态检查与 JSON 安全解析；自包含签名实现，状态码归一化为 800-803 与网易云统一）
 │   ├── tencentAuthService.ts  #   QQ 音乐认证与通用 zzc 签名请求
 │   ├── kugouLyricService.ts   #   酷狗 KRC 搜索、下载、XOR/压缩解密与逐词解析
+│   ├── ttmlService.ts         #   TTML 逐词歌词库读取并解析为 AMLL 歌词行（固定上游路径、超时、仅同站点公网重定向、大小上限、命中/缺失/故障分级缓存、并发合并）
 │   ├── voteActionService.ts    #   已通过投票的播放器/队列动作统一执行
 │   └── voteService.ts          #   投票状态、在线成员阈值与当前房主否决权管理
 │

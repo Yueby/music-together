@@ -42,7 +42,7 @@ graph TB
 | 分类         | 客户端 → 服务端                                                                                                                     | 服务端 → 客户端                                                                                                                            |
 | ------------ | ----------------------------------------------------------------------------------------------------------------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------ |
 | **Room**     | `room:create`, `room:join`, `room:leave`, `room:list`, `room:settings`, `room:set_role`                                             | `room:created`, `room:state`, `room:user_joined`, `room:user_left`, `room:settings`, `room:error`, `room:list_update`, `room:role_changed`, `room:rejoin_token` |
-| **Player**   | `player:play`, `player:pause`, `player:seek`, `player:next`, `player:prev`, `player:sync`, `player:sync_request`, `player:set_mode` | `player:play`, `player:pause`, `player:resume`, `player:seek`, `player:sync_response`                                                      |
+| **Player**   | `player:play`, `player:pause`, `player:seek`, `player:next`, `player:prev`, `player:sync`, `player:sync_request`, `player:set_mode` | `player:play`, `player:preload`, `player:pause`, `player:resume`, `player:seek`, `player:sync_response`                                    |
 | **Queue**    | `queue:add`, `queue:add_batch`, `queue:remove`, `queue:reorder`, `queue:clear`                                                      | `queue:updated`                                                                                                                            |
 | **Chat**     | `chat:message`                                                                                                                      | `chat:message`, `chat:history`                                                                                                             |
 | **Vote**     | `vote:start`, `vote:cast`                                                                                                           | `vote:started`, `vote:result`                                                                                                              |
@@ -52,7 +52,7 @@ graph TB
 
 平台接入另外定义服务端事件 `identity:ready({ userId })`：仅在显式启用的平台身份适配成功连接后发送，用于确认服务器映射的身份，不含 Cookie、JWT 或房间票据。默认网页 Cookie 路径与现有启动入口保持原样，不会自动启用平台身份。平台入口的事件白名单排除音乐凭据／个人歌单操作，具体房间权限仍由原控制器裁决。实现与启用边界见 [微应用兼容层](mini-app-compatibility.md)。
 
-搜索和歌词另外提供仅在配置 `MAPP_*` 环境变量后才挂载的 `platformMetadata` 路由：复用原匿名 metadata controller；有显式平台认证标记时按受控 JWT 验证，普通 Web Cookie 请求继续原链。只读 target/query 合同位于 shared `mappMetadata.ts`，未开放歌单详情、账号、任意图片或 TTML 地址。该路径与媒体读取、宿主装配的状态见 [微应用兼容层](mini-app-compatibility.md)。
+搜索和歌词另外提供仅在配置 `MAPP_*` 环境变量后才挂载的 `platformMetadata` 路由：复用原匿名 metadata controller；有显式平台认证标记时按受控 JWT 验证，普通 Web Cookie 请求继续原链。只读 target/query 合同位于 shared `mappMetadata.ts`，未开放歌单详情、账号、任意图片地址；TTML 只能按 `source` + `id` 由服务端取固定库，客户端不能指定地址。该路径与媒体读取、宿主装配的状态见 [微应用兼容层](mini-app-compatibility.md)。
 
 ## 关键数据模型
 
@@ -173,7 +173,7 @@ interface ChatMessage {
 - **revision 边界**：每次计划动作以 `max(committedRevision, pendingRevision) + 1` 生成唯一单调递增 revision；pending timer 还按 payload 对象身份校验，防止执行边界上的旧 callback 提交。客户端也拒绝低于当前 revision 的迟到动作。Conductor 上报必须同时匹配当前已提交的 `revision + trackId`，且仅由房间唯一的 `conductorSocketId` 提交；同一身份的其他标签页无写权限
 - Scheduled action（seek/pause/resume）执行时自动重置 `rate(1)`，SEEK 同时应用 payload 中的最终 `isPlaying`，避免 PAUSE/RESUME 被后续 SEEK 取消后出现客户端与服务端播放状态相反；执行后同步更新 `roomStore.playState`（不含 `serverTimeToExecute`），确保 recovery effect 读到最新状态
 - **加载与执行边界**：收到 RESUME 或播放态 SEEK 时，加载中的音轨保持暂停，直到受 action ID 保护的执行回调才启用期望播放目标。若到点仍未加载完成，不向 Howler 排队 seek/play，由 `onload` 根据当时的服务端时间计算补偿位置并只启动一次；已在播放的 SEEK 则持续播放到执行时间后再定位，不重复启动。
-- **NTP 未校准保护**：`scheduleDelay()` 和 `usePlayer` 的 PLAYER_PLAY 调度在 NTP 未校准完成前退化为 0（立即执行），避免本地时钟偏差导致离谱的调度延迟
+- **预取下一首（`player:preload`）**：切歌时每个成员都要先把下一首加载好，慢的客户端（微应用必须经 SDK 下载整个文件，约 10MB 要数秒）会在调度时刻之后才就绪，只能从中途开始播，体验落后于房主。所以服务端在一首歌开始播放后（以及队列增删/重排、切换播放模式后）调用 `preloadUpcoming`：按 `getNextTrack(roomId, mode, 当前曲目)` 找出下一首（顺序/列表循环；随机在切歌瞬间才决定、单曲循环重播自己，都不预取），用房间账号池解析出播放链接，写回队列项的 `streamUrl`（真正切歌时直接复用，省掉一次供应商往返），并向房间广播 `player:preload { track }`。同一首同一音质只广播一次；解析期间房间状态变了就丢弃；失败静默，正式切歌路径照常解析、换源和报错。客户端经 `playbackSoundFactory.preload` 处理：网页端只打开下一首流的元数据（预热 DNS/TLS/CDN，不重复下载整文件），微应用在 `MappAudioEngine.preloadRoomTrack` 里提前下载下一首的压缩字节（只留一份，解码后的音频体积大得多，仍到切歌时才解码），`loadRoomTrack` 遇到同一首就直接接手，已在传输中的也接手而不是再发一次请求。预取失败或被新的广播取代，真正加载时按原样自己读取。
 - **Action ID 与跨 Hook 取消**：seek/pause/resume 使用单调递增 action ID 防止 stale callback；客户端另通过 `scheduledPlayback` bridge 让较新的控制动作取消 `usePlayer` 中尚未执行的 PLAYER_PLAY timer。Howl 加载阶段记录最新期望播放状态，确保加载较慢时后到的 pause 不会被旧 `autoPlay=true` 覆盖；Socket 断线时同时卸载实际 Howl，而不只是清空 store
 
 ## Layer 3：周期性比例漂移校正（EMA + Proportional Rate + Hard Seek）
@@ -276,6 +276,7 @@ Conductor（当前 `hostId` 对应用户）**自适应频率**上报当前播放
 | `/api/music/search`        | GET  | 搜索单曲/专辑/歌单（QQ 单曲搜索使用 zzc 签名 `musics.fcg` Desktop 协议）                               |
 | `/api/music/url`           | GET  | 解析流媒体 URL（`source` + `id`）                                                                       |
 | `/api/music/lyric`         | GET  | 获取歌词                                                                                                |
+| `/api/music/ttml`          | GET  | TTML 逐词歌词：query `source`（netease/tencent）+ `id`，返回 `{ lines }`（服务端已解析成 AMLL 歌词行；库里没有这首歌时 `lines: null`，仍是 200），上游故障 502。服务端从 `TTML_DB_BASE_URL` 取文件（≤ 512KiB，缓存；库自己会 302 到 API 子域，只允许跟随同站点 https 重定向，最多 3 跳）。网页端与微应用共用 |
 | `/api/music/cover`         | GET  | 获取封面图                                                                                              |
 | `/api/music/playlist`      | GET  | 获取歌单曲目列表（`source` + `id` + `limit` + `offset`），分页返回 `{ tracks, total, offset, hasMore }` |
 | `/api/rooms/:roomId/check` | GET  | 房间预检（存在性 + 是否需要密码），用于分享链接直接访问时的前置校验                                     |

@@ -355,6 +355,30 @@ describe('Mapp room session', () => {
     ])
   })
 
+  it.each(['QUEUE_FULL', 'RATE_LIMITED', 'NO_PERMISSION', 'INVALID_DATA', 'STREAM_FAILED'])(
+    'does not fail a join in flight because of a late in-room error (%s)',
+    (code) => {
+      ready()
+      join()
+      session.joinRoom({ roomId: 'room-b', nickname })
+      fake.server(EVENTS.ROOM_ERROR, { code, message: 'late action error' })
+      expect(session.snapshot).toMatchObject({ status: 'joining', errorCode: null })
+      fake.server(EVENTS.ROOM_STATE, room('room-b'))
+      expect(session.snapshot).toMatchObject({ status: 'joined', roomId: 'room-b' })
+    },
+  )
+
+  it.each(['ROOM_NOT_FOUND', 'WRONG_PASSWORD', 'JOIN_FAILED', 'INVALID_INPUT', 'INTERNAL'])(
+    'still ends a join in flight on the entry error %s',
+    (code) => {
+      ready()
+      join()
+      session.joinRoom({ roomId: 'room-b', nickname })
+      fake.server(EVENTS.ROOM_ERROR, { code, message: 'entry error' })
+      expect(session.snapshot).toMatchObject({ status: 'joined', roomId: 'room-a', errorCode: 'JOIN_FAILED' })
+    },
+  )
+
   it('replaces old recovery only after the new room is confirmed and has its own ticket', () => {
     ready()
     join()

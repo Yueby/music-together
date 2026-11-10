@@ -84,6 +84,11 @@ describe('media source URL and address boundary', () => {
     expect(validateMediaUrl('netease', url).hostname).toBe('m1.music.126.net')
     expect(validateMediaUrl('tencent', 'https://dl.stream.qqmusic.qq.com/a').hostname).toBe('dl.stream.qqmusic.qq.com')
     expect(validateMediaUrl('tencent', 'https://ws.music.tc.qq.com/a').hostname).toBe('ws.music.tc.qq.com')
+    // The host QQ's vkey URLs point at in production.
+    expect(validateMediaUrl('tencent', 'https://aqqmusic.tc.qq.com/M500abc.mp3?vkey=x').hostname).toBe('aqqmusic.tc.qq.com')
+    expect(() => validateMediaUrl('tencent', 'https://tc.qq.com.evil.test/a')).toThrow()
+    expect(() => validateMediaUrl('tencent', 'https://evil.test/.tc.qq.com')).toThrow()
+    expect(() => validateMediaUrl('netease', 'https://aqqmusic.tc.qq.com/a')).toThrow()
     expect(validateMediaUrl('kugou', 'https://fs.kugou.com/a').hostname).toBe('fs.kugou.com')
     expect(() => validateMediaUrl('tencent', 'https://music.qq.com/a')).toThrow()
   })

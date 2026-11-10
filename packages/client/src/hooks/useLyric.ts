@@ -4,15 +4,12 @@ import { findClosestLyricLine } from '@/lib/lyricMatching'
 import { usePlayerStore } from '@/stores/playerStore'
 import { useSettingsStore } from '@/stores/settingsStore'
 import type { LyricLine } from '@applemusic-like-lyrics/core'
-import { parseLrc, parseTTML, parseYrc } from '@applemusic-like-lyrics/lyric'
-import type { Track } from '@music-together/shared'
+import { parseLrc, parseYrc } from '@applemusic-like-lyrics/lyric'
+import { TTML_SOURCES, type Track } from '@music-together/shared'
 import { useCallback, useEffect, useRef } from 'react'
 
-/** 支持 TTML 的平台 → TTML DB 文件夹映射 */
-const TTML_FOLDER_MAP: Record<string, string> = {
-  netease: 'ncm-lyrics',
-  tencent: 'qq-lyrics',
-}
+const isTtmlSource = (source: string): source is (typeof TTML_SOURCES)[number] =>
+  (TTML_SOURCES as readonly string[]).includes(source)
 
 /** TTML 请求超时（ms） */
 const TTML_TIMEOUT_MS = 8_000
@@ -68,15 +65,33 @@ export function useLyric() {
 
       let wordByWordSuccess = false
 
+      // 服务端歌词（LRC + 可能的 YRC/KRC）与 TTML 同时请求：TTML 库慢或不可用时不拖慢基础歌词
+      type ServerLyric = {
+        lyric: string
+        tlyric: string
+        romalrc: string
+        yrc: string
+        wordByWord?: LyricLine[]
+      }
+      const lyricRequest: Promise<ServerLyric | null> = track.lyricId
+        ? metadataFetch(
+            `${SERVER_URL}/api/music/lyric?source=${track.source}&lyricId=${encodeURIComponent(track.lyricId)}`,
+            { signal: controller.signal, credentials: 'include' },
+          ).then(
+            (res) => (res.ok ? (res.json() as Promise<ServerLyric>) : null),
+            () => null,
+          )
+        : Promise.resolve(null)
+
       // ========================================
       // 1. 优先：TTML 在线逐词歌词（如果开启）
+      //    服务端取库文件并解析，两端都只收到歌词行：浏览器直连第三方库会被 CORS 拦截，
+      //    微应用既无权访问外部地址，其 Trusted Types 也不允许 DOMParser
       // ========================================
-      const { ttmlEnabled, ttmlDbUrl } = useSettingsStore.getState()
-      const folder = TTML_FOLDER_MAP[track.source]
-      if (ttmlEnabled && folder) {
+      const { ttmlEnabled } = useSettingsStore.getState()
+      if (ttmlEnabled && isTtmlSource(track.source)) {
         try {
-          // URL 模板：%s 替换为歌曲 ID，ncm-lyrics 适配平台
-          const ttmlUrl = ttmlDbUrl.replace('ncm-lyrics', folder).replace('%s', track.sourceId)
+          const ttmlUrl = `${SERVER_URL}/api/music/ttml?source=${track.source}&id=${encodeURIComponent(track.sourceId)}`
           // 绑定主 controller：切歌/卸载时取消 TTML，避免过时响应写回 store；同时 8s 超时
           const timeoutSignal = typeof AbortSignal?.timeout === 'function' ? AbortSignal.timeout(TTML_TIMEOUT_MS) : null
           const SignalFactory = AbortSignal as typeof AbortSignal & {
@@ -87,49 +102,26 @@ export function useLyric() {
               ? SignalFactory.any([controller.signal, timeoutSignal])
               : controller.signal
 
-          const ttmlRes = await metadataFetch(ttmlUrl, { signal: ttmlSignal })
+          const ttmlRes = await metadataFetch(ttmlUrl, { signal: ttmlSignal, credentials: 'include' })
 
           if (ttmlRes.ok) {
-            const ttmlText = await ttmlRes.text()
-            // 确保返回的是 XML/TTML 而非错误页面
-            if (ttmlText.includes('<tt') || ttmlText.includes('<?xml')) {
-              const parsed = parseTTML(ttmlText)
-              if (parsed.lines.length > 0) {
-                setTtmlLines(parsed.lines)
-                wordByWordSuccess = true
-              }
+            // `lines: null` 表示库里没有这首歌
+            const body = (await ttmlRes.json()) as { lines?: unknown }
+            if (!controller.signal.aborted && Array.isArray(body.lines) && body.lines.length > 0) {
+              setTtmlLines(body.lines as LyricLine[])
+              wordByWordSuccess = true
             }
           }
         } catch {
           // TTML 获取失败（超时/网络错误），静默回退
-          if (controller.signal.aborted) return
         }
       }
 
       // ========================================
-      // 2. 获取服务端歌词（包含 LRC + 可能的 YRC/KRC）
+      // 2. 等待服务端歌词；期间若已切歌/卸载则丢弃结果
       // ========================================
-      let lyricData: {
-        lyric: string
-        tlyric: string
-        romalrc: string
-        yrc: string
-        wordByWord?: LyricLine[]
-      } | null = null
-
-      if (track.lyricId) {
-        try {
-          const res = await metadataFetch(
-            `${SERVER_URL}/api/music/lyric?source=${track.source}&lyricId=${encodeURIComponent(track.lyricId)}`,
-            { signal: controller.signal, credentials: 'include' },
-          )
-          if (res.ok) {
-            lyricData = await res.json()
-          }
-        } catch (err) {
-          if (err instanceof DOMException && err.name === 'AbortError') return
-        }
-      }
+      const lyricData = await lyricRequest
+      if (controller.signal.aborted) return
 
       // ========================================
       // 3. 其次：平台原生逐词歌词（KRC 酷狗 / YRC 网易云）

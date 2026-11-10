@@ -34,7 +34,7 @@ afterEach(() => {
 })
 
 describe('RoomAudioSource controlled SDK transport', () => {
-  it('requests only roomAudio GET identifiers, with 45s timeout, and returns owned bytes', async () => {
+  it('requests only roomAudio GET identifiers, with 75s timeout, and returns owned bytes', async () => {
     const backing = new Uint8Array([0, ...mp3, 0])
     const view = backing.subarray(1, backing.length - 1)
     const request = vi.fn().mockResolvedValue(response(view))
@@ -44,7 +44,7 @@ describe('RoomAudioSource controlled SDK transport', () => {
     expect(request).toHaveBeenCalledWith('roomAudio', {
       method: 'GET',
       query: { roomId: 'AB_1-Z', trackId: 'netease:123' },
-      timeoutMs: 45_000,
+      timeoutMs: 75_000,
       responseType: 'bytes',
       signal: expect.any(AbortSignal),
       onDownloadProgress: expect.any(Function),
@@ -100,6 +100,52 @@ describe('RoomAudioSource controlled SDK transport', () => {
     })
     expect(fixture.body.cancel).toHaveBeenCalledOnce()
     expect(fixture.body.getReader).not.toHaveBeenCalled()
+  })
+
+  it.each([429, 503])('retries once after HTTP %i (bytes) and returns the second answer', async (status) => {
+    vi.useFakeTimers()
+    const request = vi
+      .fn()
+      .mockResolvedValueOnce({ status, headers: {}, body: new Uint8Array() })
+      .mockResolvedValueOnce(response())
+    const result = read({ request })
+    await vi.advanceTimersByTimeAsync(2_000)
+    await expect(result).resolves.toMatchObject({ bytes: mp3 })
+    expect(request).toHaveBeenCalledTimes(2)
+  })
+
+  it('retries a busy stream response once, releasing the discarded body', async () => {
+    vi.useFakeTimers()
+    const busy = streamFixture()
+    busy.response.status = 429
+    const fine = streamFixture()
+    const stream = vi.fn().mockResolvedValueOnce(busy.response).mockResolvedValueOnce(fine.response)
+    const result = read({ stream }, { mode: 'stream' })
+    await vi.advanceTimersByTimeAsync(2_000)
+    await expect(result).resolves.toMatchObject({ bytes: mp3 })
+    expect(stream).toHaveBeenCalledTimes(2)
+    expect(busy.body.cancel).toHaveBeenCalledOnce()
+    expect(busy.body.getReader).not.toHaveBeenCalled()
+  })
+
+  it('gives up after the second busy answer instead of retrying forever', async () => {
+    vi.useFakeTimers()
+    const request = vi.fn().mockResolvedValue({ status: 429, headers: {}, body: new Uint8Array() })
+    const result = expect(read({ request })).rejects.toMatchObject({ code: 'HTTP_ERROR' })
+    await vi.advanceTimersByTimeAsync(2_000)
+    await result
+    expect(request).toHaveBeenCalledTimes(2)
+  })
+
+  it('stops waiting to retry when the caller cancels', async () => {
+    vi.useFakeTimers()
+    const controller = new AbortController()
+    const request = vi.fn().mockResolvedValue({ status: 503, headers: {}, body: new Uint8Array() })
+    const result = expect(read({ request }, { signal: controller.signal })).rejects.toMatchObject({ code: 'ABORTED' })
+    await vi.advanceTimersByTimeAsync(500)
+    controller.abort()
+    await result
+    expect(request).toHaveBeenCalledTimes(1)
   })
 
   it.each(['abc123', 'AB123', 'AB12345', 'AB12/?'])('rejects invalid roomId %s without requesting', async (roomId) => {
@@ -208,7 +254,7 @@ describe('RoomAudioSource controlled SDK transport', () => {
       )
       const assertion = expect(result).rejects.toMatchObject({ code: kind === 'abort' ? 'ABORTED' : 'TIMEOUT' })
       if (kind === 'abort') controller.abort()
-      else if (kind === 'timeout') await vi.advanceTimersByTimeAsync(45_000)
+      else if (kind === 'timeout') await vi.advanceTimersByTimeAsync(75_000)
       else late.reject({ code: 'TIMEOUT', message: 'private URL' })
       await assertion
       if (kind !== 'sdk-timeout') {
@@ -242,7 +288,7 @@ describe('RoomAudioSource controlled SDK transport', () => {
       const assertion = expect(result).rejects.toMatchObject({ code: kind === 'abort' ? 'ABORTED' : 'TIMEOUT' })
       await reading.promise
       if (kind === 'abort') controller.abort()
-      else await vi.advanceTimersByTimeAsync(45_000)
+      else await vi.advanceTimersByTimeAsync(75_000)
       await assertion
       expect(fixture.reader.cancel).toHaveBeenCalledOnce()
       expect(vi.getTimerCount()).toBe(0)

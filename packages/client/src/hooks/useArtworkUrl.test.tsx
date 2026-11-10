@@ -115,6 +115,42 @@ describe('useArtworkUrl (host that reads the bytes)', () => {
     expect(text()).toBe('none')
   })
 
+  it('retries once after a failure and then shows the cover; a second failure keeps the placeholder', async () => {
+    vi.useFakeTimers()
+    try {
+      loader.load.mockRejectedValueOnce(new Error('ARTWORK_REQUEST_FAILED')).mockResolvedValueOnce('blob:retry')
+      render('https://example.com/a.jpg')
+      await act(async () => {})
+      expect(text()).toBe('none')
+      await act(async () => vi.advanceTimersByTimeAsync(2_500))
+      expect(loader.load).toHaveBeenCalledTimes(2)
+      expect(text()).toBe('blob:retry')
+
+      loader.load.mockReset()
+      loader.load.mockRejectedValue(new Error('ARTWORK_REQUEST_FAILED'))
+      render('https://example.com/b.jpg')
+      await act(async () => vi.advanceTimersByTimeAsync(10_000))
+      expect(loader.load).toHaveBeenCalledTimes(2)
+      expect(text()).toBe('none')
+    } finally {
+      vi.useRealTimers()
+    }
+  })
+
+  it('does not retry for a cover that is no longer wanted', async () => {
+    vi.useFakeTimers()
+    try {
+      loader.load.mockRejectedValue(new Error('ARTWORK_REQUEST_FAILED'))
+      render('https://example.com/a.jpg')
+      await act(async () => {})
+      render(undefined)
+      await act(async () => vi.advanceTimersByTimeAsync(10_000))
+      expect(loader.load).toHaveBeenCalledOnce()
+    } finally {
+      vi.useRealTimers()
+    }
+  })
+
   it('cancels the load on unmount and never loads without a URL', () => {
     loader.load.mockReturnValue(new Promise(() => {}))
     render('https://example.com/a.jpg')

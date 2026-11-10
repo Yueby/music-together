@@ -53,7 +53,8 @@ export function isPublicMediaAddress(address: string): boolean {
 
 const CDN_SUFFIXES: Record<MusicSource, string[]> = {
   netease: ['music.126.net'],
-  tencent: ['qqmusic.qq.com', 'music.tc.qq.com'],
+  // `aqqmusic.tc.qq.com` (the vkey download host QQ returns today) and the older `*.music.tc.qq.com` are both under tc.qq.com.
+  tencent: ['qqmusic.qq.com', 'tc.qq.com'],
   kugou: ['kugou.com'],
 }
 

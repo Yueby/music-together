@@ -38,7 +38,7 @@ manifest 由代码生成，只声明：
 
 - 权限：`user.read`、`audio.webAudio`、`network.websocket`、`network.request`。
 - WebSocket：`roomSocket`（房间 Socket.IO）。
-- HTTP：`roomAudio`（`GET /api/mapp/audio`）、`musicSearch`、`musicLyric`。
+- HTTP：`roomAudio`（`GET /api/mapp/audio`）、`musicSearch`、`musicLyric`、`musicTtml`（逐词歌词）、`musicCover`（封面字节）。
 
 这些端点都是 `auth: "platform"`，由主站后端验证平台 JWT，验证失败不回退 Cookie。
 

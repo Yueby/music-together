@@ -33,6 +33,11 @@ export interface PlaybackSoundOptions {
 export interface PlaybackSoundFactory {
   /** Create returns before any lifecycle callback can run. */
   create(track: Track, options: PlaybackSoundOptions): PlaybackSound
+  /**
+   * The track that will most likely play next, announced while the current one is still playing. Best effort:
+   * fetch what makes its start faster, keep at most one, never throw and never start playback.
+   */
+  preload?(track: Track): void
   readonly allowLoadRetry: boolean
   readonly supportsHtml5Analysis: boolean
 }

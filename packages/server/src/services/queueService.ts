@@ -108,13 +108,15 @@ export function reorderTracks(roomId: string, trackIds: string[]): void {
  * - loop-one:   returns the current track itself
  * - shuffle:    random track from queue (excludes current; returns self if queue has 1 item)
  */
-export function getNextTrack(roomId: string, playMode?: PlayMode): Track | null {
+export function getNextTrack(roomId: string, playMode?: PlayMode, fromTrackId?: string): Track | null {
   const room = roomRepo.get(roomId)
   if (!room || room.queue.length === 0) return null
 
   const mode = playMode ?? room.playMode ?? 'sequential'
 
-  const currentIndex = room.currentTrack ? room.queue.findIndex((t) => t.id === room.currentTrack!.id) : -1
+  // `fromTrackId` lets a caller look past a transition that has been scheduled but not committed yet.
+  const fromId = fromTrackId ?? room.currentTrack?.id
+  const currentIndex = fromId ? room.queue.findIndex((t) => t.id === fromId) : -1
 
   switch (mode) {
     case 'loop-one':

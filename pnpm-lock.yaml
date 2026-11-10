@@ -222,6 +222,9 @@ importers:
 
   packages/server:
     dependencies:
+      '@applemusic-like-lyrics/ttml':
+        specifier: 1.0.1
+        version: 1.0.1
       '@discourse-mini-app/sdk':
         specifier: file:../../vendor/discourse-mini-app-sdk
         version: file:vendor/discourse-mini-app-sdk
@@ -234,6 +237,9 @@ importers:
       '@neteasecloudmusicapienhanced/api':
         specifier: ^4.41.1
         version: 4.41.1(patch_hash=2f6f5f2b0a3e5e9f94d65c9996bc4e7c52d40ddb61498c564856f8063c8107f1)(debug@4.4.3(supports-color@10.2.2))(supports-color@10.2.2)
+      '@xmldom/xmldom':
+        specifier: ^0.9.12
+        version: 0.9.12
       cors:
         specifier: ^2.8.6
         version: 2.8.6
@@ -2396,6 +2402,10 @@ packages:
 
   '@vitest/utils@4.1.12':
     resolution: {integrity: sha512-Q3awXrwOfEV+qc3WmO5ONyE0yO7Q1gQ9/oyHxGLZ/pl7N3NO/ZztqQwKLuwMkV+CA1JYSIeO3gkHnRDIo4AVaA==}
+
+  '@xmldom/xmldom@0.9.12':
+    resolution: {integrity: sha512-5AXjrcMClTryPe9LgZrygpB1lj7s0S9E0+W+AHaVKAVyHanafK86iPSvG5xHVSp/jC+VH1UXu0TAEmY279xH7A==}
+    engines: {node: '>=14.6'}
 
   accepts@1.3.8:
     resolution: {integrity: sha512-PYAthTa2m2VKxuvSD3DPC/Gy+U+sOA1LAuT8mkmRuvw+NACSaeXEQ+NHcVF7rONl6qcaxV3Uuemwawk+7+SJLw==}
@@ -7343,6 +7353,8 @@ snapshots:
       '@vitest/pretty-format': 4.1.12
       convert-source-map: 2.0.0
       tinyrainbow: 3.2.0
+
+  '@xmldom/xmldom@0.9.12': {}
 
   accepts@1.3.8:
     dependencies:
