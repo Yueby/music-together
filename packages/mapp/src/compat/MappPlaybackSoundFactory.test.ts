@@ -237,6 +237,33 @@ describe('MappPlaybackSoundFactory shared engine handles', () => {
     expect(f.engine.pause).toHaveBeenCalledOnce()
   })
 
+  it('still reports a pause when the shared hooks seek right after pausing', async () => {
+    const f = environment()
+    const options = callbacks()
+    const sound = f.factory.create(track(), options)
+    await flush()
+    const id = sound.play()
+    await flush()
+    // usePlayerSync pauses, then moves the position to the server snapshot in the same tick.
+    sound.pause(id)
+    sound.seek(42, id)
+    await flush()
+    expect(options.onpause).toHaveBeenCalledOnce()
+  })
+
+  it('does not report a pause for a sound that has since been retired', async () => {
+    const f = environment()
+    const options = callbacks()
+    const sound = f.factory.create(track(), options)
+    await flush()
+    const id = sound.play()
+    await flush()
+    sound.pause(id)
+    sound.unload()
+    await flush()
+    expect(options.onpause).not.toHaveBeenCalled()
+  })
+
   it.each(['resolve', 'reject'] as const)(
     'ignores late old-owner load %s and old handle operations',
     async (outcome) => {

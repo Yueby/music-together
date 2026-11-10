@@ -202,8 +202,11 @@ export function createMappPlaybackSoundFactory(options: MappPlaybackSoundFactory
           if (!matches(id)) return handle
           cancelPlay(entry)
           if (entry.state === 'loaded') engine.pause()
-          const operation = entry.operation
-          enqueue(entry, operation, () => entry.callbacks.onpause?.())
+          // Always reported, like Howler's `pause` event. The shared hooks seek right after pausing, and that
+          // seek bumps the operation counter; it must not swallow this callback, or the UI keeps showing "playing".
+          queueMicrotask(() => {
+            if (current(entry)) entry.callbacks.onpause?.()
+          })
           return handle
         },
         rate,
