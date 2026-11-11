@@ -2,6 +2,7 @@ import { useSocketContext } from '@/providers/SocketProvider'
 import { useRoomStore } from '@/stores/roomStore'
 import { storage } from '@/lib/storage'
 import { hostRuntime } from '@/lib/hostRuntime'
+import { authAutoResend } from '@/lib/authAutoResend'
 import { ERROR_CODE, EVENTS } from '@music-together/shared'
 import type { AudioQuality, QueueMode, RoomAutoFallbackEvent, RoomState, User, UserRole } from '@music-together/shared'
 import { useEffect, useRef } from 'react'
@@ -12,7 +13,8 @@ import { toast } from 'sonner'
  * Handles core room lifecycle events:
  * ROOM_STATE, ROOM_USER_JOINED/LEFT, ROOM_SETTINGS, ROOM_ROLE_CHANGED, ROOM_ERROR.
  *
- * Also auto-resends persisted auth cookies on ROOM_STATE (join/reconnect).
+ * Also auto-resends persisted auth cookies once per room entry (join/reconnect) —
+ * not on every ROOM_STATE broadcast.
  *
  * NOTE: `currentUser` is auto-derived inside `roomStore` whenever `room`
  * changes (setRoom / addUser / removeUser / updateRoom).
@@ -31,12 +33,20 @@ export function useRoomState() {
     const resendCookies = () => {
       if (!hostRuntime.platformAccounts) return
       const storedCookies = storage.getAuthCookies()
+      // Tell useAuthSync how many results to treat as a silent restore.
+      authAutoResend.begin(storedCookies.length)
       for (const { platform, cookie } of storedCookies) {
         socket.emit(EVENTS.AUTH_SET_COOKIE, { platform, cookie })
       }
     }
 
     const onRoomState = (roomState: RoomState) => {
+      // ROOM_STATE is also broadcast whenever someone joins or the mode changes. Only the
+      // state that *enters* a room (this client just joined, or rejoined after a disconnect —
+      // the connection guard clears the store then) should repopulate the cookie pool;
+      // re-sending on every broadcast burns the server's auth rate limit.
+      const enteringRoom = useRoomStore.getState().room?.id !== roomState.id
+
       // setRoom automatically derives currentUser from room.users
       useRoomStore.getState().setRoom(roomState)
       // 仅 owner 专用 ROOM_STATE 携带密码明文；公开 ROOM_STATE 不应清空本地密码缓存。
@@ -45,8 +55,11 @@ export function useRoomState() {
       }
 
       // Auto-resend persisted auth cookies so the room's cookie pool is populated
-      resendCookies()
+      if (enteringRoom) resendCookies()
     }
+
+    // Results of an interrupted silent restore will never arrive.
+    const onDisconnect = () => authAutoResend.reset()
 
     const onUserJoined = (user: User) => {
       useRoomStore.getState().addUser(user)
@@ -146,6 +159,7 @@ export function useRoomState() {
     socket.on(EVENTS.ROOM_ROLE_CHANGED, onRoleChanged)
     socket.on(EVENTS.ROOM_AUTO_FALLBACK, onAutoFallback)
     socket.on(EVENTS.ROOM_ERROR, onError)
+    socket.on('disconnect', onDisconnect)
 
     // If room was already set before this hook mounted (e.g. HomePage consumed
     // ROOM_STATE and navigated here), resend cookies now. The ref guard prevents
@@ -164,6 +178,7 @@ export function useRoomState() {
       socket.off(EVENTS.ROOM_ROLE_CHANGED, onRoleChanged)
       socket.off(EVENTS.ROOM_AUTO_FALLBACK, onAutoFallback)
       socket.off(EVENTS.ROOM_ERROR, onError)
+      socket.off('disconnect', onDisconnect)
     }
   }, [socket])
 }

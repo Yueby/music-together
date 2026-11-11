@@ -1,10 +1,10 @@
 import { useSocketContext } from '@/providers/SocketProvider'
-import { useRoomStore } from '@/stores/roomStore'
 import { storage } from '@/lib/storage'
+import { authAutoResend } from '@/lib/authAutoResend'
 import { hostRuntime } from '@/lib/hostRuntime'
 import { EVENTS } from '@music-together/shared'
 import type { MusicSource } from '@music-together/shared'
-import { useEffect, useRef } from 'react'
+import { useEffect } from 'react'
 import { toast } from 'sonner'
 
 const PLATFORM_NAMES: Record<MusicSource, string> = {
@@ -28,9 +28,6 @@ const PLATFORM_NAMES: Record<MusicSource, string> = {
 export function useAuthSync() {
   const { socket } = useSocketContext()
 
-  // 跟踪待处理的自动恢复请求数，用于静默成功 toast
-  const pendingAutoResendRef = useRef(0)
-
   useEffect(() => {
     if (!hostRuntime.platformAccounts) return
     const onAuthCookieResult = (data: {
@@ -47,18 +44,14 @@ export function useAuthSync() {
         }
 
         // 自动恢复成功时静默，手动操作时弹 toast
-        if (pendingAutoResendRef.current > 0) {
-          pendingAutoResendRef.current--
-        } else {
+        if (!authAutoResend.consume()) {
           toast.success(data.message)
         }
       } else if (data.platform) {
         const name = PLATFORM_NAMES[data.platform] ?? data.platform
 
         // 自动恢复失败时消费计数
-        if (pendingAutoResendRef.current > 0) {
-          pendingAutoResendRef.current--
-        }
+        authAutoResend.consume()
 
         if (data.reason === 'expired') {
           toast.warning(`${name} 登录验证失败，将在下次进入房间时重试`, { id: `auth-expired-${data.platform}` })
@@ -72,25 +65,12 @@ export function useAuthSync() {
       }
     }
 
-    // 当收到 ROOM_STATE 时，useRoomState 会自动恢复 cookie
-    // 此处记录即将到来的恢复结果数量，以便静默成功 toast
-    const onRoomState = () => {
-      const stored = storage.getAuthCookies()
-      pendingAutoResendRef.current = stored.length
-    }
-
+    // 自动恢复的数量由 useRoomState 在真正发出 AUTH_SET_COOKIE 时通过 authAutoResend 登记，
+    // 这里只负责消费（仅在加入房间/重连后的首个 ROOM_STATE 才会登记，其余广播不影响计数）。
     socket.on(EVENTS.AUTH_SET_COOKIE_RESULT, onAuthCookieResult)
-    socket.on(EVENTS.ROOM_STATE, onRoomState)
-
-    // 如果组件挂载时已在房间中（如路由切换），也要初始化计数
-    if (useRoomStore.getState().room) {
-      const stored = storage.getAuthCookies()
-      pendingAutoResendRef.current = stored.length
-    }
 
     return () => {
       socket.off(EVENTS.AUTH_SET_COOKIE_RESULT, onAuthCookieResult)
-      socket.off(EVENTS.ROOM_STATE, onRoomState)
     }
   }, [socket])
 }

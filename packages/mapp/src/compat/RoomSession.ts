@@ -1,5 +1,11 @@
 import '../cspValidation.ts'
-import { ERROR_CODE, EVENTS, type ClientToServerEvents, type ServerToClientEvents } from '@music-together/shared'
+import {
+  ERROR_CODE,
+  EVENTS,
+  TIMING,
+  type ClientToServerEvents,
+  type ServerToClientEvents,
+} from '@music-together/shared'
 import type { SdkRoomSocket } from '../../../client/src/lib/platform/SdkRoomSocket.ts'
 import { createMappRoomSocket, type MappRoomSocketOptions } from './roomSocket.ts'
 
@@ -55,7 +61,9 @@ export interface MappRoomSessionOptions extends MappRoomSocketOptions {
 type CreateInput = Parameters<ClientToServerEvents[typeof EVENTS.ROOM_CREATE]>[0]
 // Rejoin credentials are exclusively supplied by this session, never by a caller.
 type JoinInput = Omit<Parameters<ClientToServerEvents[typeof EVENTS.ROOM_JOIN]>[0], 'rejoinToken'>
-type Ticket = Parameters<ServerToClientEvents[typeof EVENTS.ROOM_REJOIN_TOKEN]>[0]
+type WireTicket = Parameters<ServerToClientEvents[typeof EVENTS.ROOM_REJOIN_TOKEN]>[0]
+/** `localExpiresAt` is on the client clock, derived from the receive time; see `localExpiry`. */
+type Ticket = WireTicket & { localExpiresAt: number }
 type Pending = {
   kind: 'create' | 'join' | 'rejoin'
   nickname: string
@@ -84,6 +92,17 @@ const IDLE: MappRoomSessionSnapshot = Object.freeze({
   roomId: null,
   errorCode: null,
 })
+
+/**
+ * The server only sends an absolute `expiresAt` on its own clock, so comparing it with the phone's `Date.now()` drops
+ * a freshly issued ticket whenever the phone runs ahead by more than the TTL. Count the lifetime from the moment the
+ * ticket arrived instead: the apparent TTL (`expiresAt - receivedAt`) is only trusted when it is at least the default
+ * TTL. Anything shorter is clock skew or a shorter server setting, and the server is the final judge either way
+ * (a rejected rejoin is attempted once per socket id and then reported as REJOIN_FAILED).
+ */
+function localExpiry(expiresAt: number, receivedAt: number): number {
+  return receivedAt + Math.max(expiresAt - receivedAt, TIMING.ROOM_GRACE_PERIOD_MS)
+}
 
 /** `socket.emit` throws while the transport is down; report that as "not sent". */
 function attempt(send: () => void): boolean {
@@ -162,7 +181,7 @@ export function createMappRoomSession(options: MappRoomSessionOptions): MappRoom
     }
     attemptedRestoreSocketId = socket.id
     needsRestore = false
-    if (!recovery || recovery.ticket.expiresAt <= Date.now()) {
+    if (!recovery || recovery.ticket.localExpiresAt <= Date.now()) {
       const errorCode = recovery ? 'REJOIN_TOKEN_EXPIRED' : 'REJOIN_TOKEN_MISSING'
       clearRoom()
       publish({ connected: true, roomId: null, status: 'ready', errorCode })
@@ -202,15 +221,23 @@ export function createMappRoomSession(options: MappRoomSessionOptions): MappRoom
     if (!ready() || !pending?.roomId || room.id !== pending.roomId) return
     confirmed = { roomId: room.id, nickname: pending.nickname }
     recovery =
-      pending.ticket && pending.ticket.expiresAt > Date.now() ? { ...confirmed, ticket: pending.ticket } : undefined
+      pending.ticket && pending.ticket.localExpiresAt > Date.now()
+        ? { ...confirmed, ticket: pending.ticket }
+        : undefined
     pending = undefined
     needsRestore = false
     publish({ roomId: room.id, status: 'joined', errorCode: null })
   }
   const onTicket: ServerToClientEvents[typeof EVENTS.ROOM_REJOIN_TOKEN] = (data) => {
-    if (!ready() || data.expiresAt <= Date.now()) return
+    if (!ready()) return
     // Copy only the protocol fields; never retain a room-state/password object.
-    const ticket: Ticket = { roomId: data.roomId, token: data.token, expiresAt: data.expiresAt }
+    const receivedAt = Date.now()
+    const ticket: Ticket = {
+      roomId: data.roomId,
+      token: data.token,
+      expiresAt: data.expiresAt,
+      localExpiresAt: localExpiry(data.expiresAt, receivedAt),
+    }
     if (pending?.roomId === data.roomId) pending.ticket = ticket
     if (confirmed?.roomId === data.roomId) recovery = { ...confirmed, ticket }
   }

@@ -4,11 +4,24 @@ import { AUTH_PROVIDERS } from '../services/authProvider.js'
 import { roomRepo } from '../repositories/roomRepository.js'
 import { logger } from '../utils/logger.js'
 import type { TypedServer, TypedSocket } from '../middleware/types.js'
-import { checkAuthRateLimit } from '../middleware/socketRateLimiter.js'
+import { checkAuthQrCheckRateLimit, checkAuthRateLimit } from '../middleware/socketRateLimiter.js'
 
 /** 获取 socket 对应的房间映射（roomId + persistent userId） */
 function getSocketMapping(socketId: string) {
   return roomRepo.getSocketMapping(socketId) ?? null
+}
+
+/**
+ * 同 getSocketMapping，但要求房间仍然存在且用户仍在房间内。
+ * 在长耗时的 await（getUserInfo 含重试可能数十秒）之后使用：期间用户可能已离开、房间可能已销毁，
+ * 此时再 addCookie 会为已销毁的房间重建 cookie 池（永久泄漏）。
+ */
+function getLiveSocketMapping(socketId: string) {
+  const mapping = getSocketMapping(socketId)
+  if (!mapping) return null
+  const room = roomRepo.get(mapping.roomId)
+  if (!room || !room.users.some((user) => user.id === mapping.userId)) return null
+  return mapping
 }
 
 export function registerAuthController(io: TypedServer, socket: TypedSocket) {
@@ -45,7 +58,8 @@ export function registerAuthController(io: TypedServer, socket: TypedSocket) {
   })
 
   socket.on(EVENTS.AUTH_CHECK_QR, async (data) => {
-    if (!(await checkAuthRateLimit(socket))) return
+    // Own, wider budget: the client polls every 2 s for the whole scan.
+    if (!(await checkAuthQrCheckRateLimit(socket))) return
     try {
       const parsed = authCheckQrSchema.safeParse(data)
       if (!parsed.success) {
@@ -67,7 +81,8 @@ export function registerAuthController(io: TypedServer, socket: TypedSocket) {
 
         if (infoResult.ok) {
           const userInfo = infoResult.data
-          const mapping = getSocketMapping(socket.id)
+          // Read after the await: the user may have left (and the room been destroyed) meanwhile.
+          const mapping = getLiveSocketMapping(socket.id)
           if (mapping) {
             authService.addCookie(
               mapping.roomId,
@@ -144,13 +159,17 @@ export function registerAuthController(io: TypedServer, socket: TypedSocket) {
         infoResult = await provider.getUserInfo(cookie)
       }
 
+      // The verification above can take tens of seconds: use the membership as it is NOW, not the one read before it.
+      // A user who left (or a room that was destroyed) in the meantime must not get a cookie pool re-created.
+      const liveMapping = getLiveSocketMapping(socket.id)
+
       if (infoResult.ok) {
         const userInfo = infoResult.data
-        if (mapping && mapping.roomId) {
+        if (liveMapping) {
           authService.addCookie(
-            mapping.roomId,
+            liveMapping.roomId,
             platform,
-            mapping.userId,
+            liveMapping.userId,
             cookie,
             userInfo.nickname,
             userInfo.vipType,
@@ -171,12 +190,12 @@ export function registerAuthController(io: TypedServer, socket: TypedSocket) {
           platform,
           reason: infoResult.reason,
         })
-        if (mapping) broadcastAuthStatus(io, socket, mapping)
+        if (liveMapping) broadcastAuthStatus(io, socket, liveMapping)
         return
       } else {
         // 酷狗/QQ 音乐：验证失败也保存（可能是 API 变动，播放时可能仍有效）
-        if (mapping && mapping.roomId) {
-          authService.addCookie(mapping.roomId, platform, mapping.userId, cookie, '手动登录', 0)
+        if (liveMapping) {
+          authService.addCookie(liveMapping.roomId, platform, liveMapping.userId, cookie, '手动登录', 0)
         }
         socket.emit(EVENTS.AUTH_SET_COOKIE_RESULT, {
           success: true,
@@ -186,8 +205,8 @@ export function registerAuthController(io: TypedServer, socket: TypedSocket) {
         })
       }
 
-      if (mapping) {
-        broadcastAuthStatus(io, socket, mapping)
+      if (liveMapping) {
+        broadcastAuthStatus(io, socket, liveMapping)
       }
     } catch (err) {
       logger.error('AUTH_SET_COOKIE error', err, { socketId: socket.id })

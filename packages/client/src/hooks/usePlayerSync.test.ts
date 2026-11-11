@@ -258,6 +258,50 @@ describe('scheduled playback with loading audio', () => {
     expect(howl.play).not.toHaveBeenCalled()
   })
 
+  describe('sync response drift correction', () => {
+    const respond = (currentTime: number) =>
+      act(() =>
+        (audio.handlers.get(EVENTS.PLAYER_SYNC_RESPONSE) as unknown as (data: unknown) => void)?.({
+          currentTime,
+          isPlaying: true,
+          serverTimestamp: Date.now(),
+        }),
+      )
+    const seekedTo = (howl: ReturnType<typeof setup>['howl'], target: number) =>
+      howl.seek.mock.calls.some(([position]) => position === target)
+
+    it('ignores responses until the server clock is calibrated, so a skewed local clock cannot cause a hard seek', () => {
+      audio.clock.calibrated = false
+      const { howl } = setup(true)
+      act(() => howl.finishLoad())
+      expect(howl.playing()).toBe(true)
+
+      respond(90)
+      expect(seekedTo(howl, 90)).toBe(false)
+      expect(usePlayerStore.getState().syncDrift).toBe(0)
+    })
+
+    it('corrects a large cold-start drift once the clock is calibrated', () => {
+      const { howl } = setup(true)
+      act(() => howl.finishLoad())
+
+      respond(90)
+      expect(seekedTo(howl, 90)).toBe(true)
+    })
+
+    it('keeps its cold-start state while uncalibrated, so the first calibrated response still corrects immediately', () => {
+      audio.clock.calibrated = false
+      const { howl } = setup(true)
+      act(() => howl.finishLoad())
+      respond(90)
+      respond(90)
+
+      audio.clock.calibrated = true
+      respond(90)
+      expect(seekedTo(howl, 90)).toBe(true)
+    })
+  })
+
   it('executes immediately without a calibrated server clock', () => {
     audio.clock.calibrated = false
     const { howl } = setup()

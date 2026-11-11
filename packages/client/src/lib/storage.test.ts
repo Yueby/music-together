@@ -26,6 +26,49 @@ describe('AMLL settings storage', () => {
     expect(storage.getLyricWordFadeWidth()).toBe(2)
   })
 
+  it.each([['an object', '{"platform":"netease","cookie":"x"}'], ['a string', '"x"'], ['null', 'null'], ['a number', '5'], ['broken JSON', '{oops']])(
+    'reads auth cookies stored as %s as an empty list instead of throwing',
+    (_label, raw) => {
+      localStorage.setItem('mt-auth-cookies', raw)
+
+      expect(storage.getAuthCookies()).toEqual([])
+      expect(storage.hasAuthCookie('netease')).toBe(false)
+      expect(() => storage.upsertAuthCookie('tencent', 'fresh')).not.toThrow()
+      expect(storage.getAuthCookies()).toEqual([{ platform: 'tencent', cookie: 'fresh' }])
+    },
+  )
+
+  it('drops malformed auth cookie entries but keeps the valid ones', () => {
+    localStorage.setItem(
+      'mt-auth-cookies',
+      JSON.stringify([
+        { platform: 'netease', cookie: 'good' },
+        { platform: 'netease' },
+        { platform: 'unknown-platform', cookie: 'x' },
+        { platform: 1, cookie: 'x' },
+        null,
+        'text',
+        { platform: 'tencent', cookie: 42 },
+      ]),
+    )
+
+    expect(storage.getAuthCookies()).toEqual([{ platform: 'netease', cookie: 'good' }])
+    expect(storage.hasAuthCookie('netease')).toBe(true)
+    expect(storage.hasAuthCookie('tencent')).toBe(false)
+  })
+
+  it('ignores a rejoin token whose shape is wrong', () => {
+    const future = Date.now() + 60_000
+    for (const bad of [[], 'x', null, { roomId: 'R', token: 1, expiresAt: future }, { roomId: 'R', token: 't', expiresAt: '9' }]) {
+      localStorage.setItem('mt-rejoin-token', JSON.stringify(bad))
+      expect(storage.getRejoinToken('R')).toBeNull()
+      expect(() => storage.clearRejoinToken('R')).not.toThrow()
+    }
+
+    storage.setRejoinToken('R', 'tok', future)
+    expect(storage.getRejoinToken('R')).toBe('tok')
+  })
+
   it('persists switches, renderer and mask character', () => {
     storage.setLyricHidePassedLines(true)
     storage.setLyricMaskObsceneWordsMode('partial-mask')

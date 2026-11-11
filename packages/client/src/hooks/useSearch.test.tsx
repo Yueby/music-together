@@ -150,6 +150,35 @@ describe('useSearch', () => {
     expect(latest.loading).toBe(false)
   })
 
+  it('clears loadingMore when a new search cancels a pending next-page request, so load more works again', async () => {
+    transport.fetch.mockResolvedValueOnce(json({ tracks: songs('a'), hasMore: true }))
+    act(() => latest.search('old'))
+    await flush()
+
+    const pendingMore = deferred()
+    transport.fetch.mockReturnValueOnce(pendingMore.promise)
+    act(() => latest.loadMore())
+    expect(latest.loadingMore).toBe(true)
+
+    transport.fetch.mockResolvedValueOnce(json({ tracks: songs('n1'), hasMore: true }))
+    act(() => latest.search('new'))
+    expect(transport.fetch.mock.calls[1][1].signal.aborted).toBe(true)
+    expect(latest.loadingMore).toBe(false)
+
+    await flush()
+    // The cancelled request settling late must not resurrect or leak any state.
+    await act(async () => pendingMore.reject(new DOMException('aborted', 'AbortError')))
+    expect(latest.loadingMore).toBe(false)
+    expect(latest.results).toEqual(songs('n1'))
+
+    transport.fetch.mockResolvedValueOnce(json({ tracks: songs('n2'), hasMore: false }))
+    act(() => latest.loadMore())
+    await flush()
+    expect(urlOf(3).searchParams.get('keyword')).toBe('new')
+    expect(urlOf(3).searchParams.get('page')).toBe('2')
+    expect(latest.results).toEqual(songs('n1', 'n2'))
+  })
+
   it('is quiet about a search that was cancelled', async () => {
     transport.fetch.mockRejectedValue(new DOMException('aborted', 'AbortError'))
     act(() => latest.search('x'))

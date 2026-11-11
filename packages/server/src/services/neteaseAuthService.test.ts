@@ -1,4 +1,4 @@
-import { beforeEach, describe, expect, it, vi } from 'vitest'
+import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 
 const ncm = vi.hoisted(() => ({
   login_qr_key: vi.fn(),
@@ -87,6 +87,29 @@ describe('NetEase getUserInfo', () => {
   it('says it was a temporary failure when the call fails, so the cookie is kept', async () => {
     ncm.login_status.mockRejectedValue(new Error('down'))
     await expect(getUserInfo('c')).resolves.toEqual({ ok: false, reason: 'error' })
+  })
+})
+
+describe('NetEase upstream timeouts', () => {
+  const neverAnswers = () => new Promise(() => undefined)
+
+  beforeEach(() => vi.useFakeTimers())
+  afterEach(() => vi.useRealTimers())
+
+  it('keeps a QR code waiting when the status check gets no answer in time, instead of expiring it', async () => {
+    ncm.login_qr_check.mockImplementation(neverAnswers)
+    const pending = checkQrStatus('k')
+    await vi.advanceTimersByTimeAsync(15_000)
+    const result = await pending
+    expect(result.status).toBe(801)
+    expect(result.cookie).toBeUndefined()
+  })
+
+  it('calls a login check that gets no answer in time a temporary failure, not an expired cookie', async () => {
+    ncm.login_status.mockImplementation(neverAnswers)
+    const pending = getUserInfo('MUSIC_U=x')
+    await vi.advanceTimersByTimeAsync(15_000)
+    await expect(pending).resolves.toEqual({ ok: false, reason: 'error' })
   })
 })
 

@@ -48,6 +48,14 @@ describe('musicProvider.getLyric', () => {
       await expect(musicProvider.getLyric('netease', 'n-retry')).resolves.toMatchObject({ lyric: 'now' })
     })
 
+    it('answers an empty lyric, and does not remember it, for a refusing business code', async () => {
+      mocks.lyricNew
+        .mockResolvedValueOnce({ body: { code: -460 } })
+        .mockResolvedValueOnce({ body: { code: 200, lrc: { lyric: 'now' } } })
+      await expect(musicProvider.getLyric('netease', 'n-refused')).resolves.toEqual(EMPTY)
+      await expect(musicProvider.getLyric('netease', 'n-refused')).resolves.toMatchObject({ lyric: 'now' })
+    })
+
     it('answers an empty lyric when the call fails', async () => {
       mocks.lyricNew.mockRejectedValue(new Error('down'))
       await expect(musicProvider.getLyric('netease', 'n-fail')).resolves.toEqual(EMPTY)
@@ -80,6 +88,19 @@ describe('musicProvider.getLyric', () => {
       await expect(musicProvider.getLyric(source, `${source}-bad`)).resolves.toEqual(EMPTY)
       await expect(musicProvider.getLyric(source, `${source}-bad`)).resolves.toMatchObject({ lyric: 'later' })
     })
+
+    it('does not remember an empty lyric answer (it may be a bad moment upstream)', async () => {
+      const spy = vi.spyOn(Meting.prototype, 'lyric')
+      spy
+        .mockResolvedValueOnce(JSON.stringify({ lyric: '', tlyric: '' }))
+        .mockResolvedValueOnce(JSON.stringify({ lyric: 'later' }))
+      mocks.getKrcByHash.mockResolvedValue(null)
+      await expect(musicProvider.getLyric(source, `${source}-empty`)).resolves.toEqual(EMPTY)
+      await expect(musicProvider.getLyric(source, `${source}-empty`)).resolves.toMatchObject({ lyric: 'later' })
+      // Once a lyric was read, it is remembered.
+      await musicProvider.getLyric(source, `${source}-empty`)
+      expect(spy).toHaveBeenCalledTimes(2)
+    })
   })
 
   describe('Kugou word-by-word lyric', () => {
@@ -97,6 +118,56 @@ describe('musicProvider.getLyric', () => {
       await expect(musicProvider.getLyric('kugou', 'kg-fail')).resolves.not.toHaveProperty('wordByWord')
       mocks.getKrcByHash.mockResolvedValueOnce({ items: [] })
       await expect(musicProvider.getLyric('kugou', 'kg-none')).resolves.not.toHaveProperty('wordByWord')
+    })
+
+    it('does not remember the plain lyric served after a failed KRC lookup, so a recovered Kugou gets word-by-word', async () => {
+      const spy = vi.spyOn(Meting.prototype, 'lyric').mockResolvedValue(JSON.stringify({ lyric: 'L', tlyric: '' }))
+      mocks.getKrcByHash
+        .mockRejectedValueOnce(new Error('krc down'))
+        .mockResolvedValueOnce({ items: [[{ word: 'a', offset: 1, duration: 0.5 }]] })
+      const degraded = await musicProvider.getLyric('kugou', 'kg-degraded')
+      expect(degraded).toMatchObject({ lyric: 'L' })
+      expect(degraded).not.toHaveProperty('wordByWord')
+      const full = await musicProvider.getLyric('kugou', 'kg-degraded')
+      expect(full.wordByWord).toHaveLength(1)
+      // The complete answer is remembered.
+      await musicProvider.getLyric('kugou', 'kg-degraded')
+      expect(spy).toHaveBeenCalledTimes(2)
+      expect(mocks.getKrcByHash).toHaveBeenCalledTimes(2)
+    })
+
+    it('does not remember the plain lyric either when the KRC lookup times out', async () => {
+      vi.useFakeTimers()
+      try {
+        const spy = vi.spyOn(Meting.prototype, 'lyric').mockResolvedValue(JSON.stringify({ lyric: 'L', tlyric: '' }))
+        mocks.getKrcByHash.mockReturnValueOnce(new Promise(() => {}))
+        const pending = musicProvider.getLyric('kugou', 'kg-timeout')
+        await vi.advanceTimersByTimeAsync(15_000)
+        const degraded = await pending
+        expect(degraded).toMatchObject({ lyric: 'L' })
+        expect(degraded).not.toHaveProperty('wordByWord')
+
+        mocks.getKrcByHash.mockResolvedValueOnce(null)
+        await musicProvider.getLyric('kugou', 'kg-timeout')
+        expect(spy).toHaveBeenCalledTimes(2)
+      } finally {
+        vi.useRealTimers()
+      }
+    })
+
+    it('remembers a plain lyric when Kugou answered that the song has no KRC', async () => {
+      const spy = vi.spyOn(Meting.prototype, 'lyric').mockResolvedValue(JSON.stringify({ lyric: 'L', tlyric: '' }))
+      mocks.getKrcByHash.mockResolvedValue(null)
+      await musicProvider.getLyric('kugou', 'kg-no-krc')
+      await musicProvider.getLyric('kugou', 'kg-no-krc')
+      expect(spy).toHaveBeenCalledOnce()
+    })
+
+    it('still serves word-by-word lines when only the plain lyric is empty', async () => {
+      vi.spyOn(Meting.prototype, 'lyric').mockResolvedValue(JSON.stringify({ lyric: '', tlyric: '' }))
+      mocks.getKrcByHash.mockResolvedValue({ items: [[{ word: 'a', offset: 1, duration: 0.5 }]] })
+      const result = await musicProvider.getLyric('kugou', 'kg-krc-only')
+      expect(result.wordByWord).toHaveLength(1)
     })
   })
 })

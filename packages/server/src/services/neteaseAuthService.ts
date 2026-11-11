@@ -65,6 +65,11 @@ export async function checkQrStatus(key: string): Promise<{
 }> {
   try {
     const res = await withTimeout(ncmApi.login_qr_check({ key, timestamp: Date.now() }))
+    if (res === null) {
+      // No answer in time says nothing about the code: keep it alive so the client polls again, never "expired".
+      logger.warn('Netease QR check timed out')
+      return { status: 801, message: '等待扫码' }
+    }
     const code = res?.body?.code ?? 800
     const cookie = res?.body?.cookie
 
@@ -97,6 +102,11 @@ export async function checkQrStatus(key: string): Promise<{
 export async function getUserInfo(cookie: string): Promise<GetUserInfoResult> {
   try {
     const res = await withTimeout(ncmApi.login_status({ cookie, timestamp: Date.now() }))
+    if (res === null) {
+      // A timeout is a temporary failure: the cookie may well be fine, so it must not be reported as expired.
+      logger.warn('Netease cookie validation timed out (transient error)')
+      return { ok: false, reason: 'error' }
+    }
     const profile = res?.body?.data?.profile
 
     if (!profile) {

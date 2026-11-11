@@ -301,6 +301,42 @@ describe('Mapp room session', () => {
     expect(session.joinRoom({ roomId: 'room-b', nickname })).toBe(true)
   })
 
+  it('counts ticket lifetime from receipt, so a phone clock far ahead of the server still rejoins', () => {
+    ready()
+    session.joinRoom({ roomId: 'room-a', nickname })
+    fake.server(EVENTS.ROOM_STATE, room())
+    // The server stamped expiresAt 60s after ITS now, but this phone is 10 minutes ahead: already "past" locally.
+    fake.server(EVENTS.ROOM_REJOIN_TOKEN, ticket('room-a', Date.now() - 9 * 60_000))
+    vi.advanceTimersByTime(20_000)
+    reconnect()
+    expect(fake.sent(EVENTS.ROOM_JOIN).at(-1)).toEqual([
+      EVENTS.ROOM_JOIN,
+      { roomId: 'room-a', nickname, rejoinToken: ticket().token },
+    ])
+    expect(session.snapshot).toMatchObject({ status: 'joining', errorCode: null })
+  })
+
+  it('keeps a ticket issued before the room state with a skewed clock, then expires it after the default TTL', () => {
+    ready()
+    session.joinRoom({ roomId: 'room-a', nickname })
+    fake.server(EVENTS.ROOM_REJOIN_TOKEN, ticket('room-a', Date.now() - 9 * 60_000))
+    fake.server(EVENTS.ROOM_STATE, room())
+    vi.advanceTimersByTime(60_001)
+    reconnect()
+    expect(session.snapshot).toMatchObject({ status: 'ready', roomId: null, errorCode: 'REJOIN_TOKEN_EXPIRED' })
+    expect(fake.sent(EVENTS.ROOM_JOIN)).toHaveLength(1)
+  })
+
+  it('does not drop a longer server TTL early when the clock is accurate', () => {
+    ready()
+    session.joinRoom({ roomId: 'room-a', nickname })
+    fake.server(EVENTS.ROOM_STATE, room())
+    fake.server(EVENTS.ROOM_REJOIN_TOKEN, ticket('room-a', Date.now() + 300_000))
+    vi.advanceTimersByTime(200_000)
+    reconnect()
+    expect(fake.sent(EVENTS.ROOM_JOIN)).toHaveLength(2)
+  })
+
   it('does not restore a confirmed room with no ticket or an unrelated ticket', () => {
     ready()
     session.joinRoom({ roomId: 'room-a', nickname })

@@ -1,7 +1,7 @@
 import ncmApi from '@neteasecloudmusicapienhanced/api'
 import type { MusicSource } from '@music-together/shared'
 import { logger } from '../utils/logger.js'
-import { withTimeoutOrNull } from '../utils/withTimeout.js'
+import { withTimeout, withTimeoutOrNull } from '../utils/withTimeout.js'
 import { getKrcByHash, krcToAmllLines, type AmllLyricLine } from './kugouLyricService.js'
 
 export interface LyricResult {
@@ -32,16 +32,24 @@ async function metingLyric(meting: LyricSource, lyricId: string): Promise<LyricR
   }
 }
 
+/** A lyric that was read, and whether it is complete enough to be remembered by the caller. */
+export interface FetchedLyric {
+  result: LyricResult
+  /** False for a degraded answer (e.g. Kugou's plain LRC after its KRC lookup failed): serve it, but do not cache it. */
+  cacheable: boolean
+}
+
 /**
  * Read one song's lyric from its platform: NetEase through its SDK (with the word-by-word YRC), QQ Music and Kugou
- * through Meting, Kugou plus its KRC word-by-word lines. `null` when nothing usable came back (timeout, unreadable
- * answer): the caller must not remember that. A hard failure throws.
+ * through Meting, Kugou plus its KRC word-by-word lines. `null` when nothing usable came back (timeout, refusal,
+ * unreadable or empty answer): the caller must not remember that. A hard failure throws. A degraded answer is returned
+ * with `cacheable: false`.
  */
 export async function fetchLyric(
   source: MusicSource,
   lyricId: string,
   meting: () => LyricSource,
-): Promise<LyricResult | null> {
+): Promise<FetchedLyric | null> {
   if (source === 'netease') {
     // lyric_new carries the word-by-word lyric (YRC) as well
     const res = await withTimeoutOrNull(ncmApi.lyric_new({ id: lyricId }), API_TIMEOUT_MS)
@@ -50,6 +58,11 @@ export async function fetchLyric(
       return null
     }
     const body = res.body
+    // A business code other than 200 is a refusal (rate limiting, ...), not a song without lyric.
+    if (body.code !== undefined && body.code !== 200) {
+      logger.warn(`Lyric fetch for ${source}: ${lyricId} returned business code`, { code: body.code })
+      return null
+    }
     const result: LyricResult = {
       lyric: (body.lrc?.lyric as string) || '',
       tlyric: (body.tlyric?.lyric as string) || '',
@@ -57,7 +70,7 @@ export async function fetchLyric(
       yrc: (body.yrc?.lyric as string) || '',
     }
     if (result.yrc) logger.info(`YRC lyric found for netease:${lyricId}`)
-    return result
+    return { result, cacheable: true }
   }
 
   const result = await metingLyric(meting(), lyricId)
@@ -66,17 +79,24 @@ export async function fetchLyric(
     return null
   }
 
+  let cacheable = true
   if (source === 'kugou') {
-    // KRC word-by-word lines on top of the LRC; any failure quietly leaves the plain lyric
+    // KRC word-by-word lines on top of the LRC. A failing or slow KRC lookup quietly leaves the plain lyric, but that
+    // degraded answer is not remembered: the next play should get the word-by-word lines if Kugou has recovered.
+    // `null` / no lines from a lookup that did answer means the song has no KRC, which is a real (cacheable) answer.
     try {
-      const krcInfo = await withTimeoutOrNull(getKrcByHash(lyricId), API_TIMEOUT_MS)
+      const krcInfo = await withTimeout(getKrcByHash(lyricId), API_TIMEOUT_MS, new Error('KRC lookup timeout'))
       if (krcInfo?.items?.length) {
         result.wordByWord = krcToAmllLines(krcInfo)
         logger.info(`KRC lyric found for kugou:${lyricId}`)
       }
     } catch {
+      cacheable = false
       /* 静默回退到 LRC */
     }
   }
-  return result
+
+  // Nothing readable at all (an empty LRC and no word-by-word lines) may just be a bad moment upstream.
+  if (!result.lyric && !result.wordByWord?.length) return null
+  return { result, cacheable }
 }

@@ -21,6 +21,10 @@ export const DISCOVER_SOURCES: readonly MusicSource[] = ['netease']
 export const LIMITS = {
   ROOM_PASSWORD_MAX_LENGTH: 32,
   ROOM_NAME_MAX_LENGTH: 30,
+  /** Rooms one identity may have created and still alive (rooms leave when empty for the grace period). */
+  ROOM_MAX_CREATED_PER_IDENTITY: 5,
+  /** Wrong passwords one identity may send to one room within a minute before further guesses are ignored. */
+  ROOM_JOIN_PASSWORD_MAX_FAILURES: 5,
   NICKNAME_MAX_LENGTH: 20,
   CHAT_CONTENT_MAX_LENGTH: 500,
   CHAT_HISTORY_MAX: 200,
@@ -49,6 +53,7 @@ export const QR_STATUS = {
 
 /** QR code polling timing */
 export const QR_TIMING = {
+  /** The server's AUTH_CHECK_QR budget (60 per 60 s per identity) must stay above 60_000 / POLL_INTERVAL_MS. */
   POLL_INTERVAL_MS: 2_000,
   SUCCESS_CLOSE_DELAY_MS: 1_000,
 } as const

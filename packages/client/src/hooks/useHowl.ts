@@ -136,7 +136,6 @@ export function useHowl(onTrackEnd: () => void) {
       if (!track.streamUrl) return
 
       const loadStartTime = Date.now()
-      const currentVolume = usePlayerStore.getState().volume
 
       const desiredPlayback = { howl: null as unknown as PlaybackSound, autoPlay, getSeekTime: undefined as (() => number) | undefined }
       const howl = playbackSoundFactory.create(track, {
@@ -213,7 +212,9 @@ export function useHowl(onTrackEnd: () => void) {
           } else {
             const pausedTarget = desiredPlaybackRef.current.getSeekTime?.() ?? seekTo ?? 0
             if (desiredPlaybackRef.current.getSeekTime || pausedTarget > 0) howl.seek(pausedTarget)
-            howl.volume(currentVolume)
+            // Read the volume at the moment of unmuting; the user may have dragged
+            // the slider while the stream was loading.
+            howl.volume(usePlayerStore.getState().volume)
             usePlayerStore.getState().setCurrentTime(pausedTarget)
             syncReadyRef.current = true
           }

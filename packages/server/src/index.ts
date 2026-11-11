@@ -38,6 +38,8 @@ function loadPlatform() {
 const platform = loadPlatform()
 
 const app = express()
+// Behind a reverse proxy req.ip must be the real client (per-IP rate limits), see TRUST_PROXY in deployment.md.
+app.set('trust proxy', config.trustProxy)
 const httpServer = createServer(app)
 
 if (platform) {

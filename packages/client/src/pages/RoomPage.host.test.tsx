@@ -1,17 +1,19 @@
 // @vitest-environment jsdom
-import { act, type ReactNode } from 'react'
+import { act, StrictMode, type ReactNode } from 'react'
 import { createRoot } from 'react-dom/client'
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
+import type { RoomState } from '@music-together/shared'
 import { useRoomStore } from '@/stores/roomStore'
 import RoomPage from './RoomPage'
 
 const fixture = vi.hoisted(() => ({
   context: {
-    socket: { id: 'fixture-socket', on: vi.fn(), off: vi.fn(), emit: vi.fn() },
+    socket: { id: 'fixture-socket', connected: true, on: vi.fn(), off: vi.fn(), emit: vi.fn() },
     isConnected: true,
     requiresManualJoin: false,
   },
   commands: { create: vi.fn(), join: vi.fn(() => true), leave: vi.fn() },
+  leaveRoom: vi.fn(),
   unlocked: true,
   unlock: vi.fn(async () => {}),
   navigate: vi.fn(),
@@ -37,7 +39,7 @@ vi.mock('@/lib/storage', () => ({
   },
 }))
 vi.mock('@/hooks/useRoom', () => ({
-  useRoom: () => ({ leaveRoom: vi.fn(), updateSettings: vi.fn(), setUserRole: vi.fn() }),
+  useRoom: () => ({ leaveRoom: fixture.leaveRoom, updateSettings: vi.fn(), setUserRole: vi.fn() }),
 }))
 vi.mock('@/hooks/usePlayer', () => ({
   usePlayer: () => ({ play: vi.fn(), pause: vi.fn(), seek: vi.fn(), next: vi.fn(), prev: vi.fn() }),
@@ -63,7 +65,9 @@ vi.mock('@/components/InteractionGate', () => ({
 }))
 vi.mock('@/components/Player/AudioPlayer', () => ({ AudioPlayer: () => null }))
 vi.mock('@/components/Chat/ChatPanel', () => ({ ChatPanel: () => null }))
-vi.mock('@/components/Room/RoomHeader', () => ({ RoomHeader: () => null }))
+vi.mock('@/components/Room/RoomHeader', () => ({
+  RoomHeader: ({ onLeaveRoom }: { onLeaveRoom: () => void }) => <button onClick={onLeaveRoom}>Leave room</button>,
+}))
 vi.mock('@/components/Overlays/SearchDialog', () => ({ SearchDialog: () => null }))
 vi.mock('@/components/Overlays/QueueDrawer', () => ({ QueueDrawer: () => null }))
 vi.mock('@/components/Overlays/SettingsDialog', () => ({ SettingsDialog: () => null }))
@@ -82,6 +86,7 @@ describe('shared RoomPage host room commands', () => {
     vi.clearAllMocks()
     fixture.commands.join.mockReturnValue(true)
     fixture.context.isConnected = true
+    fixture.context.socket.connected = true
     fixture.context.requiresManualJoin = false
     fixture.unlocked = true
     useRoomStore.getState().reset()
@@ -108,6 +113,94 @@ describe('shared RoomPage host room commands', () => {
     expect(button).toBeDefined()
     await act(async () => button!.click())
   }
+
+  describe('leaving without the leave button', () => {
+    const joinedRoom = { id: 'ABC123', name: 'Fixture room', users: [] } as unknown as RoomState
+    const nextMacrotask = () => act(async () => void (await new Promise<void>((resolve) => setTimeout(resolve, 0))))
+    async function unmount() {
+      await act(async () => root.unmount())
+      await nextMacrotask()
+      root = createRoot(container)
+    }
+
+    it('leaves the room when the page unmounts while joined (browser back, route change)', async () => {
+      useRoomStore.setState({ room: joinedRoom })
+      await render()
+      expect(fixture.leaveRoom).not.toHaveBeenCalled()
+
+      await unmount()
+      expect(fixture.leaveRoom).toHaveBeenCalledOnce()
+    })
+
+    it('does not leave on the simulated unmount of a StrictMode double mount', async () => {
+      useRoomStore.setState({ room: joinedRoom })
+      await act(async () => root.render(<StrictMode><RoomPage /></StrictMode>))
+      await nextMacrotask()
+      expect(fixture.leaveRoom).not.toHaveBeenCalled()
+
+      await unmount()
+      expect(fixture.leaveRoom).toHaveBeenCalledOnce()
+    })
+
+    it('does not leave a second time after the explicit leave button was used', async () => {
+      useRoomStore.setState({ room: joinedRoom })
+      await render()
+      await click('Leave room')
+      expect(fixture.leaveRoom).toHaveBeenCalledOnce()
+      expect(fixture.navigate).toHaveBeenCalledWith('/', { replace: true })
+
+      await unmount()
+      expect(fixture.leaveRoom).toHaveBeenCalledOnce()
+    })
+
+    it('leaves when a join is still in flight on unmount', async () => {
+      await render()
+      expect(fixture.commands.join).toHaveBeenCalledOnce()
+      expect(useRoomStore.getState().room).toBeNull()
+
+      await unmount()
+      expect(fixture.leaveRoom).toHaveBeenCalledOnce()
+    })
+
+    it('does nothing when the user never entered the room (still at the interaction gate)', async () => {
+      fixture.unlocked = false
+      await render()
+      expect(fixture.commands.join).not.toHaveBeenCalled()
+
+      await unmount()
+      expect(fixture.leaveRoom).not.toHaveBeenCalled()
+    })
+
+    it('does not queue a leave for after the reconnect when the socket is already disconnected', async () => {
+      useRoomStore.setState({ room: joinedRoom })
+      await render()
+      fixture.context.socket.connected = false
+
+      await unmount()
+      expect(fixture.leaveRoom).not.toHaveBeenCalled()
+    })
+  })
+
+  it('joins again after a reconnect even if the previous join was never answered', async () => {
+    await render()
+    expect(fixture.commands.join).toHaveBeenCalledTimes(1)
+
+    // Connection drops after ROOM_JOIN was sent but before ROOM_STATE came back.
+    fixture.context.isConnected = false
+    fixture.context.socket.connected = false
+    await render()
+    expect(fixture.commands.join).toHaveBeenCalledTimes(1)
+
+    fixture.context.isConnected = true
+    fixture.context.socket.connected = true
+    await render()
+    expect(fixture.commands.join).toHaveBeenCalledTimes(2)
+    expect(fixture.commands.join).toHaveBeenLastCalledWith(
+      fixture.context.socket,
+      expect.objectContaining({ roomId: 'ABC123' }),
+      { automatic: true },
+    )
+  })
 
   it('delegates automatic entry through the host command boundary', async () => {
     await render()

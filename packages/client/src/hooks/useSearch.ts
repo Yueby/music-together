@@ -65,6 +65,9 @@ export function useSearch(source: MusicSource, type: SearchType = 'song') {
       const currentSearchId = ++searchIdRef.current
       lastKeywordRef.current = trimmed
 
+      // The aborted loadMore's finally is skipped (searchId changed), so it can no
+      // longer clear its own loading flag — do it here.
+      setLoadingMore(false)
       setLoading(true)
       setHasSearched(true)
       fetchPage(source, trimmed, 1, controller.signal, type)

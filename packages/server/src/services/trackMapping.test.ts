@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest'
-import { kugouSongToTrack, navigatePath, rawToTrack } from './trackMapping.js'
+import { kugouSongToTrack, navigatePath, rawToTrack, rawToTrackOrNull } from './trackMapping.js'
 
 describe('navigatePath', () => {
   it('follows a dotted path, numeric steps included, and gives undefined where it breaks', () => {
@@ -66,6 +66,21 @@ describe('rawToTrack', () => {
   it('says "nobody credited" in one place when a platform names no artist', () => {
     expect(rawToTrack({ id: 1, name: 'N' }, 'netease').artist).toEqual(['Unknown'])
     expect(rawToTrack({ filename: 'Only Title', hash: 'h' }, 'kugou').artist).toEqual(['Unknown'])
+    // QQ too: an empty or nameless singer list is not an (truthy) empty array of artists.
+    expect(rawToTrack({ mid: 'm', singer: [] }, 'tencent').artist).toEqual(['Unknown'])
+    expect(rawToTrack({ mid: 'm' }, 'tencent').artist).toEqual(['Unknown'])
+    expect(rawToTrack({ mid: 'm', singer: [{ name: '' }, { id: 1 }] }, 'tencent').artist).toEqual(['Unknown'])
+    expect(rawToTrack({ mid: 'm', singer: [{ name: 'S1' }, { name: '' }] }, 'tencent').artist).toEqual(['S1'])
+  })
+
+  it('rawToTrackOrNull drops a song without its platform id, instead of an id of "undefined"', () => {
+    expect(rawToTrackOrNull({ name: 'T', singer: [] }, 'tencent')).toBeNull()
+    expect(rawToTrackOrNull({ musicData: { name: 'T', mid: '' } }, 'tencent')).toBeNull()
+    expect(rawToTrackOrNull({ filename: 'A - T' }, 'kugou')).toBeNull()
+    expect(rawToTrackOrNull({ name: 'T' }, 'netease')).toBeNull()
+    expect(rawToTrackOrNull({ musicData: { name: 'T', mid: 'm9' } }, 'tencent')).toMatchObject({ sourceId: 'm9' })
+    expect(rawToTrackOrNull({ filename: 'A - T', hash: 'h' }, 'kugou')).toMatchObject({ sourceId: 'h' })
+    expect(rawToTrackOrNull({ id: 0, name: 'T' }, 'netease')).toMatchObject({ sourceId: '0' })
   })
 
   it('gives every track its own local id', () => {

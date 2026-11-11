@@ -179,6 +179,28 @@ describe('NetEase', () => {
     meting.search.mockResolvedValue(JSON.stringify({ result: { albumCount: 0 } }))
     await expect(searchAlbums('netease', 'x')).resolves.toEqual([])
   })
+
+  it.each([405, -460, 301])(
+    'fails the album and playlist search for business code %i (rate limited), rather than answering "no results"',
+    async (code) => {
+      meting.search.mockResolvedValue(JSON.stringify({ code, message: 'busy' }))
+      await expect(searchAlbums('netease', 'x')).rejects.toBeInstanceOf(SearchError)
+      await expect(searchPlaylists('netease', 'x')).rejects.toBeInstanceOf(SearchError)
+    },
+  )
+
+  it('answers an empty list for business code 200 without a result, and for a code-less answer', async () => {
+    meting.search.mockResolvedValue(JSON.stringify({ code: 200 }))
+    await expect(searchAlbums('netease', 'x')).resolves.toEqual([])
+    await expect(searchPlaylists('netease', 'x')).resolves.toEqual([])
+    meting.search.mockResolvedValue(JSON.stringify({ result: {} }))
+    await expect(searchPlaylists('netease', 'x')).resolves.toEqual([])
+  })
+
+  it('fails the search for an answer that is not an object', async () => {
+    meting.search.mockResolvedValue('null')
+    await expect(searchAlbums('netease', 'x')).rejects.toBeInstanceOf(SearchError)
+  })
 })
 
 describe('any platform', () => {

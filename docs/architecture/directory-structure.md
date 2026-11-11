@@ -135,7 +135,7 @@ src/
 │   ├── useMediaQuery.ts        #   订阅一条 CSS 媒体查询的匹配结果（需要按屏宽切换组件方向/结构而非仅样式时用）
 │   ├── useRoom.ts              #   房间组合 hook（编排 5 个子 hook，对外 API 不变）
 │   ├── room/                   #   useRoom 子 hook（按职责拆分）
-│   │   ├── useRoomState.ts     #     ROOM_STATE / JOIN / LEFT / SETTINGS / ROLE_CHANGED / ERROR + 挂载时补发 cookie（覆盖 HomePage 提前消费 ROOM_STATE 的场景）
+│   │   ├── useRoomState.ts     #     ROOM_STATE / JOIN / LEFT / SETTINGS / ROLE_CHANGED / ERROR + 挂载时补发 cookie（覆盖 HomePage 提前消费 ROOM_STATE 的场景）；cookie 只在"进入房间"的那次 ROOM_STATE（加入/断线重连）补发，之后的广播不再重发
 │   │   ├── useChatSync.ts      #     CHAT_HISTORY / CHAT_MESSAGE
 │   │   ├── useQueueSync.ts     #     QUEUE_UPDATED
 │   │   ├── useAuthSync.ts      #     AUTH_SET_COOKIE_RESULT + localStorage 持久化（验证失败只做 toast 反馈，永不删除 cookie；删除权仅在 useAuth.logout）
@@ -177,6 +177,7 @@ src/
     ├── constants.ts            #   命名常量（定时器、阈值、布局尺寸）
     ├── clockSync.ts            #   NTP 时钟同步引擎（采样、offset 计算、getServerTime）
     ├── resetStores.ts          #   全局 store 重置工具
+    ├── authAutoResend.ts       #   进房自动补发 cookie 的计数（useRoomState 登记、useAuthSync 消费以静默成功 toast）
     ├── artistLink.ts           #   歌手链接：哪些平台有歌手页、把一首歌的歌手名与 id 配成可打开的目标（id 与名字数量对不上就不用 id）
     ├── musicApi.ts             #   `/api/music/*` 的唯一 GET-JSON 入口（走宿主传输、带凭据）：`getMusicJson` 与带状态码的 `ApiError`/`statusOf`；歌手、发现、按名找歌手共用
     ├── artistLookup.ts         #   只有名字时用歌手搜索找歌手（只认同名，忽略大小写/全半角/空格，不取模糊的第一条；查询带齐搜索目标的全部键，微应用同样可用）
@@ -258,8 +259,8 @@ src/
 │   ├── withRoom.ts             #   房间成员身份校验
 │   ├── withControl.ts          #   操作权限校验（包装 withRoom）
 │   ├── socketIdentity.ts       #   网页 Cookie 身份；可选平台 JWT resolver 默认关闭
-│   ├── socketRateLimiter.ts    #   Socket 事件按 identity 限流 + 多连接安全清理
-│   └── httpRateLimiter.ts      #   音乐 REST / 封面代理 / 平台媒体流的 identity/IP 限流
+│   ├── socketRateLimiter.ts    #   Socket 事件按 identity 限流（含进房、QR 轮询、密码猜测限制；断线不清零）
+│   └── httpRateLimiter.ts      #   音乐 REST / 封面代理 / 平台媒体流的 identity/IP 限流，身份引导按 IP 限流
 │
 ├── routes/                     # Express REST 路由
 │   ├── music.ts                #   GET /api/music/search|url|lyric|cover|playlist|ttml|artist|artist/songs|artist/albums（统一 validated() 路由包装器消除重复 try/catch + Zod 模式）
@@ -273,6 +274,7 @@ src/
 └── utils/
     ├── logger.ts               #   结构化日志（基于 pino，info/warn/error + JSON context）
     ├── roomUtils.ts            #   房间数据转换纯函数（toPublicRoomState / toPublicRoomStateForOwner，密码仅 owner 可见）
+    ├── trustProxy.ts           #   解析 `TRUST_PROXY` 环境变量为 Express `trust proxy` 设置（默认 1 层代理）
     └── withTimeout.ts          #   限时包装，两种有意区分：`withTimeout` 超时即 reject（身份验证、元数据、媒体链路）；`withTimeoutOrNull` 超时返回 null、也接受带 AbortSignal 的 fetch 函数（目录搜索、网易云认证）
 ```
 

@@ -3,7 +3,13 @@ import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 const log = vi.hoisted(() => ({ info: vi.fn(), warn: vi.fn(), error: vi.fn(), debug: vi.fn() }))
 vi.mock('../utils/logger.js', () => ({ logger: log }))
 
-import { checkQrStatus, generateQrCode, getUserInfo, getUserPlaylists } from './kugouAuthService.js'
+import {
+  checkQrStatus,
+  generateQrCode,
+  getUserInfo,
+  getUserPlaylists,
+  toMetingKugouCookie,
+} from './kugouAuthService.js'
 
 const fetchMock = vi.fn()
 beforeEach(() => {
@@ -172,5 +178,46 @@ describe('Kugou getUserPlaylists', () => {
   it('lists nothing when the request fails', async () => {
     fetchMock.mockRejectedValue(new Error('offline'))
     await expect(getUserPlaylists(cookie)).resolves.toEqual([])
+  })
+})
+
+describe('Kugou request timeout', () => {
+  it('gives every request a 10 second abort signal, so a black-holed endpoint cannot hang a login', async () => {
+    const timeout = vi.spyOn(AbortSignal, 'timeout')
+    answers({ '/v2/qrcode': { data: { qrcode: 'key-1' } } })
+    await generateQrCode()
+    expect(timeout).toHaveBeenCalledWith(10_000)
+    const init = fetchMock.mock.calls[0][1] as RequestInit
+    expect(init.signal).toBeInstanceOf(AbortSignal)
+    timeout.mockRestore()
+  })
+
+  it('treats a request that times out like any other failure', async () => {
+    const timedOut = new DOMException('The operation was aborted due to timeout', 'TimeoutError')
+    fetchMock.mockRejectedValue(timedOut)
+    await expect(generateQrCode()).resolves.toBeNull()
+    await expect(checkQrStatus('k')).resolves.toMatchObject({ status: 800 })
+    await expect(getUserInfo('token=t;userid=1')).resolves.toEqual({ ok: false, reason: 'error' })
+  })
+})
+
+describe('toMetingKugouCookie', () => {
+  // @meting/core only resolves a signed-in stream URL when the cookie has both `t` and `KugooID`.
+  it('turns the QR login cookie into the shape Meting reads', () => {
+    expect(toMetingKugouCookie('token=abc;userid=123')).toBe('t=abc;KugooID=123')
+  })
+
+  it('keeps the device ids Meting can use', () => {
+    expect(toMetingKugouCookie('token=abc; userid=123; dfid=D; mid=M; other=x')).toBe('t=abc;KugooID=123;mid=M;dfid=D')
+  })
+
+  it('leaves a cookie that already has t and KugooID alone', () => {
+    const cookie = 't=abc; KugooID=123; mid=M'
+    expect(toMetingKugouCookie(cookie)).toBe(cookie)
+  })
+
+  it('leaves a cookie without credentials as it came', () => {
+    expect(toMetingKugouCookie('token=only')).toBe('token=only')
+    expect(toMetingKugouCookie('')).toBe('')
   })
 })

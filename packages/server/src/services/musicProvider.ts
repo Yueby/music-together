@@ -8,11 +8,12 @@ import pLimit from 'p-limit'
 import { fetchLyric, type LyricResult } from './lyricFetch.js'
 import { fetchPlaylistTracks } from './playlistFetchers.js'
 import * as tencentAuth from './tencentAuthService.js'
+import { toMetingKugouCookie } from '../utils/cookieUtils.js'
 import { logger } from '../utils/logger.js'
 import { withTimeoutOrNull } from '../utils/withTimeout.js'
 import { searchAlbums, searchPlaylists } from './catalogSearch.js'
 import { SearchError } from './catalogUtils.js'
-import { navigatePath, rawToTrack } from './trackMapping.js'
+import { navigatePath, rawToTrack, rawToTrackOrNull } from './trackMapping.js'
 import { deriveThumbnailCoverUrl, normalizeKugouTemplateCoverUrl, normalizeNeteaseCoverUrl } from './coverUrls.js'
 import { getStreamUrlCacheTtl, isStreamUrlExpired } from './streamUrlLifetime.js'
 import { getNeteasePlaybackUrl } from './neteasePlayback.js'
@@ -90,6 +91,12 @@ export function playlistCacheKey(
   return `${source}:${type}:${scope}:${playlistId}`
 }
 
+/** Singer names of a QQ search hit; "nobody credited" (no singers, or none with a name) is the shared placeholder. */
+function tencentArtistNames(song: TencentSearchSong): string[] {
+  const names = (song.singer ?? []).map((s) => s?.name).filter((name): name is string => !!name)
+  return names.length > 0 ? names : [UNKNOWN_ARTIST]
+}
+
 /** Run fetch factories with an abort signal; legacy SDK promises still use a bounded wait. A timeout answers `null`. */
 const withTimeout = <T>(work: Promise<T> | ((signal: AbortSignal) => Promise<T>), ms = API_TIMEOUT_MS) =>
   withTimeoutOrNull(work, ms)
@@ -106,6 +113,10 @@ const SEARCH_PATHS: Record<MusicSource, string> = {
 // ---------------------------------------------------------------------------
 const HOUR = 60 * 60 * 1000
 const MINUTE = 60 * 1000
+
+/** Time boxes of `batchResolveCover` (search and playlist pages wait for it): per cover request, and for the batch. */
+const COVER_PIC_TIMEOUT_MS = 4_000
+const COVER_BATCH_TIMEOUT_MS = 10_000
 
 const EMPTY_LYRIC: LyricResult = { lyric: '', tlyric: '', romalrc: '', yrc: '' }
 
@@ -160,6 +171,9 @@ class MusicProvider {
     max: 500,
     ttl: 24 * HOUR,
   })
+
+  // Reads of whole playlists in flight, by `playlistCacheKey`: concurrent callers of the same list wait for one read.
+  private playlistInflight = new Map<string, Promise<{ ids: string[]; total: number }>>()
 
   private getInstance(source: MusicSource): MetingInstance {
     let m = this.instances.get(source)
@@ -317,12 +331,14 @@ class MusicProvider {
       }
 
       // Transform to Track format (Atomic Predictability: pure transformation)
-      const tracks: Track[] = songList.map((song) => ({
+      // A song without a `mid` could never be played (and would collide on one key): drop it, keep the rest.
+      const playable = songList.filter((song) => typeof song?.mid === 'string' && song.mid !== '')
+      const tracks: Track[] = playable.map((song) => ({
         id: nanoid(),
         source: 'tencent' as const,
         sourceId: song.mid,
         title: song.name || song.title || 'Unknown',
-        artist: song.singer?.map((s) => s.name).filter(Boolean) || ['Unknown'],
+        artist: tencentArtistNames(song),
         album: song.album?.name || '',
         duration: song.interval || 0, // already in seconds
          cover: song.album?.pmid ? `https://y.gtimg.cn/music/photo_new/T002R800x800M000${song.album.pmid}.jpg` : '',
@@ -377,11 +393,14 @@ class MusicProvider {
       // QQ 音乐使用新版搜索 API (Meting API 已失效)
       if (source === 'tencent') {
         const tracks = await this.searchTencent(keyword, limit, page)
-        // Update search index (cacheKey already defined above)
-        this.searchIndex.set(cacheKey, {
-          source,
-          ids: tracks.map((t) => t.sourceId),
-        })
+        // An empty list is not remembered: QQ's risk control sometimes answers one, and it must not turn the keyword
+        // into "no results" for the whole index lifetime (the other platforms return early without caching too).
+        if (tracks.length > 0) {
+          this.searchIndex.set(cacheKey, {
+            source,
+            ids: tracks.map((t) => t.sourceId),
+          })
+        }
         return tracks
       }
 
@@ -405,10 +424,22 @@ class MusicProvider {
         throw new SearchError()
       }
 
+      // A NetEase business code other than 200 (rate limiting answers 405 / -460 ...) is a refusal, not "no hits".
+      // Code 200 without `result` is the normal empty answer and still falls through to `[]` below.
+      if (source === 'netease' && rawData.code !== undefined && rawData.code !== 200) {
+        logger.warn(`Search for ${source} returned business code`, { code: rawData.code })
+        throw new SearchError()
+      }
+
       const songs = navigatePath(rawData, SEARCH_PATHS[source])
       if (!Array.isArray(songs) || songs.length === 0) return []
 
-      const tracks = songs.map((song: MetingJson) => rawToTrack(song, source))
+      // Entries without a usable id are dropped (they could never be played), without disturbing the others.
+      const tracks = songs.flatMap((song: MetingJson) => {
+        const track = rawToTrackOrNull(song, source)
+        return track ? [track] : []
+      })
+      if (tracks.length === 0) return []
 
       // Batch resolve cover URLs for tracks that don't already have one
       await this.batchResolveCover(tracks, source)
@@ -461,7 +492,8 @@ class MusicProvider {
         // Fresh instance with cookie — don't pollute the shared one
         meting = new Meting(source)
         meting.format(true)
-        meting.cookie(cookie)
+        // Kugou's login is stored as `token=..;userid=..`; Meting only signs in with `t=..;KugooID=..`
+        meting.cookie(source === 'kugou' ? toMetingKugouCookie(cookie) : cookie)
       } else {
         meting = this.getInstance(source)
       }
@@ -507,11 +539,12 @@ class MusicProvider {
     }
 
     try {
-      const result = await fetchLyric(source, lyricId, () => this.getInstance(source))
-      // Only a lyric that was really read is remembered: an empty one may just be a bad moment upstream.
-      if (!result) return { ...EMPTY_LYRIC }
-      this.lyricCache.set(cacheKey, result)
-      return result
+      const fetched = await fetchLyric(source, lyricId, () => this.getInstance(source))
+      // Only a lyric that was really read is remembered: an empty one may just be a bad moment upstream, and a degraded
+      // one (Kugou's plain LRC after its KRC lookup failed) is served but not kept, so the next play can do better.
+      if (!fetched) return { ...EMPTY_LYRIC }
+      if (fetched.cacheable) this.lyricCache.set(cacheKey, fetched.result)
+      return fetched.result
     } catch (err) {
       logger.error(`Get lyric failed for ${source}:`, err)
       return { ...EMPTY_LYRIC }
@@ -521,8 +554,9 @@ class MusicProvider {
   async getCover(source: MusicSource, picId: string, size?: number): Promise<string> {
     const requestSize = getCoverRequestSize(source, size)
     const cacheKey = `${source}:${picId}:${requestSize}`
+    // Only non-empty addresses are cached (see below), so any hit is a usable one.
     const cached = this.coverCache.get(cacheKey)
-    if (cached !== undefined) {
+    if (cached) {
       return cached
     }
 
@@ -547,7 +581,8 @@ class MusicProvider {
             ? normalizeKugouTemplateCoverUrl(rawUrl)
             : rawUrl
 
-      this.coverCache.set(cacheKey, url)
+      // An empty address may just be a bad moment upstream (Kugou answers `{url: ''}` per call): retry next time.
+      if (url) this.coverCache.set(cacheKey, url)
       return url
     } catch (err) {
       logger.error(`Get cover failed for ${source}:`, err)
@@ -585,6 +620,26 @@ class MusicProvider {
       logger.info(`Playlist index stale (registry eviction): ${source}/${playlistId}`)
     }
 
+    // Concurrent misses of the same key (same list, same account) share one multi-chunk read instead of repeating it.
+    // The key carries the cookie hash, so different accounts never share a read; the entry is removed whether the read
+    // succeeds or fails, so one failure cannot hold the key.
+    const running = this.playlistInflight.get(cacheKey)
+    if (running) return running
+    const started: Promise<{ ids: string[]; total: number }> = this.loadPlaylist(cacheKey, source, playlistId, type, playlistTotal, cookie).finally(() => {
+      if (this.playlistInflight.get(cacheKey) === started) this.playlistInflight.delete(cacheKey)
+    })
+    this.playlistInflight.set(cacheKey, started)
+    return started
+  }
+
+  private async loadPlaylist(
+    cacheKey: string,
+    source: MusicSource,
+    playlistId: string,
+    type: 'playlist' | 'album',
+    playlistTotal?: number,
+    cookie?: string | null,
+  ): Promise<{ ids: string[]; total: number }> {
     const tracks = await fetchPlaylistTracks(source, playlistId, type, playlistTotal, cookie)
     if (tracks.length === 0) return { ids: [], total: 0 }
 
@@ -655,6 +710,10 @@ class MusicProvider {
    * - kugou: pic() makes an API call per track (slower)
    *
    * Each pic() call uses a fresh Meting instance to avoid race conditions.
+   *
+   * Search and playlist pages wait for this, so it is time-boxed: each pic() gets `COVER_PIC_TIMEOUT_MS` and the whole
+   * batch `COVER_BATCH_TIMEOUT_MS` (Meting's own 20s x 3 retries would be far too long). What did not finish in time is
+   * left without a cover (the frontend shows a placeholder), and a timeout or failure is never cached.
    */
   private async batchResolveCover(tracks: Track[], source: MusicSource): Promise<void> {
     const toResolve = tracks.filter((t) => !t.cover && t.picId)
@@ -664,14 +723,18 @@ class MusicProvider {
     const needsApiCall = source === 'kugou'
     const limit = pLimit(needsApiCall ? 3 : toResolve.length)
 
-    await Promise.allSettled(
+    // Set once the batch deadline has passed: later work must neither start new calls nor touch the returned tracks.
+    let expired = false
+
+    const work = Promise.allSettled(
       toResolve.map((track) =>
         limit(async () => {
+          if (expired) return
           // Check cover cache first
-           const requestSize = getCoverRequestSize(source)
-           const cacheKey = `${source}:${track.picId!}:${requestSize}`
+          const requestSize = getCoverRequestSize(source)
+          const cacheKey = `${source}:${track.picId!}:${requestSize}`
           const cached = this.coverCache.get(cacheKey)
-          if (cached !== undefined) {
+          if (cached) {
             track.cover = cached
             return
           }
@@ -679,17 +742,19 @@ class MusicProvider {
           try {
             // Fresh instance per call to avoid shared state race conditions
             const instance = new Meting(source)
-             const raw = await instance.pic(track.picId!, requestSize)
+            const raw = await withTimeoutOrNull(instance.pic(track.picId!, requestSize), COVER_PIC_TIMEOUT_MS)
+            if (raw === null || raw === undefined) return // timed out: leave empty, cache nothing
             const data = JSON.parse(raw)
-             if (typeof data.url === 'string' && data.url) {
-               const coverUrl =
-                 source === 'netease'
-                   ? normalizeNeteaseCoverUrl(data.url)
-                   : source === 'kugou'
-                     ? normalizeKugouTemplateCoverUrl(data.url)
-                     : data.url
-               track.cover = coverUrl
-               this.coverCache.set(cacheKey, coverUrl)
+            if (typeof data.url === 'string' && data.url) {
+              const coverUrl =
+                source === 'netease'
+                  ? normalizeNeteaseCoverUrl(data.url)
+                  : source === 'kugou'
+                    ? normalizeKugouTemplateCoverUrl(data.url)
+                    : data.url
+              // A cover that arrives after the batch deadline is still worth remembering, but not for this answer.
+              this.coverCache.set(cacheKey, coverUrl)
+              if (!expired) track.cover = coverUrl
             }
           } catch {
             // Leave cover empty — frontend shows placeholder
@@ -697,6 +762,14 @@ class MusicProvider {
         }),
       ),
     )
+
+    try {
+      if ((await withTimeoutOrNull(work, COVER_BATCH_TIMEOUT_MS)) === null) {
+        logger.warn(`Cover resolution for ${source} hit the batch deadline (${toResolve.length} tracks)`)
+      }
+    } finally {
+      expired = true
+    }
   }
 }
 

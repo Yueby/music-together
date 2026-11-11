@@ -7,6 +7,7 @@ import type { AudioQuality } from '@music-together/shared'
 import { readFileSync } from 'node:fs'
 import { resolve, dirname } from 'node:path'
 import { fileURLToPath } from 'node:url'
+import { parseTrustProxy } from './utils/trustProxy.js'
 
 const __dirname = dirname(fileURLToPath(import.meta.url))
 const rootPkg = JSON.parse(readFileSync(resolve(__dirname, '../../../package.json'), 'utf-8'))
@@ -23,6 +24,8 @@ const envSchema = z.object({
   REJOIN_TTL_MS: z.coerce.number().int().positive().default(TIMING.ROOM_GRACE_PERIOD_MS),
   IDENTITY_COOKIE_SECURE: z.enum(['true', 'false']).optional(),
   AUTO_FALLBACK_ENABLED: z.enum(['true', 'false']).default('true'),
+  /** Express `trust proxy` (see utils/trustProxy.ts). Default: one reverse proxy in front. */
+  TRUST_PROXY: z.string().default(''),
   /**
    * Highest bitrate (kbps: 128, 192, 320 or 999 = lossless) the mini-app audio endpoint serves, whatever the room asks.
    * A mini-app has to download the whole file through the server before it can play (about 1 MB/s from overseas),
@@ -77,6 +80,7 @@ export const config = {
   rejoin: {
     ttlMs: env.REJOIN_TTL_MS,
   },
+  trustProxy: parseTrustProxy(env.TRUST_PROXY),
   autoFallback: {
     enabled: env.AUTO_FALLBACK_ENABLED === 'true',
   },

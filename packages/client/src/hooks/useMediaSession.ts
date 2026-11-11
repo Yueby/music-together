@@ -172,37 +172,44 @@ export function useMediaSession({ play, pause, next, prev, seek }: MediaSessionC
 
   // Position state.  Browsers interpolate using `playbackRate`, so we only
   // need to sync on meaningful state changes: play/pause toggles, duration
-  // updates, or seeks.  Syncing on every `currentTime` tick is wasteful.
-  const currentTime = usePlayerStore((s) => s.currentTime)
-  const duration = usePlayerStore((s) => s.duration)
-  const prevIsPlayingRef = useRef(isPlaying)
-  const prevDurationRef = useRef(duration)
-  const prevPositionRef = useRef(currentTime)
-
+  // updates, or seeks.  `currentTime` ticks every ~100ms, so it is read from the
+  // store inside a subscription instead of through a hook selector — that keeps
+  // the whole RoomPage subtree from re-rendering ten times a second.
   useEffect(() => {
     if (!hostRuntime.nativeMediaSession || !('mediaSession' in navigator)) return
-    if (!duration || !isFinite(duration)) return
 
-    const playStateChanged = isPlaying !== prevIsPlayingRef.current
-    const durationChanged = duration !== prevDurationRef.current
-    // Detect a seek: position jumped more than ~2s away from linear progression.
-    const expectedDelta = prevIsPlayingRef.current ? 1 : 0
-    const isSeek = Math.abs(currentTime - prevPositionRef.current - expectedDelta) > 2
+    // What was last reported to the OS; the browser extrapolates from it.
+    let anchor: { position: number; at: number; isPlaying: boolean; duration: number } | null = null
 
-    if (!playStateChanged && !durationChanged && !isSeek) return
+    const syncPosition = () => {
+      const { currentTime, duration, isPlaying } = usePlayerStore.getState()
+      if (!duration || !isFinite(duration)) {
+        anchor = null
+        return
+      }
 
-    prevIsPlayingRef.current = isPlaying
-    prevDurationRef.current = duration
-    prevPositionRef.current = currentTime
+      const now = Date.now()
+      // Detect a seek: position jumped more than ~2s away from linear progression.
+      const expected = anchor ? anchor.position + (anchor.isPlaying ? (now - anchor.at) / 1000 : 0) : 0
+      const isSeek = anchor !== null && Math.abs(currentTime - expected) > 2
+      const playStateChanged = anchor !== null && anchor.isPlaying !== isPlaying
+      const durationChanged = anchor === null || anchor.duration !== duration
 
-    try {
-      navigator.mediaSession.setPositionState({
-        duration,
-        playbackRate: 1,
-        position: Math.min(Math.max(0, currentTime), duration),
-      })
-    } catch {
-      // setPositionState throws if position > duration; ignore gracefully.
+      if (!playStateChanged && !durationChanged && !isSeek) return
+
+      anchor = { position: currentTime, at: now, isPlaying, duration }
+      try {
+        navigator.mediaSession.setPositionState({
+          duration,
+          playbackRate: 1,
+          position: Math.min(Math.max(0, currentTime), duration),
+        })
+      } catch {
+        // setPositionState throws if position > duration; ignore gracefully.
+      }
     }
-  }, [isPlaying, duration, currentTime])
+
+    syncPosition()
+    return usePlayerStore.subscribe(syncPosition)
+  }, [])
 }

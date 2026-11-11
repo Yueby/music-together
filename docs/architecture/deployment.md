@@ -41,6 +41,7 @@ IDENTITY_TTL_DAYS
 REJOIN_TTL_MS
 IDENTITY_COOKIE_SECURE
 AUTO_FALLBACK_ENABLED
+TRUST_PROXY
 TTML_DB_BASE_URL
 MAPP_AUDIO_MAX_BITRATE
 MAPP_MAX_STREAMS
@@ -76,6 +77,7 @@ MAPP_ALLOW_SANDBOX  可选，true 时同时接受沙箱通道令牌；默认只�
 - 显式设置来源：严格白名单模式，适合前后端分离。
 - `IDENTITY_COOKIE_SECURE` 未设置时，根据生产环境和当前请求协议自动判断。
 - HTTPS 反向代理必须透传 `X-Forwarded-Proto`。
+- 按 IP 的限流（如 `POST /api/auth/identity/bootstrap`）需要拿到真实客户端 IP：反向代理必须透传 `X-Forwarded-For`，服务端通过 `TRUST_PROXY` 决定信任几层代理。默认 `1`（前面有一层反向代理，即本文的部署方式）；端口 3001 直接暴露、没有反向代理时设为 `false`，否则客户端可伪造该请求头；多层代理（如 Cloudflare + Nginx）设为实际层数，也可填 `loopback`、`10.0.0.0/8` 等 Express 支持的值。
 
 ## 部署示例
 

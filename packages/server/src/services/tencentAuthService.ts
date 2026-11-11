@@ -597,6 +597,7 @@ async function doCheckSig(uinStr: string, sigx: string, baseCookie: string): Pro
       Cookie: baseCookie,
     },
     redirect: 'manual',
+    signal: AbortSignal.timeout(10_000),
   })
 
   const setCookies = res.headers.getSetCookie?.() ?? []
@@ -657,6 +658,7 @@ async function fetchOAuthCode(pSkey: string, fullCookie: string): Promise<string
     },
     body: bodyParams.toString(),
     redirect: 'manual',
+    signal: AbortSignal.timeout(10_000),
   })
 
   const location = res.headers.get('location')
@@ -704,6 +706,7 @@ async function getEncryptUin(musicid: string | number): Promise<string> {
       'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36',
       Referer: 'https://y.qq.com/',
     },
+    signal: AbortSignal.timeout(10_000),
   })
   const data = (await response.json()) as { data?: ProfileData }
   return data?.data?.creator?.encrypt_uin || ''
