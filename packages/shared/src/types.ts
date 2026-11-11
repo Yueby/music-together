@@ -49,6 +49,8 @@ export interface Track {
   id: string
   title: string
   artist: string[]
+  /** Platform ids of `artist`, index-aligned, where the platform tells us (NetEase). Lets the UI open the artist page directly. */
+  artistIds?: string[]
   album: string
   duration: number
   cover: string
@@ -161,6 +163,8 @@ export interface MyPlatformAuth {
   loggedIn: boolean
   nickname?: string
   vipType?: number
+  /** https avatar of the account when the platform provides one (NetEase today). */
+  avatarUrl?: string
 }
 
 /** 歌手元数据（歌手搜索结果与歌手主页头部） */
@@ -188,4 +192,15 @@ export interface Playlist {
   source: MusicSource
   creator?: string
   description?: string
+}
+
+export type DiscoverHomeBlock = 'playlists' | 'artists' | 'albums'
+
+/** 账号页首页区块（推荐歌单、热门歌手、新碟）；`/api/music/discover/home` 的响应 */
+export interface DiscoverHome {
+  playlists: Playlist[]
+  artists: Artist[]
+  albums: Playlist[]
+  /** Blocks that could not be loaded (their list is empty): the client offers a retry instead of "nothing here". */
+  failed: DiscoverHomeBlock[]
 }

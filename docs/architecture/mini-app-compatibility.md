@@ -158,7 +158,7 @@ Web hostRuntime 保留全部原能力。`hostRuntime` 只记录**宿主确实做
 
 真实 JS 产物另经离线 DOM／模拟 SDK 冒烟：大厅成功挂载，原样 Engine.IO/Socket.IO 握手后请求房间列表，lifecycle.ready 只在 UI commit 后通知，pagehide 关闭 SDK 连接。在该测试中禁止原生网络发送、音频创建、Cookie/原生存储、eval/Function 与 innerHTML 写入，未触发这些调用；Socket.IO 的空 XHR 特性探测与请求发送分开处理。此测试不替代官方平台 VM、真实 JWT、设备音频或跨端同房现场验收。
 
-产物为 `dist/client-web`、`dist/client-package`。client manifest 仅 `user.read`、`audio.webAudio`、`network.websocket`、`network.request`、`storage.read`、`storage.write`，声明 roomSocket、roomAudio、musicSearch、musicLyric、musicTtml、musicCover、musicArtist、musicArtistSongs、musicArtistAlbums、musicPlaylist；不含 remote_assets 或额外权限。打包继续由官方 SDK 校验（ZIP/单文件 32MiB、展开 128MiB）。共享纯 target 数据与 manifest 解析均独立于 CLI，避免打包入口循环加载。
+产物为 `dist/client-web`、`dist/client-package`。client manifest 仅 `user.read`、`audio.webAudio`、`network.websocket`、`network.request`、`storage.read`、`storage.write`，声明 roomSocket、roomAudio、musicSearch、musicLyric、musicTtml、musicCover、musicArtist、musicArtistSongs、musicArtistAlbums、musicPlaylist、musicMyPlaylist、musicRadar、musicDaily、musicHome；不含 remote_assets 或额外权限。打包继续由官方 SDK 校验（ZIP/单文件 32MiB、展开 128MiB）。共享纯 target 数据与 manifest 解析均独立于 CLI，避免打包入口循环加载。
 
 ## 验证与发布门禁
 

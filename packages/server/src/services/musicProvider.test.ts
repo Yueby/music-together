@@ -5,13 +5,8 @@ import * as tencentAuth from './tencentAuthService.js'
 import { getNeteasePlaybackUrl } from './neteasePlayback.js'
 
 vi.mock('./neteasePlayback.js', () => ({ getNeteasePlaybackUrl: vi.fn() }))
-import {
-  deriveThumbnailCoverUrl,
-  musicProvider,
-  normalizeKugouTemplateCoverUrl,
-  normalizeNeteaseCoverUrl,
-  playlistCacheKey,
-} from './musicProvider.js'
+import { deriveThumbnailCoverUrl, normalizeKugouTemplateCoverUrl, normalizeNeteaseCoverUrl } from './coverUrls.js'
+import { musicProvider, playlistCacheKey } from './musicProvider.js'
 
 const tencentSong = {
   id: 410316279,
@@ -201,6 +196,10 @@ describe('provider cover URL normalization', () => {
       'https://music.163.com/a.jpg?foo=bar',
     )
     expect(normalizeNeteaseCoverUrl('https://music.163.com/a.jpg?foo=bar')).toBe('https://music.163.com/a.jpg?foo=bar')
+    // http:// artwork from the NetEase CDN is served over https (mixed content / the mini-app cover endpoint).
+    expect(normalizeNeteaseCoverUrl('http://p1.music.126.net/x==/1.jpg?param=130y130')).toBe(
+      'https://p1.music.126.net/x==/1.jpg',
+    )
   })
 
   it('converts documented Kugou size templates to the CDN-safe maximum request', () => {
@@ -222,6 +221,15 @@ describe('provider cover URL normalization', () => {
     )
     expect(deriveThumbnailCoverUrl('kugou', 'https://example.com/5000/abc.jpg')).toBe(
       'https://example.com/5000/abc.jpg',
+    )
+  })
+
+  it('lets NetEase thumbnails be larger while fixed-size platforms ignore the request', () => {
+    expect(deriveThumbnailCoverUrl('netease', 'https://p1.music.126.net/a.jpg', 256)).toBe(
+      'https://p1.music.126.net/a.jpg?param=256y256',
+    )
+    expect(deriveThumbnailCoverUrl('tencent', 'https://y.gtimg.cn/music/photo_new/T002R800x800M000abc.jpg', 256)).toBe(
+      'https://y.gtimg.cn/music/photo_new/T002R120x120M000abc.jpg',
     )
   })
 })
@@ -275,6 +283,42 @@ describe('ingestNeteaseSongs', () => {
       cover: 'https://p3.music.126.net/cover.jpg',
     })
     expect(track.thumbnailCover).toContain('120y120')
+  })
+
+  it('keeps the platform ids of the credited artists, index-aligned with their names', () => {
+    const [track] = musicProvider.ingestNeteaseSongs([
+      song(3, {
+        ar: [
+          { id: 3684, name: 'JJ' },
+          { id: '1234', name: 'Guest' },
+        ],
+      }),
+    ])
+    expect(track.artist).toEqual(['JJ', 'Guest'])
+    expect(track.artistIds).toEqual(['3684', '1234'])
+  })
+
+  it('drops an artist without a name together with its id, and ids that are not numeric', () => {
+    const [named] = musicProvider.ingestNeteaseSongs([
+      song(4, {
+        ar: [
+          { id: 1, name: '' },
+          { id: 2, name: 'B' },
+        ],
+      }),
+    ])
+    expect(named.artist).toEqual(['B'])
+    expect(named.artistIds).toEqual(['2'])
+    // An id of 0 is not an artist; a credit without a name leaves the "nobody credited" placeholder.
+    const [zero] = musicProvider.ingestNeteaseSongs([song(6, { ar: [{ id: 0, name: 'A' }] })])
+    expect(zero).not.toHaveProperty('artistIds')
+    const [nobody] = musicProvider.ingestNeteaseSongs([song(7, { ar: [] })])
+    expect(nobody.artist).toEqual(['Unknown'])
+    expect(nobody).not.toHaveProperty('artistIds')
+    // One unusable id would misalign the rest: no ids at all, so the UI finds the artist by name.
+    const [partial] = musicProvider.ingestNeteaseSongs([song(5, { ar: [{ name: 'A' }, { id: 2, name: 'B' }] })])
+    expect(partial.artist).toEqual(['A', 'B'])
+    expect(partial).not.toHaveProperty('artistIds')
   })
 
   it('skips entries without an id and tolerates a non-array response', () => {

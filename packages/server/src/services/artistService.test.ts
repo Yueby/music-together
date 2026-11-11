@@ -4,8 +4,6 @@ import { ArtistError, createArtistService, type ArtistNcm } from './artistServic
 
 vi.mock('./musicProvider.js', () => ({
   musicProvider: { ingestNeteaseSongs: vi.fn() },
-  normalizeNeteaseCoverUrl: (url: string) => url.replace(/\?param=\w+/, ''),
-  deriveThumbnailCoverUrl: (_source: string, url: string) => `${url}?param=120y120`,
 }))
 
 const track = (sourceId: string): Track => ({
@@ -37,15 +35,30 @@ function setup(overrides: Partial<Record<keyof ArtistNcm, ReturnType<typeof vi.f
     artists: vi.fn().mockResolvedValue({
       body: {
         code: 200,
-        artist: { id: 3684, name: '林俊杰', picUrl: 'https://p4.music.126.net/a.jpg', briefDesc: ' 新加坡歌手 ', albumSize: 85, musicSize: 599 },
+        artist: {
+          id: 3684,
+          name: '林俊杰',
+          picUrl: 'https://p4.music.126.net/a.jpg',
+          briefDesc: ' 新加坡歌手 ',
+          albumSize: 85,
+          musicSize: 599,
+        },
       },
     }),
-    artist_songs: vi.fn().mockResolvedValue({ body: { code: 200, songs: [{ id: 1 }, { id: 2 }], more: true, total: 599 } }),
+    artist_songs: vi
+      .fn()
+      .mockResolvedValue({ body: { code: 200, songs: [{ id: 1 }, { id: 2 }], more: true, total: 599 } }),
     artist_album: vi.fn().mockResolvedValue({
       body: {
         code: 200,
         hotAlbums: [
-          { id: 10, name: 'Rise Without A Sound', size: 12, picUrl: 'https://p4.music.126.net/b.jpg', artist: { name: '林俊杰' } },
+          {
+            id: 10,
+            name: 'Rise Without A Sound',
+            size: 12,
+            picUrl: 'https://p4.music.126.net/b.jpg',
+            artist: { name: '林俊杰' },
+          },
           { id: 'x', name: 'bad id' },
         ],
         more: false,
@@ -96,15 +109,29 @@ describe('artistService', () => {
     it('combines profile, first song page and first album page', async () => {
       const { service, ncm, ingestSongs } = setup()
       const home = await service.getArtist('netease', '3684')
-      expect(ncm.artist_songs).toHaveBeenCalledWith(expect.objectContaining({ id: '3684', offset: 0, limit: 50, order: 'hot' }))
+      expect(ncm.artist_songs).toHaveBeenCalledWith(
+        expect.objectContaining({ id: '3684', offset: 0, limit: 50, order: 'hot' }),
+      )
       expect(ncm.artist_album).toHaveBeenCalledWith(expect.objectContaining({ id: '3684', offset: 0, limit: 30 }))
       expect(ingestSongs).toHaveBeenCalledTimes(1)
-      expect(home.artist).toMatchObject({ id: '3684', name: '林俊杰', description: '新加坡歌手', albumCount: 85, songCount: 599 })
+      expect(home.artist).toMatchObject({
+        id: '3684',
+        name: '林俊杰',
+        description: '新加坡歌手',
+        albumCount: 85,
+        songCount: 599,
+      })
       expect(home.songs).toMatchObject({ hasMore: true, total: 599 })
       expect(home.songs.items.map((t) => t.sourceId)).toEqual(['1', '2'])
       expect(home.albums.hasMore).toBe(false)
       expect(home.albums.items).toEqual([
-        expect.objectContaining({ id: '10', name: 'Rise Without A Sound', trackCount: 12, source: 'netease', creator: '林俊杰' }),
+        expect.objectContaining({
+          id: '10',
+          name: 'Rise Without A Sound',
+          trackCount: 12,
+          source: 'netease',
+          creator: '林俊杰',
+        }),
       ])
     })
 

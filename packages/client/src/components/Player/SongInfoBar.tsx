@@ -1,3 +1,4 @@
+import { ArtistNames } from '@/components/ArtistNames'
 import { Button } from '@/components/ui/button'
 import { Popover, PopoverContent, PopoverTrigger } from '@/components/ui/popover'
 import { Slider } from '@/components/ui/slider'
@@ -48,9 +49,7 @@ function VolumeControl({
             {volume === 0 ? <VolumeX className="size-4" /> : <Volume2 className="size-4" />}
           </Button>
           <Slider min={0} max={100} value={[volume * 100]} onValueChange={([v]) => setVolume(v / 100)} />
-          <span className="w-8 shrink-0 text-right text-xs tabular-nums text-white/50">
-            {Math.round(volume * 100)}
-          </span>
+          <span className="w-8 shrink-0 text-right text-xs tabular-nums text-white/50">{Math.round(volume * 100)}</span>
         </PopoverContent>
       </Popover>
     </Tooltip>
@@ -112,7 +111,13 @@ export const SongInfoBar = memo(function SongInfoBar({ onOpenChat, chatUnreadCou
             transition={SPRING}
             className="text-white/50"
           >
-            <MarqueeText>{currentTrack ? currentTrack.artist.join(' / ') : '点击搜索添加歌曲到队列'}</MarqueeText>
+            <MarqueeText>
+              {currentTrack ? (
+                <ArtistNames track={currentTrack} className="hover:text-white hover:underline" />
+              ) : (
+                '点击搜索添加歌曲到队列'
+              )}
+            </MarqueeText>
           </motion.div>
         </motion.div>
 

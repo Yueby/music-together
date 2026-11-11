@@ -1,7 +1,9 @@
 import { beforeEach, describe, expect, it, vi } from 'vitest'
 import {
+  getDailyMetadata,
   getMusicLyricMetadata,
   getMyPlaylistPageMetadata,
+  getRadarMetadata,
   getPlaylistPageMetadata,
   PlaylistAccessError,
   searchMusicMetadata,
@@ -14,12 +16,52 @@ const provider = vi.hoisted(() => ({
   getLyric: vi.fn(),
   getPlaylistPage: vi.fn(),
 }))
+const discover = vi.hoisted(() => ({ getDaily: vi.fn(), getRadar: vi.fn() }))
+vi.mock('../services/discoverService.js', () => ({ discoverService: discover }))
 const rooms = vi.hoisted(() => ({ get: vi.fn() }))
 const accounts = vi.hoisted(() => ({ getUserCookie: vi.fn() }))
 vi.mock('../services/musicProvider.js', () => ({ musicProvider: provider }))
 vi.mock('../repositories/roomRepository.js', () => ({ roomRepo: rooms }))
 vi.mock('../services/authService.js', () => accounts)
 beforeEach(() => vi.resetAllMocks())
+
+describe('discovery', () => {
+  const query = { source: 'netease', roomId: 'ROOM01' } as const
+
+  it('reads the radar list for everyone and wraps it as items', async () => {
+    discover.getRadar.mockResolvedValue([{ id: '1' }])
+    await expect(getRadarMetadata({ source: 'netease' })).resolves.toEqual({ items: [{ id: '1' }] })
+    expect(discover.getRadar).toHaveBeenCalledExactlyOnceWith('netease')
+  })
+
+  it('reads today\'s songs with the verified caller\'s own login in that room', async () => {
+    rooms.get.mockReturnValue({ users: [{ id: 'mapp_me' }] })
+    accounts.getUserCookie.mockReturnValue('MUSIC_U=mine')
+    discover.getDaily.mockResolvedValue([{ id: 't' }])
+    await expect(getDailyMetadata(query, 'mapp_me')).resolves.toEqual({ items: [{ id: 't' }] })
+    expect(accounts.getUserCookie).toHaveBeenCalledExactlyOnceWith('mapp_me', 'netease', 'ROOM01')
+    expect(discover.getDaily).toHaveBeenCalledExactlyOnceWith('netease', 'MUSIC_U=mine')
+  })
+
+  it('passes "not logged in" on so the service can ask for a login', async () => {
+    rooms.get.mockReturnValue({ users: [{ id: 'mapp_me' }] })
+    accounts.getUserCookie.mockReturnValue(null)
+    discover.getDaily.mockResolvedValue([])
+    await getDailyMetadata(query, 'mapp_me')
+    expect(discover.getDaily).toHaveBeenCalledExactlyOnceWith('netease', null)
+  })
+
+  it.each([
+    ['no identity', undefined, { users: [{ id: 'mapp_me' }] }],
+    ['a stranger to the room', 'mapp_other', { users: [{ id: 'mapp_me' }] }],
+    ['a missing room', 'mapp_me', undefined],
+  ])('refuses %s without touching accounts or NetEase', (_name, userId, room) => {
+    rooms.get.mockReturnValue(room)
+    expect(() => getDailyMetadata(query, userId)).toThrow(PlaylistAccessError)
+    expect(accounts.getUserCookie).not.toHaveBeenCalled()
+    expect(discover.getDaily).not.toHaveBeenCalled()
+  })
+})
 
 describe('playlist pages', () => {
   const page = { tracks: [{ id: 't' }], total: 5, hasMore: true }

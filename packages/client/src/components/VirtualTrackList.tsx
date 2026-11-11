@@ -18,7 +18,7 @@ export interface VirtualTrackListProps {
   isTrackAdded: (track: Track) => boolean
   onAddTrack: (track: Track) => void
   onInsertAfterCurrent?: (track: Track) => void
-  onArtistClick?: (artist: string) => void
+  onUnsupportedArtistClick?: (artist: string) => void
   emptyIcon?: React.ReactNode
   emptyMessage?: string
   rowHeight?: number
@@ -54,7 +54,7 @@ export const VirtualTrackList = forwardRef<VirtualTrackListRef, VirtualTrackList
     isTrackAdded,
     onAddTrack,
     onInsertAfterCurrent,
-    onArtistClick,
+    onUnsupportedArtistClick,
     emptyIcon,
     emptyMessage = '暂无内容',
     rowHeight = 52,
@@ -159,7 +159,7 @@ export const VirtualTrackList = forwardRef<VirtualTrackListRef, VirtualTrackList
               isAdded={isTrackAdded(track)}
               onAdd={onAddTrack}
               onInsertAfterCurrent={onInsertAfterCurrent}
-              onArtistClick={onArtistClick}
+              onUnsupportedArtistClick={onUnsupportedArtistClick}
               style={{
                 position: 'absolute',
                 top: 0,

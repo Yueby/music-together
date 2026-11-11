@@ -1,3 +1,4 @@
+import { ArtistNames } from '@/components/ArtistNames'
 import { Badge } from '@/components/ui/badge'
 import { Button } from '@/components/ui/button'
 import { Drawer, DrawerContent, DrawerHeader, DrawerTitle } from '@/components/ui/drawer'
@@ -283,7 +284,9 @@ export function QueueDrawer({ open, onOpenChange, onRemoveFromQueue, onReorderQu
                       >
                         {track.title}
                       </MarqueeText>
-                      <MarqueeText className="text-xs text-muted-foreground">{track.artist.join(' / ')}</MarqueeText>
+                      <MarqueeText className="text-xs text-muted-foreground">
+                        <ArtistNames track={track} />
+                      </MarqueeText>
                     </div>
 
                     {/* Requester badge — absolute top-right inside item */}

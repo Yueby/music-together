@@ -38,7 +38,7 @@ manifest 由代码生成，只声明：
 
 - 权限：`user.read`、`audio.webAudio`、`network.websocket`、`network.request`、`storage.read`、`storage.write`（后两项只用于保存音乐平台登录态）。
 - WebSocket：`roomSocket`（房间 Socket.IO）。
-- HTTP：`roomAudio`（`GET /api/mapp/audio`）、`musicSearch`、`musicLyric`、`musicTtml`（逐词歌词）、`musicCover`（封面字节）、`musicArtist` / `musicArtistSongs` / `musicArtistAlbums`（歌手主页）、`musicPlaylist`（公开歌单与专辑分页）、`musicMyPlaylist`（自己的歌单分页，需房间与登录）。新增只读接口只需在 shared 的 target 表、schema 表和服务端 handler 表各加一项，manifest 端点自动生成。
+- HTTP：`roomAudio`（`GET /api/mapp/audio`）、`musicSearch`、`musicLyric`、`musicTtml`（逐词歌词）、`musicCover`（封面字节）、`musicArtist` / `musicArtistSongs` / `musicArtistAlbums`（歌手主页）、`musicPlaylist`（公开歌单与专辑分页）、`musicMyPlaylist`（自己的歌单分页，需房间与登录）、`musicRadar`（雷达歌单列表）、`musicDaily`（每日推荐，需房间与登录）、`musicHome`（推荐歌单/热门歌手/新碟，需房间；登录后推荐歌单为本人的）。新增只读接口只需在 shared 的 target 表、schema 表和服务端 handler 表各加一项，manifest 端点自动生成。
 
 这些端点都是 `auth: "platform"`，由主站后端验证平台 JWT，验证失败不回退 Cookie。
 

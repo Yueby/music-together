@@ -1,3 +1,4 @@
+import { ArtistNames } from '@/components/ArtistNames'
 import { MarqueeText } from '@/components/ui/marquee-text'
 import { useArtworkUrl } from '@/hooks/useArtworkUrl'
 import { cn } from '@/lib/utils'
@@ -80,7 +81,9 @@ export function NowPlaying({ compact = false, onCoverClick }: NowPlayingProps) {
             transition={SPRING}
             className="text-white/50"
           >
-            <MarqueeText>{currentTrack ? currentTrack.artist.join(' / ') : '...'}</MarqueeText>
+            <MarqueeText>
+              {currentTrack ? <ArtistNames track={currentTrack} className="hover:text-white hover:underline" /> : '...'}
+            </MarqueeText>
           </motion.div>
         </motion.div>
       </div>

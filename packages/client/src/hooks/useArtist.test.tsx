@@ -87,6 +87,73 @@ describe('useArtist', () => {
     expect(latest.error).toBeNull()
   })
 
+  describe('an artist known only by name', () => {
+    const hits = (...found: Artist[]) => json({ tracks: found })
+
+    it('finds who it is, then loads that artist like any other', async () => {
+      transport.fetch.mockResolvedValueOnce(hits(artist('7')))
+      transport.fetch.mockResolvedValueOnce(home('7'))
+      await act(async () => {
+        await latest.loadByName('netease', 'Artist 7')
+      })
+      expect(transport.fetch.mock.calls[0][0]).toContain('/api/music/search?')
+      expect(transport.fetch.mock.calls[0][0]).toContain('type=artist')
+      expect(transport.fetch.mock.calls[1][0]).toBe('https://music.test/api/music/artist?source=netease&id=7')
+      expect(latest.artist?.id).toBe('7')
+      expect(latest.songs).toHaveLength(2)
+      expect(latest.error).toBeNull()
+    })
+
+    it('shows the name while it is looked up', async () => {
+      const pending = deferred()
+      transport.fetch.mockReturnValueOnce(pending.promise)
+      let loading!: Promise<void>
+      await act(async () => {
+        loading = latest.loadByName('netease', 'Someone')
+      })
+      expect(latest.loading).toBe(true)
+      expect(latest.artist?.name).toBe('Someone')
+      pending.resolve(hits())
+      await act(async () => {
+        await loading
+      })
+    })
+
+    it('says "not found" when nobody has that name, and "failed" when the lookup itself fails', async () => {
+      transport.fetch.mockResolvedValueOnce(hits())
+      await act(async () => {
+        await latest.loadByName('netease', 'Nobody')
+      })
+      expect(latest.error).toBe('not-found')
+      expect(latest.loading).toBe(false)
+
+      transport.fetch.mockResolvedValueOnce(json({ error: 'x' }, 503))
+      await act(async () => {
+        await latest.loadByName('netease', 'Nobody')
+      })
+      expect(latest.error).toBe('failed')
+      expect(latest.loading).toBe(false)
+    })
+
+    it('ignores a lookup that finishes after another artist was opened', async () => {
+      const slow = deferred()
+      transport.fetch.mockReturnValueOnce(slow.promise).mockResolvedValueOnce(home('9'))
+      let first!: Promise<void>
+      await act(async () => {
+        first = latest.loadByName('netease', 'Slow')
+      })
+      await act(async () => {
+        await latest.load('netease', '9')
+      })
+      slow.resolve(hits(artist('1')))
+      await act(async () => {
+        await first
+      })
+      expect(latest.artist?.id).toBe('9')
+      expect(transport.fetch).toHaveBeenCalledTimes(2)
+    })
+  })
+
   it('shows the search result as a placeholder while the profile loads', async () => {
     const pending = deferred()
     transport.fetch.mockReturnValueOnce(pending.promise)

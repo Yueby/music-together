@@ -9,33 +9,19 @@ import {
 import { Input } from '@/components/ui/input'
 import { Tabs, TabsList, TabsTrigger } from '@/components/ui/tabs'
 import { VirtualTrackList, type VirtualTrackListRef } from '@/components/VirtualTrackList'
-import { PLATFORM_ACTIVE, PLATFORM_TEXT } from '@/lib/platform'
-import { cn, trackKey } from '@/lib/utils'
-import { useRoomStore } from '@/stores/roomStore'
+import { PlatformSelect } from '@/components/PlatformSelect'
+import { hasArtistPages } from '@/lib/artistLink'
+import { openArtistPage } from '@/stores/artistPageStore'
 import { useSearch, type SearchType } from '@/hooks/useSearch'
-import { useArtist } from '@/hooks/useArtist'
 import { usePlaylist } from '@/hooks/usePlaylist'
+import { useQueueMembership } from '@/hooks/useQueueMembership'
 import { useSocketContext } from '@/providers/SocketProvider'
 import { EVENTS } from '@music-together/shared'
 import type { Artist, MusicSource, Track, Playlist } from '@music-together/shared'
 import { Loader2, Music2, Search, ListMusic, User } from 'lucide-react'
-import { motion } from 'motion/react'
-import { useCallback, useLayoutEffect, useMemo, useRef, useState, useEffect } from 'react'
-import { toast } from 'sonner'
-import { ArtistDetail } from './ArtistDetail'
+import { useCallback, useRef, useState, useEffect } from 'react'
 import { CollectionRow } from './CollectionRow'
 import { PlaylistDetail } from './Settings/PlaylistDetail'
-
-const EMPTY_QUEUE: Track[] = []
-
-/** Artist pages are backed by NetEase data only. */
-const ARTIST_SOURCES: readonly MusicSource[] = ['netease']
-
-const SOURCES: { id: MusicSource; label: string }[] = [
-  { id: 'netease', label: '网易云' },
-  { id: 'tencent', label: 'QQ' },
-  { id: 'kugou', label: '酷狗' },
-]
 
 interface SearchDialogProps {
   open: boolean
@@ -48,19 +34,13 @@ export function SearchDialog({ open, onOpenChange, onAddToQueue, onInsertAfterCu
   const [source, setSource] = useState<MusicSource>('netease')
   const [searchType, setSearchType] = useState<SearchType>('song')
   const [keyword, setKeyword] = useState('')
-  const [addedIds, setAddedIds] = useState<Set<string>>(new Set())
   const listRef = useRef<VirtualTrackListRef>(null)
-  const sourceContainerRef = useRef<HTMLDivElement>(null)
-  const [pillStyle, setPillStyle] = useState({ left: 0, width: 0 })
-  const queue = useRoomStore((s) => s.room?.queue ?? EMPTY_QUEUE)
-  const queueKeys = useMemo(() => new Set(queue.map(trackKey)), [queue])
+  const { isAdded: isTrackAdded, markPending, addOnce } = useQueueMembership()
   const { socket } = useSocketContext()
 
-  // Detail views: an artist page (kept while one of its albums is open on top of it) and an album/playlist.
-  const [artistOpen, setArtistOpen] = useState(false)
-  const artistState = useArtist()
+  // Detail view: an album/playlist. (An artist opens the app's artist page, on top of this dialog.)
   const [selectedAlbum, setSelectedAlbum] = useState<Playlist | null>(null)
-  const supportsArtists = ARTIST_SOURCES.includes(source)
+  const supportsArtists = hasArtistPages(source)
   const {
     playlistTracks,
     playlistTotal,
@@ -71,7 +51,10 @@ export function SearchDialog({ open, onOpenChange, onAddToQueue, onInsertAfterCu
     loadMoreTracks,
   } = usePlaylist()
 
-  const { results, loading, loadingMore, hasMore, hasSearched, search, loadMore, resetState } = useSearch(source, searchType)
+  const { results, loading, loadingMore, hasMore, hasSearched, search, loadMore, resetState } = useSearch(
+    source,
+    searchType,
+  )
 
   // Auto re-search when source or type changes
   const prevSourceRef = useRef(source)
@@ -82,99 +65,48 @@ export function SearchDialog({ open, onOpenChange, onAddToQueue, onInsertAfterCu
     prevSourceRef.current = source
     prevTypeRef.current = searchType
     if ((sourceChanged || typeChanged) && keyword.trim()) {
-      setAddedIds(new Set())
       search(keyword.trim())
       if (searchType === 'song') listRef.current?.scrollToTop()
     }
   }, [source, searchType, keyword, search])
 
-  // Measure active source button position for sliding pill
-  const measurePill = useCallback(() => {
-    const container = sourceContainerRef.current
-    if (!container) return
-    const activeBtn = container.querySelector<HTMLButtonElement>(`[data-source="${source}"]`)
-    if (!activeBtn) return
-    setPillStyle({ left: activeBtn.offsetLeft, width: activeBtn.offsetWidth })
-  }, [source])
+  const handleSourceChange = (next: MusicSource) => {
+    setSource(next)
+    // Artist search exists for NetEase only
+    if (searchType === 'artist' && !hasArtistPages(next)) setSearchType('song')
+    resetState()
+  }
 
-  useLayoutEffect(() => {
-    measurePill()
-  }, [measurePill])
-
-  // Re-measure after dialog opens (DOM may not be ready on first render)
+  // Reset the detail view when the dialog closes
   useEffect(() => {
-    if (open) requestAnimationFrame(measurePill)
-  }, [open, measurePill])
-
-  // Reset the detail views when the dialog closes
-  const { reset: resetArtist } = artistState
-  useEffect(() => {
-    if (open) return
-    setSelectedAlbum(null)
-    setArtistOpen(false)
-    resetArtist()
-  }, [open, resetArtist])
+    if (!open) setSelectedAlbum(null)
+  }, [open])
 
   const handleSearch = (overrideKeyword?: string) => {
     const searchKeyword = (overrideKeyword ?? keyword).trim()
     if (!searchKeyword) return
     if (overrideKeyword !== undefined) setKeyword(overrideKeyword)
-    setAddedIds(new Set())
     search(searchKeyword)
     if (searchType === 'song') {
       listRef.current?.scrollToTop()
     }
   }
 
-  const handleAdd = useCallback(
-    (track: Track) => {
-      const key = trackKey(track)
-      if (queueKeys.has(key) || addedIds.has(key)) {
-        toast.info(`「${track.title}」已在队列中`)
-        return
-      }
-      onAddToQueue(track)
-      setAddedIds((prev) => new Set(prev).add(key))
-      // Removed duplicate toast.success since onAddToQueue (from useQueue) usually already handles it 
-      // or the UI handles feedback.
-    },
-    [onAddToQueue, queueKeys, addedIds],
-  )
+  const handleAdd = useCallback((track: Track) => addOnce(track, onAddToQueue), [addOnce, onAddToQueue])
 
   const handleInsertAfterCurrent = useCallback(
-    (track: Track) => {
-      const key = trackKey(track)
-      if (queueKeys.has(key) || addedIds.has(key)) {
-        toast.info(`「${track.title}」已在队列中`)
-        return
-      }
-      onInsertAfterCurrent(track)
-      setAddedIds((prev) => new Set(prev).add(key))
-      // Removed duplicate toast.success
-    },
-    [onInsertAfterCurrent, queueKeys, addedIds],
+    (track: Track) => addOnce(track, onInsertAfterCurrent),
+    [addOnce, onInsertAfterCurrent],
   )
 
+  // "Add all" lists (album, playlist) report their own result; this only sends the songs.
   const handleAddBatch = useCallback(
     (tracks: Track[], playlistName?: string) => {
       if (tracks.length === 0) return
       socket.emit(EVENTS.QUEUE_ADD_BATCH, { tracks, playlistName })
-      setAddedIds((prev) => {
-        const next = new Set(prev)
-        for (const t of tracks) next.add(trackKey(t))
-        return next
-      })
-      toast.success(`已添加 ${tracks.length} 首歌曲`)
+      markPending(tracks)
     },
-    [socket]
-  )
-
-  const isTrackAdded = useCallback(
-    (track: Track) => {
-      const key = trackKey(track)
-      return addedIds.has(key) || queueKeys.has(key)
-    },
-    [addedIds, queueKeys],
+    [socket, markPending],
   )
 
   const handleSelectAlbum = (album: Playlist, type: 'album' | 'playlist') => {
@@ -182,20 +114,10 @@ export function SearchDialog({ open, onOpenChange, onAddToQueue, onInsertAfterCu
     fetchPlaylistTracks(source, album.id, album.trackCount, type)
   }
 
-  const { load: loadArtist } = artistState
-  const handleSelectArtist = (artist: Artist) => {
-    setArtistOpen(true)
-    void loadArtist(source, artist.id, artist)
-  }
+  const handleSelectArtist = (artist: Artist) => openArtistPage({ source, id: artist.id, name: artist.name })
 
-  /** A song row's artist name: open the artist search where artist pages exist, else search that name as songs. */
-  const handleArtistNameClick = (name: string) => {
-    if (supportsArtists) {
-      setAddedIds(new Set())
-      setKeyword(name)
-      setSearchType('artist')
-      return
-    }
+  /** A song row's artist name on a platform without artist pages (elsewhere the name opens the page): search its songs. */
+  const handleUnsupportedArtistClick = (name: string) => {
     setSearchType('song')
     handleSearch(name)
   }
@@ -204,38 +126,11 @@ export function SearchDialog({ open, onOpenChange, onAddToQueue, onInsertAfterCu
     <ResponsiveDialog open={open} onOpenChange={onOpenChange}>
       <ResponsiveDialogContent className="flex h-[70vh] flex-col overflow-hidden sm:h-auto sm:max-h-[80vh] sm:max-w-2xl">
         <ResponsiveDialogHeader>
-          <div className="flex items-center gap-3">
-            <ResponsiveDialogTitle className="shrink-0">
-              {selectedAlbum ? selectedAlbum.name : artistOpen ? (artistState.artist?.name ?? '歌手') : '搜索点歌'}
+          <div className="flex items-center justify-between gap-3 pr-8">
+            <ResponsiveDialogTitle className="min-w-0 truncate">
+              {selectedAlbum ? selectedAlbum.name : '搜索点歌'}
             </ResponsiveDialogTitle>
-            {!selectedAlbum && !artistOpen && (
-              <div ref={sourceContainerRef} className="bg-muted/50 relative flex items-center rounded-lg p-0.5">
-                <motion.div
-                  className={cn('absolute inset-y-0.5 rounded-md', PLATFORM_ACTIVE[source])}
-                  animate={{ left: pillStyle.left, width: pillStyle.width }}
-                  transition={{ type: 'spring', bounce: 0.15, duration: 0.3 }}
-                />
-                {SOURCES.map((s) => (
-                  <button
-                    key={s.id}
-                    data-source={s.id}
-                    className={cn(
-                      'relative z-10 rounded-md px-2.5 py-0.5 text-xs font-medium transition-colors',
-                      source === s.id ? PLATFORM_TEXT[s.id] : 'text-muted-foreground hover:text-foreground',
-                    )}
-                    onClick={() => {
-                      setSource(s.id)
-                      // Artist search exists for NetEase only
-                      if (searchType === 'artist' && !ARTIST_SOURCES.includes(s.id)) setSearchType('song')
-                      resetState()
-                      setAddedIds(new Set())
-                    }}
-                  >
-                    {s.label}
-                  </button>
-                ))}
-              </div>
-            )}
+            {!selectedAlbum && <PlatformSelect value={source} onChange={handleSourceChange} />}
           </div>
         </ResponsiveDialogHeader>
 
@@ -254,30 +149,6 @@ export function SearchDialog({ open, onOpenChange, onAddToQueue, onInsertAfterCu
               onAddAll={handleAddBatch}
               onLoadMore={loadMoreTracks}
             />
-          ) : artistOpen ? (
-            <ArtistDetail
-              artist={artistState.artist}
-              loading={artistState.loading}
-              error={artistState.error}
-              songs={artistState.songs}
-              songsTotal={artistState.songsTotal}
-              songsHasMore={artistState.songsHasMore}
-              songsLoadingMore={artistState.songsLoadingMore}
-              albums={artistState.albums}
-              albumsHasMore={artistState.albumsHasMore}
-              albumsLoadingMore={artistState.albumsLoadingMore}
-              onBack={() => {
-                setArtistOpen(false)
-                resetArtist()
-              }}
-              onRetry={() => artistState.artist && void loadArtist(source, artistState.artist.id, artistState.artist)}
-              onAddTrack={handleAdd}
-              onInsertAfterCurrent={handleInsertAfterCurrent}
-              onAddAll={handleAddBatch}
-              onLoadMoreSongs={() => void artistState.loadMoreSongs()}
-              onLoadMoreAlbums={() => void artistState.loadMoreAlbums()}
-              onSelectAlbum={(album) => handleSelectAlbum(album, 'album')}
-            />
           ) : (
             <>
               {/* Type tabs */}
@@ -286,16 +157,23 @@ export function SearchDialog({ open, onOpenChange, onAddToQueue, onInsertAfterCu
                 onValueChange={(v) => {
                   setSearchType(v as SearchType)
                   resetState()
-                  setAddedIds(new Set())
                 }}
               >
                 <TabsList className="w-full">
-                  <TabsTrigger value="song" className="flex-1 text-xs sm:text-sm">单曲</TabsTrigger>
+                  <TabsTrigger value="song" className="flex-1 text-xs sm:text-sm">
+                    单曲
+                  </TabsTrigger>
                   {supportsArtists && (
-                    <TabsTrigger value="artist" className="flex-1 text-xs sm:text-sm">歌手</TabsTrigger>
+                    <TabsTrigger value="artist" className="flex-1 text-xs sm:text-sm">
+                      歌手
+                    </TabsTrigger>
                   )}
-                  <TabsTrigger value="album" className="flex-1 text-xs sm:text-sm">专辑</TabsTrigger>
-                  <TabsTrigger value="playlist" className="flex-1 text-xs sm:text-sm">歌单</TabsTrigger>
+                  <TabsTrigger value="album" className="flex-1 text-xs sm:text-sm">
+                    专辑
+                  </TabsTrigger>
+                  <TabsTrigger value="playlist" className="flex-1 text-xs sm:text-sm">
+                    歌单
+                  </TabsTrigger>
                 </TabsList>
               </Tabs>
 
@@ -336,7 +214,7 @@ export function SearchDialog({ open, onOpenChange, onAddToQueue, onInsertAfterCu
                     isTrackAdded={isTrackAdded}
                     onAddTrack={handleAdd}
                     onInsertAfterCurrent={handleInsertAfterCurrent}
-                    onArtistClick={handleArtistNameClick}
+                    onUnsupportedArtistClick={handleUnsupportedArtistClick}
                     emptyIcon={<Music2 className="h-8 w-8" />}
                     emptyMessage="暂无结果，换个关键词试试"
                   />
@@ -366,8 +244,9 @@ export function SearchDialog({ open, onOpenChange, onAddToQueue, onInsertAfterCu
                                   .filter(Boolean)
                                   .join(' · ')}
                                 cover={artist.thumbnailCover ?? artist.cover}
-                                fallback={<User className="text-muted-foreground h-5 w-5" />}
-                                onClick={() => handleSelectArtist(artist)}                              />
+                                fallback={<User className="text-muted-foreground size-5" />}
+                                onClick={() => handleSelectArtist(artist)}
+                              />
                             ))
                           : (results as Playlist[]).map((album, index) => (
                               <CollectionRow
@@ -375,8 +254,9 @@ export function SearchDialog({ open, onOpenChange, onAddToQueue, onInsertAfterCu
                                 title={album.name}
                                 subtitle={`${album.trackCount} 首${album.creator ? ` · ${album.creator}` : ''}`}
                                 cover={album.thumbnailCover ?? album.cover}
-                                fallback={<ListMusic className="text-muted-foreground h-5 w-5" />}
-                                onClick={() => handleSelectAlbum(album, searchType === 'album' ? 'album' : 'playlist')}                              />
+                                fallback={<ListMusic className="text-muted-foreground size-5" />}
+                                onClick={() => handleSelectAlbum(album, searchType === 'album' ? 'album' : 'playlist')}
+                              />
                             ))}
                         {hasMore && (
                           <Button

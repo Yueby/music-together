@@ -176,7 +176,7 @@ export function ArtistDetail({
                         title={album.name}
                         subtitle={`${album.trackCount} 首${album.creator ? ` · ${album.creator}` : ''}`}
                         cover={album.thumbnailCover ?? album.cover}
-                        fallback={<Disc3 className="text-muted-foreground h-5 w-5" />}
+                        fallback={<Disc3 className="text-muted-foreground size-5" />}
                         onClick={() => onSelectAlbum(album)}
                       />
                     ))}

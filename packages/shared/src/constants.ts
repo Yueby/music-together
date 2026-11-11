@@ -1,3 +1,23 @@
+import type { MusicSource } from './types.js'
+
+/** Every supported music platform: the one list the schemas, pickers and per-platform loops are built from. */
+export const MUSIC_SOURCES = ['netease', 'tencent', 'kugou'] as const satisfies readonly MusicSource[]
+
+/** A room id as it travels in URLs, queries and events: nanoid's alphabet, 1–20 characters. The one definition. */
+export const ROOM_ID_PATTERN = /^[A-Za-z0-9_-]{1,20}$/
+
+/** What a track's artist list says when the platform credited nobody. It names no one, so it must not be linked. */
+export const UNKNOWN_ARTIST = 'Unknown'
+
+/** Platforms with artist search and artist pages. */
+export const ARTIST_SOURCES: readonly MusicSource[] = ['netease']
+
+/**
+ * Platforms that offer the personal discovery content of the account page (daily songs, recommended playlists, radar,
+ * recommended artists, new albums). The server enforces it and the client says "not provided" for the others.
+ */
+export const DISCOVER_SOURCES: readonly MusicSource[] = ['netease']
+
 export const LIMITS = {
   ROOM_PASSWORD_MAX_LENGTH: 32,
   ROOM_NAME_MAX_LENGTH: 30,

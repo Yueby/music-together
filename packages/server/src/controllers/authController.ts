@@ -1,5 +1,4 @@
-import { EVENTS, QR_STATUS } from '@music-together/shared'
-import type { MusicSource } from '@music-together/shared'
+import { authCheckQrSchema, authSetCookieSchema, EVENTS, platformEventSchema, QR_STATUS } from '@music-together/shared'
 import * as authService from '../services/authService.js'
 import { AUTH_PROVIDERS } from '../services/authProvider.js'
 import { roomRepo } from '../repositories/roomRepository.js'
@@ -11,12 +10,6 @@ import { checkAuthRateLimit } from '../middleware/socketRateLimiter.js'
 function getSocketMapping(socketId: string) {
   return roomRepo.getSocketMapping(socketId) ?? null
 }
-
-/** 支持 QR 扫码登录的平台集合 */
-const QR_PLATFORMS = new Set<MusicSource>(['netease', 'kugou', 'tencent'])
-
-/** 支持 Cookie 登录的平台集合 */
-const VALID_PLATFORMS = new Set<MusicSource>(['netease', 'tencent', 'kugou'])
 
 export function registerAuthController(io: TypedServer, socket: TypedSocket) {
   // 防止同一 QR 会话重复处理 803 成功状态
@@ -30,13 +23,13 @@ export function registerAuthController(io: TypedServer, socket: TypedSocket) {
     if (!(await checkAuthRateLimit(socket))) return
     qrSuccessHandled = false
     try {
-      const platform = data?.platform
-      if (!platform || !QR_PLATFORMS.has(platform)) {
+      const parsed = platformEventSchema.safeParse(data)
+      if (!parsed.success) {
         socket.emit(EVENTS.AUTH_QR_STATUS, { status: QR_STATUS.EXPIRED, message: '暂不支持该平台扫码登录' })
         return
       }
 
-      const provider = AUTH_PROVIDERS[platform]
+      const provider = AUTH_PROVIDERS[parsed.data.platform]
       const result = await provider.generateQrCode()
 
       if (!result) {
@@ -54,19 +47,15 @@ export function registerAuthController(io: TypedServer, socket: TypedSocket) {
   socket.on(EVENTS.AUTH_CHECK_QR, async (data) => {
     if (!(await checkAuthRateLimit(socket))) return
     try {
-      if (!data?.key) {
-        socket.emit(EVENTS.AUTH_QR_STATUS, { status: QR_STATUS.EXPIRED, message: '缺少二维码 key' })
+      const parsed = authCheckQrSchema.safeParse(data)
+      if (!parsed.success) {
+        socket.emit(EVENTS.AUTH_QR_STATUS, { status: QR_STATUS.EXPIRED, message: '二维码信息无效' })
         return
       }
-
-      const platform = data.platform
-      if (!platform || !QR_PLATFORMS.has(platform)) {
-        logger.warn('AUTH_CHECK_QR: invalid or missing platform', { platform })
-        return
-      }
+      const { key, platform } = parsed.data
 
       const provider = AUTH_PROVIDERS[platform]
-      const result = await provider.checkQrStatus(data.key)
+      const result = await provider.checkQrStatus(key)
 
       socket.emit(EVENTS.AUTH_QR_STATUS, { status: result.status, message: result.message })
 
@@ -87,6 +76,7 @@ export function registerAuthController(io: TypedServer, socket: TypedSocket) {
               result.cookie,
               userInfo.nickname,
               userInfo.vipType,
+              userInfo.avatarUrl,
             )
             broadcastAuthStatus(io, socket, mapping)
           }
@@ -120,13 +110,8 @@ export function registerAuthController(io: TypedServer, socket: TypedSocket) {
   socket.on(EVENTS.AUTH_SET_COOKIE, async (data) => {
     if (!(await checkAuthRateLimit(socket))) return
     try {
-      if (
-        !data?.platform ||
-        !VALID_PLATFORMS.has(data.platform) ||
-        !data?.cookie ||
-        typeof data.cookie !== 'string' ||
-        data.cookie.length > 8000
-      ) {
+      const parsed = authSetCookieSchema.safeParse(data)
+      if (!parsed.success) {
         socket.emit(EVENTS.AUTH_SET_COOKIE_RESULT, {
           success: false,
           message: '参数不完整',
@@ -134,7 +119,7 @@ export function registerAuthController(io: TypedServer, socket: TypedSocket) {
         return
       }
 
-      const { platform, cookie } = data
+      const { platform, cookie } = parsed.data
       const mapping = getSocketMapping(socket.id)
       const roomId = mapping?.roomId ?? null
 
@@ -162,7 +147,15 @@ export function registerAuthController(io: TypedServer, socket: TypedSocket) {
       if (infoResult.ok) {
         const userInfo = infoResult.data
         if (mapping && mapping.roomId) {
-          authService.addCookie(mapping.roomId, platform, mapping.userId, cookie, userInfo.nickname, userInfo.vipType)
+          authService.addCookie(
+            mapping.roomId,
+            platform,
+            mapping.userId,
+            cookie,
+            userInfo.nickname,
+            userInfo.vipType,
+            userInfo.avatarUrl,
+          )
         }
         socket.emit(EVENTS.AUTH_SET_COOKIE_RESULT, {
           success: true,
@@ -212,10 +205,11 @@ export function registerAuthController(io: TypedServer, socket: TypedSocket) {
 
   socket.on(EVENTS.AUTH_LOGOUT, (data) => {
     try {
-      if (!data?.platform) return
+      const parsed = platformEventSchema.safeParse(data)
+      if (!parsed.success) return
       const mapping = getSocketMapping(socket.id)
       if (mapping) {
-        authService.removeCookie(mapping.roomId, data.platform, mapping.userId)
+        authService.removeCookie(mapping.roomId, parsed.data.platform, mapping.userId)
         broadcastAuthStatus(io, socket, mapping)
       }
     } catch (err) {

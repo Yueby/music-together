@@ -1,5 +1,8 @@
 import * as z from 'zod/v4'
-import { LIMITS } from './constants.js'
+import { LIMITS, MUSIC_SOURCES, ROOM_ID_PATTERN } from './constants.js'
+
+/** A room id: checked the same way wherever one comes in (join, REST queries, the room pre-check). */
+export const roomIdSchema = z.string().regex(ROOM_ID_PATTERN)
 
 // ---------------------------------------------------------------------------
 // Room
@@ -12,7 +15,7 @@ export const roomCreateSchema = z.object({
 })
 
 export const roomJoinSchema = z.object({
-  roomId: z.string().min(1, '房间号不能为空'),
+  roomId: roomIdSchema,
   nickname: z.string().min(1, '昵称不能为空').max(LIMITS.NICKNAME_MAX_LENGTH, '昵称过长'),
   password: z.string().max(LIMITS.ROOM_PASSWORD_MAX_LENGTH).optional(),
   rejoinToken: z.string().min(1).max(500).optional(),
@@ -72,10 +75,11 @@ const trackSchema = z.object({
   id: z.string().max(200),
   title: z.string().max(500),
   artist: z.array(z.string().max(200)).max(20),
+  artistIds: z.array(z.string().max(30)).max(20).optional(),
   album: z.string().max(500),
   duration: z.number().finite().nonnegative(),
   cover: z.string().max(2000),
-  source: z.enum(['netease', 'tencent', 'kugou']),
+  source: z.enum(MUSIC_SOURCES),
   sourceId: z.string().max(200),
   urlId: z.string().max(200),
   lyricId: z.string().max(200).optional(),
@@ -112,7 +116,24 @@ export const chatMessageSchema = z.object({
 // REST API – Music routes
 // ---------------------------------------------------------------------------
 
-const musicSourceSchema = z.enum(['netease', 'tencent', 'kugou'])
+export const musicSourceSchema = z.enum(MUSIC_SOURCES)
+
+// ---------------------------------------------------------------------------
+// Music accounts (socket events)
+// ---------------------------------------------------------------------------
+
+/** AUTH_REQUEST_QR / AUTH_LOGOUT / PLAYLIST_GET_MY: just which platform. */
+export const platformEventSchema = z.object({ platform: musicSourceSchema })
+
+export const authCheckQrSchema = z.object({
+  key: z.string().min(1).max(500),
+  platform: musicSourceSchema,
+})
+
+export const authSetCookieSchema = z.object({
+  platform: musicSourceSchema,
+  cookie: z.string().min(1).max(8000),
+})
 
 export const searchQuerySchema = z.object({
   source: musicSourceSchema,
@@ -123,7 +144,11 @@ export const searchQuerySchema = z.object({
 })
 
 /** Artist ids are numeric on NetEase; kept as a bounded string like every other platform id. */
-const artistIdSchema = z.string().min(1).max(LIMITS.PLAYLIST_ID_MAX_LENGTH).regex(/^[\w-]+$/, 'Invalid artist id')
+const artistIdSchema = z
+  .string()
+  .min(1)
+  .max(LIMITS.PLAYLIST_ID_MAX_LENGTH)
+  .regex(/^[\w-]+$/, 'Invalid artist id')
 
 /** Artist home page: profile, hot songs and the first page of albums. */
 export const artistQuerySchema = z.object({
@@ -175,9 +200,24 @@ export const myPlaylistQuerySchema = z.object({
   limit: z.coerce.number().int().min(1).max(1000).default(100),
   offset: z.coerce.number().int().min(0).default(0),
   total: z.coerce.number().int().min(0).default(0),
-  roomId: z.string().min(1).max(10),
+  roomId: roomIdSchema,
   type: z.enum(['playlist', 'album']).optional().default('playlist'),
 })
+
+/** Discovery lists that are the same for everyone (the radar playlists). */
+export const discoverQuerySchema = z.object({ source: musicSourceSchema })
+
+/** Discovery lists that belong to the caller (daily recommendations): the account comes from the room's pool. */
+export const dailyQuerySchema = z.object({
+  source: musicSourceSchema,
+  roomId: roomIdSchema,
+})
+
+/**
+ * The account page's discovery blocks (recommended playlists, artists, new albums). Playlists are personal when the caller
+ * is signed in, so the room (where the login lives) is part of the query like it is for the daily songs.
+ */
+export const homeQuerySchema = dailyQuerySchema
 
 /** A page of a public playlist or album. Anonymous by design: it never selects a music account. */
 export const playlistQuerySchema = z.object({

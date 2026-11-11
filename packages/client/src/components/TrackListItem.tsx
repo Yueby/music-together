@@ -1,5 +1,7 @@
+import { Badge } from '@/components/ui/badge'
 import { Button } from '@/components/ui/button'
 import { Tooltip, TooltipContent, TooltipTrigger } from '@/components/ui/tooltip'
+import { ArtistNames } from '@/components/ArtistNames'
 import { useArtworkUrl } from '@/hooks/useArtworkUrl'
 import { formatDuration } from '@/lib/format'
 import { cn } from '@/lib/utils'
@@ -13,7 +15,8 @@ export interface TrackListItemProps {
   isAdded: boolean
   onAdd: (track: Track) => void
   onInsertAfterCurrent?: (track: Track) => void
-  onArtistClick?: (artist: string) => void
+  /** What a click on an artist name does on a platform without artist pages (names open the artist page elsewhere). */
+  onUnsupportedArtistClick?: (artist: string) => void
   style?: React.CSSProperties
   className?: string
 }
@@ -24,7 +27,7 @@ export const TrackListItem = memo(function TrackListItem({
   isAdded,
   onAdd,
   onInsertAfterCurrent,
-  onArtistClick,
+  onUnsupportedArtistClick,
   style,
   className,
 }: TrackListItemProps) {
@@ -51,29 +54,16 @@ export const TrackListItem = memo(function TrackListItem({
         <p className="flex items-center gap-1.5 truncate text-sm font-medium">
           <span className="truncate">{track.title}</span>
           {track.vip && (
-            <span className="inline-flex shrink-0 items-center rounded px-1 py-0.5 text-[10px] font-bold leading-none text-amber-500 ring-1 ring-amber-500/30 bg-amber-500/10">
+            <Badge
+              variant="outline"
+              className="rounded border-amber-500/30 bg-amber-500/10 px-1 py-0.5 text-[10px] leading-none font-bold text-amber-500"
+            >
               VIP
-            </span>
+            </Badge>
           )}
         </p>
         <p className="truncate text-xs text-muted-foreground">
-          {onArtistClick
-            ? track.artist.map((a, ai) => (
-                <span key={ai}>
-                  {ai > 0 && ' / '}
-                  <button
-                    type="button"
-                    className="hover:text-foreground hover:underline"
-                    onClick={(e) => {
-                      e.stopPropagation()
-                      onArtistClick(a)
-                    }}
-                  >
-                    {a}
-                  </button>
-                </span>
-              ))
-            : track.artist.join(' / ')}
+          <ArtistNames track={track} onUnsupportedClick={onUnsupportedArtistClick} />
           {track.album ? ` · ${track.album}` : ''}
         </p>
       </div>

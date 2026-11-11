@@ -4,10 +4,15 @@ import {
   ttmlQuerySchema,
   artistQuerySchema,
   artistPageQuerySchema,
+  dailyQuerySchema,
+  discoverQuerySchema,
+  homeQuerySchema,
   myPlaylistQuerySchema,
   playlistQuerySchema,
+  type MusicSource,
 } from '@music-together/shared'
 import { config } from '../config.js'
+import { discoverService } from '../services/discoverService.js'
 import { roomRepo } from '../repositories/roomRepository.js'
 import * as authService from '../services/authService.js'
 import { artistService } from '../services/artistService.js'
@@ -19,6 +24,9 @@ export type ArtistQuery = ReturnType<typeof artistQuerySchema.parse>
 export type ArtistPageQuery = ReturnType<typeof artistPageQuerySchema.parse>
 export type PlaylistPageQuery = ReturnType<typeof playlistQuerySchema.parse>
 export type MyPlaylistPageQuery = ReturnType<typeof myPlaylistQuerySchema.parse>
+export type DailyQuery = ReturnType<typeof dailyQuerySchema.parse>
+export type DiscoverQuery = ReturnType<typeof discoverQuerySchema.parse>
+export type HomeQuery = ReturnType<typeof homeQuerySchema.parse>
 export type MusicLyricQuery = ReturnType<typeof lyricQuerySchema.parse>
 export type MusicTtmlQuery = ReturnType<typeof ttmlQuerySchema.parse>
 export type MusicLyricMetadata = Awaited<ReturnType<typeof musicProvider.getLyric>>
@@ -67,11 +75,35 @@ export class PlaylistAccessError extends Error {
  * client-supplied value; the login used is the one this user put into the room's account pool.
  */
 export function getMyPlaylistPageMetadata(data: MyPlaylistPageQuery, userId: string | undefined) {
+  return getPlaylistPageMetadata(data, callerAccountCookie(data.source, data.roomId, userId))
+}
+
+/**
+ * The login `userId` put into the room's account pool, after checking the caller really is that user and in that room.
+ * `null` means "in the room, but not logged in to this platform".
+ */
+function callerAccountCookie(source: MusicSource, roomId: string, userId: string | undefined): string | null {
   if (!userId) throw new PlaylistAccessError(401)
-  const room = roomRepo.get(data.roomId)
+  const room = roomRepo.get(roomId)
   if (!room || !room.users.some((user) => user.id === userId)) throw new PlaylistAccessError(403)
-  const cookie = authService.getUserCookie(userId, data.source, data.roomId)
-  return getPlaylistPageMetadata(data, cookie)
+  return authService.getUserCookie(userId, source, roomId)
+}
+
+/** Today's recommended songs for the caller's own login. */
+export function getDailyMetadata(data: DailyQuery, userId: string | undefined) {
+  return discoverService
+    .getDaily(data.source, callerAccountCookie(data.source, data.roomId, userId))
+    .then((items) => ({ items }))
+}
+
+/** Recommended playlists, artists and new albums; the playlists are the caller's own when they are signed in. */
+export function getHomeMetadata(data: HomeQuery, userId: string | undefined) {
+  return discoverService.getHome(data.source, callerAccountCookie(data.source, data.roomId, userId))
+}
+
+/** The radar playlists (the same for everyone). */
+export function getRadarMetadata(data: DiscoverQuery) {
+  return discoverService.getRadar(data.source).then((items) => ({ items }))
 }
 
 export function getArtistMetadata(data: ArtistQuery) {

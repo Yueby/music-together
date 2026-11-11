@@ -28,6 +28,12 @@ export const MAPP_METADATA_TARGETS = {
     endpoint: 'musicPlaylist',
     queryKeys: ['source', 'id', 'type', 'limit', 'offset', 'total'],
   },
+  /** The radar playlists: the same list for everyone (their content is read through the playlist targets). */
+  radar: { path: '/api/music/discover/radar', endpoint: 'musicRadar', queryKeys: ['source'] },
+  /** Today's recommended songs of the caller: needs the verified identity and a room whose account pool holds the login. */
+  daily: { path: '/api/music/discover/daily', endpoint: 'musicDaily', queryKeys: ['source', 'roomId'] },
+  /** Recommended playlists (personal when signed in), recommended artists and new albums, in one answer. */
+  home: { path: '/api/music/discover/home', endpoint: 'musicHome', queryKeys: ['source', 'roomId'] },
   /** One page of the caller's own playlist: needs the verified identity and a room whose account pool holds the login. */
   myPlaylist: {
     path: '/api/music/playlist/mine',

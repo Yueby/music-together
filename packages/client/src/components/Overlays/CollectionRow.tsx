@@ -1,4 +1,6 @@
+import { Button } from '@/components/ui/button'
 import { useArtworkUrl } from '@/hooks/useArtworkUrl'
+import { useInView } from '@/hooks/useInView'
 import { cn } from '@/lib/utils'
 import type { ReactNode } from 'react'
 
@@ -17,24 +19,27 @@ interface CollectionRowProps {
 
 /** One tappable result row (album, playlist or artist): artwork, title and a single line of detail. */
 export function CollectionRow({ title, subtitle, cover, fallback, round, onClick, disabled }: CollectionRowProps) {
-  const src = useArtworkUrl(cover)
+  // A long result list must not fetch every cover at once: only the rows about to be scrolled to do.
+  const [inViewRef, visible] = useInView<HTMLButtonElement>()
+  const src = useArtworkUrl(visible ? cover : undefined)
   const shape = round ? 'rounded-full' : 'rounded-md'
   return (
-    <button
-      type="button"
-      className="hover:bg-accent flex min-h-12 w-full min-w-0 items-center gap-3 overflow-hidden rounded-lg p-2 text-left transition-colors disabled:pointer-events-none disabled:opacity-50"
+    <Button
+      ref={inViewRef}
+      variant="ghost"
+      className="h-auto min-h-12 w-full min-w-0 justify-start gap-3 overflow-hidden rounded-lg p-2 text-left font-normal whitespace-normal"
       onClick={onClick}
       disabled={disabled}
     >
       {src ? (
-        <img src={src} alt={title} className={cn('h-12 w-12 shrink-0 object-cover', shape)} loading="lazy" />
+        <img src={src} alt={title} className={cn('size-12 shrink-0 object-cover', shape)} decoding="async" />
       ) : (
-        <div className={cn('bg-muted flex h-12 w-12 shrink-0 items-center justify-center', shape)}>{fallback}</div>
+        <div className={cn('bg-muted flex size-12 shrink-0 items-center justify-center', shape)}>{fallback}</div>
       )}
       <div className="min-w-0 flex-1">
         <p className="truncate text-sm font-medium">{title}</p>
         {subtitle ? <p className="text-muted-foreground truncate text-xs">{subtitle}</p> : null}
       </div>
-    </button>
+    </Button>
   )
 }

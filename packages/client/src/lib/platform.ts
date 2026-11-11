@@ -14,33 +14,28 @@ export const PLATFORM_SHORT_LABELS: Record<MusicSource, string> = {
   kugou: '酷狗',
 }
 
-/** Tab highlight colors per platform */
-export const PLATFORM_COLORS: Record<MusicSource, string> = {
-  netease: 'data-[state=active]:text-red-500',
-  tencent: 'data-[state=active]:text-green-500',
-  kugou: 'data-[state=active]:text-blue-500',
+/** A platform's brand colour as a background (its round mark in the platform picker) */
+export const PLATFORM_DOT: Record<MusicSource, string> = {
+  netease: 'bg-red-500',
+  tencent: 'bg-green-500',
+  kugou: 'bg-blue-500',
 }
 
-/** Active platform selector styles */
-export const PLATFORM_ACTIVE: Record<MusicSource, string> = {
-  netease: 'bg-red-500/15',
-  tencent: 'bg-green-500/15',
-  kugou: 'bg-blue-500/15',
+/** One character on a platform's round mark (the platform picker shows the mark instead of its name) */
+export const PLATFORM_GLYPH: Record<MusicSource, string> = {
+  netease: '云',
+  tencent: 'Q',
+  kugou: '酷',
 }
 
-/** Active platform text color */
-export const PLATFORM_TEXT: Record<MusicSource, string> = {
-  netease: 'text-red-500',
-  tencent: 'text-green-500',
-  kugou: 'text-blue-500',
-}
-
-/** VIP level display labels (Netease vipType values) */
-export const VIP_LABELS: Record<number, string> = {
-  0: '',
-  1: 'VIP',
-  10: '黑胶VIP',
-  11: '黑胶VIP',
+/** Membership name of an account (empty when it has none). The level numbers differ per platform. */
+export function vipLabel(platform: MusicSource, vipType: number | undefined): string {
+  if (!vipType || vipType <= 0) return ''
+  if (platform === 'netease') return vipType >= 10 ? '黑胶VIP' : 'VIP'
+  if (platform === 'tencent') return vipType >= 2 ? 'SVIP' : 'VIP'
+  if (vipType === 2) return '豪华VIP'
+  if (vipType === 3) return '超级VIP'
+  return 'VIP'
 }
 
 /** Find a platform's auth status from the room-wide status list */

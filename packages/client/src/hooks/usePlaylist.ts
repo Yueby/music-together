@@ -81,6 +81,14 @@ export function parsePlaylistInput(input: string, source: MusicSource): string |
   return null
 }
 
+/** One request for a list: what is being read, and (for the caller's own lists) the room whose account reads it. */
+interface PlaylistContext {
+  source: MusicSource
+  id: string
+  type?: 'playlist' | 'album'
+  personalRoomId?: string
+}
+
 export function usePlaylist() {
   const { socket } = useSocketContext()
   const [myPlaylists, setMyPlaylists] = useState<Record<MusicSource, Playlist[]>>({
@@ -101,16 +109,14 @@ export function usePlaylist() {
   const [tracksLoading, setTracksLoading] = useState(false)
   const [loadingMore, setLoadingMore] = useState(false)
 
-  // Track current playlist context to prevent stale responses
-  const currentPlaylistRef = useRef<{
-    source: MusicSource
-    id: string
-    type?: 'playlist' | 'album'
-    /** Room whose account pool serves this list; set only for the caller's own lists. */
-    personalRoomId?: string
-  } | null>(null)
+  // The list being shown. Every `fetchPlaylistTracks` makes a new object, so "is this still the current list?" is an
+  // identity check: it also tells apart an album and a playlist that share an id, or the same list read by another login.
+  const currentPlaylistRef = useRef<PlaylistContext | null>(null)
+  const abortRef = useRef<AbortController | null>(null)
   const offsetRef = useRef(0)
   const loadingMoreRef = useRef(false)
+
+  useEffect(() => () => abortRef.current?.abort(), [])
 
   useEffect(() => {
     if (!hostRuntime.platformAccounts) return
@@ -156,9 +162,14 @@ export function usePlaylist() {
       setLoadingMore(false)
       loadingMoreRef.current = false
 
-      // Track current context for stale response detection
-      currentPlaylistRef.current = { source, id: playlistId, type, personalRoomId }
+      // A newer list replaces whatever was still loading.
+      abortRef.current?.abort()
+      const controller = new AbortController()
+      abortRef.current = controller
+      const context: PlaylistContext = { source, id: playlistId, type, personalRoomId }
+      currentPlaylistRef.current = context
       offsetRef.current = 0
+      const isCurrent = () => currentPlaylistRef.current === context
 
       // Own lists need a room; without one there is nothing to read them with.
       if (personal && !personalRoomId) {
@@ -172,17 +183,17 @@ export function usePlaylist() {
           type,
           personalRoomId,
         })
-        const res = await metadataFetch(url, { credentials: 'include' })
+        const res = await metadataFetch(url, { credentials: 'include', signal: controller.signal })
+        // Whatever the answer, it only counts if this is still the list on screen: a late failure of an old list
+        // must not end the loading state of the new one.
+        if (!isCurrent()) return []
         if (!res.ok) {
           setTracksLoading(false)
           return []
         }
 
-        // Stale response guard
-        const ctx = currentPlaylistRef.current
-        if (!ctx || ctx.source !== source || ctx.id !== playlistId) return []
-
         const data = await res.json()
+        if (!isCurrent()) return []
         const tracks: Track[] = data.tracks ?? []
         const total: number = data.total ?? tracks.length
 
@@ -194,10 +205,7 @@ export function usePlaylist() {
         return tracks
       } catch {
         // Only update state if this is still the active playlist
-        const ctx = currentPlaylistRef.current
-        if (ctx && ctx.source === source && ctx.id === playlistId) {
-          setTracksLoading(false)
-        }
+        if (isCurrent()) setTracksLoading(false)
         return []
       }
     },
@@ -223,14 +231,14 @@ export function usePlaylist() {
         type: ctx.type,
         personalRoomId: ctx.personalRoomId,
       })
-      const res = await metadataFetch(url, { credentials: 'include' })
+      const res = await metadataFetch(url, { credentials: 'include', signal: abortRef.current?.signal })
       if (!res.ok) return
 
-      // Stale response guard — context might have changed while we were fetching
-      const currentCtx = currentPlaylistRef.current
-      if (!currentCtx || currentCtx.source !== ctx.source || currentCtx.id !== ctx.id) return
+      // Stale response guard — the list might have changed while we were fetching
+      if (currentPlaylistRef.current !== ctx) return
 
       const data = await res.json()
+      if (currentPlaylistRef.current !== ctx) return
       const newTracks: Track[] = data.tracks ?? []
 
       setPlaylistTracks((prev) => [...prev, ...newTracks])

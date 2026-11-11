@@ -357,7 +357,8 @@ export async function getUserInfo(cookie: string): Promise<GetUserInfoResult> {
     })
 
     if (!body?.data) {
-      logger.warn('Kugou getUserInfo: no data in VIP response', body)
+      // Only the shape: the response of an authenticated call is not for the log.
+      logger.warn('Kugou getUserInfo: no data in VIP response', { keys: Object.keys(body ?? {}) })
       return { ok: false, reason: 'expired' }
     }
 

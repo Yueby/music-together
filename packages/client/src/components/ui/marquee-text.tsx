@@ -33,7 +33,9 @@ export function MarqueeText({ children, className }: MarqueeTextProps) {
     ro.observe(text)
 
     return () => ro.disconnect()
-  }, [children])
+    // Observing both boxes covers every change of content or width, so this does not depend on `children`: an element
+    // child (a row of links) is a new object on every render and would re-measure each time.
+  }, [])
 
   const duration = overflow > 0 ? Math.max(5, 4 + overflow / 30) : 0
 

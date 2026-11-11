@@ -14,6 +14,16 @@ export const musicApiRateLimit = rateLimit({
   message: { error: 'Too many music API requests' },
 })
 
+/** The room pre-check is anonymous and answers with a room's name and head count: it must not be enumerable. */
+export const roomCheckRateLimit = rateLimit({
+  windowMs: 60_000,
+  limit: 60,
+  standardHeaders: 'draft-8',
+  legacyHeaders: false,
+  keyGenerator: identityOrIp,
+  message: { error: 'Too many room checks' },
+})
+
 /** Platform (mini-app) audio streams: each request proxies up to 32 MiB from a music CDN. */
 export const mediaStreamRateLimit = rateLimit({
   windowMs: 60_000,

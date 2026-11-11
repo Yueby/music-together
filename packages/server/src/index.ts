@@ -9,7 +9,7 @@ import { Server } from 'socket.io'
 import { config } from './config.js'
 import { initializeSocket } from './controllers/index.js'
 import { identityHttpMiddleware } from './middleware/identityHttp.js'
-import { musicApiRateLimit } from './middleware/httpRateLimiter.js'
+import { musicApiRateLimit, roomCheckRateLimit } from './middleware/httpRateLimiter.js'
 import { attachSocketIdentity } from './middleware/socketIdentity.js'
 import type { SocketData } from './middleware/types.js'
 import authRoutes from './routes/auth.js'
@@ -65,7 +65,7 @@ app.use('/api', identityHttpMiddleware)
 // REST API routes
 app.use('/api/auth', authRoutes)
 app.use('/api/music', musicApiRateLimit, musicRoutes)
-app.use('/api/rooms', roomRoutes)
+app.use('/api/rooms', roomCheckRateLimit, roomRoutes)
 
 // Health check
 app.get('/api/health', (_req, res) => {

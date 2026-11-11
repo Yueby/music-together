@@ -2,6 +2,7 @@ import type { Playlist, MusicSource } from '@music-together/shared'
 import * as neteaseAuth from './neteaseAuthService.js'
 import * as kugouAuth from './kugouAuthService.js'
 import * as tencentAuth from './tencentAuthService.js'
+import { withGridCovers } from './gridCovers.js'
 
 // ---------------------------------------------------------------------------
 // 统一认证服务接口
@@ -14,6 +15,8 @@ export interface UserInfoData {
   nickname: string
   vipType: number
   userId: number
+  /** https avatar address, when the platform returns one. */
+  avatarUrl?: string
 }
 
 /**
@@ -59,4 +62,10 @@ export const AUTH_PROVIDERS: Record<MusicSource, AuthProvider> = {
   netease: neteaseAuth,
   kugou: kugouAuth,
   tencent: tencentAuth,
+}
+
+/** The account's own playlists, with artwork the cover grid can show (https, right-sized). */
+export async function listUserPlaylists(source: MusicSource, cookie: string): Promise<Playlist[]> {
+  const playlists = await AUTH_PROVIDERS[source].getUserPlaylists(cookie)
+  return playlists.map((playlist) => withGridCovers(source, playlist))
 }

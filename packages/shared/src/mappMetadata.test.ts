@@ -40,6 +40,9 @@ describe('reviewed metadata read contract', () => {
         endpoint: 'musicPlaylist',
         queryKeys: ['source', 'id', 'type', 'limit', 'offset', 'total'],
       },
+      radar: { path: '/api/music/discover/radar', endpoint: 'musicRadar', queryKeys: ['source'] },
+      daily: { path: '/api/music/discover/daily', endpoint: 'musicDaily', queryKeys: ['source', 'roomId'] },
+      home: { path: '/api/music/discover/home', endpoint: 'musicHome', queryKeys: ['source', 'roomId'] },
       myPlaylist: {
         path: '/api/music/playlist/mine',
         endpoint: 'musicMyPlaylist',
@@ -48,7 +51,7 @@ describe('reviewed metadata read contract', () => {
     })
   })
 
-  it('keeps every target\'s declared query keys identical to its schema (the JWT and manifest depend on them)', () => {
+  it("keeps every target's declared query keys identical to its schema (the JWT and manifest depend on them)", () => {
     for (const [kind, target] of Object.entries(MAPP_METADATA_TARGETS)) {
       const schema = MAPP_METADATA_SCHEMAS[kind as keyof typeof MAPP_METADATA_SCHEMAS] as unknown as {
         shape: Record<string, unknown>
@@ -78,6 +81,9 @@ describe('reviewed metadata read contract', () => {
       'playlist',
       { source: 'tencent', id: 'abc', type: 'album', limit: 100, offset: 0, total: 0 },
     ],
+    ['/api/music/discover/radar?source=netease', 'radar', { source: 'netease' }],
+    ['/api/music/discover/daily?source=netease&roomId=ROOM01', 'daily', { source: 'netease', roomId: 'ROOM01' }],
+    ['/api/music/discover/home?source=netease&roomId=ROOM01', 'home', { source: 'netease', roomId: 'ROOM01' }],
     [
       '/api/music/playlist/mine?source=kugou&id=9&roomId=ROOM01',
       'myPlaylist',
@@ -97,6 +103,11 @@ describe('reviewed metadata read contract', () => {
     '/api/music/playlist?source=netease&id=1&type=artist',
     '/api/music/playlist/mine?source=netease&id=1',
     '/api/music/playlist/mine?source=netease&id=1&roomId=ABC123&userId=mapp_x',
+    '/api/music/discover/daily?source=netease',
+    '/api/music/discover/daily?source=netease&roomId=ABC123&userId=mapp_x',
+    '/api/music/discover/home?source=netease',
+    '/api/music/discover/home?source=netease&roomId=ABC123&userId=mapp_x',
+    '/api/music/discover/radar?source=netease&roomId=ABC123',
   ])('rejects %s', (raw) => {
     expect(() => parseMappMetadataRequest(raw)).toThrow()
   })

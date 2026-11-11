@@ -1,32 +1,27 @@
 import { Button } from '@/components/ui/button'
-import { Skeleton } from '@/components/ui/skeleton'
+import { PLATFORM_LABELS } from '@/lib/platform'
 import type { MusicSource, MyPlatformAuth, Playlist } from '@music-together/shared'
 import { ListMusic, RefreshCw } from 'lucide-react'
 import { useEffect } from 'react'
+import { CoverCard, CoverGrid } from '../CoverCard'
+import { GridSkeleton, Note, Section } from './DiscoverSections'
 
 interface PlaylistSectionProps {
   platform: MusicSource
   myStatus?: MyPlatformAuth
+  /** Still waiting for the server to confirm a saved login. */
+  verifying: boolean
   playlists: Playlist[]
   loading: boolean
   onFetchMyPlaylists: () => void
   onSelectPlaylist: (playlist: Playlist) => void
 }
 
-function PlaylistSkeleton() {
-  return (
-    <div className="flex items-center gap-3 rounded-lg p-2">
-      <Skeleton className="h-12 w-12 shrink-0 rounded-md" />
-      <div className="flex-1 space-y-1.5">
-        <Skeleton className="h-3.5 w-3/4" />
-        <Skeleton className="h-3 w-1/3" />
-      </div>
-    </div>
-  )
-}
-
+/** The user's own playlists on one platform as a cover grid. Without a login it asks for one instead of showing nothing. */
 export function PlaylistSection({
+  platform,
   myStatus,
+  verifying,
   playlists,
   loading,
   onFetchMyPlaylists,
@@ -41,65 +36,53 @@ export function PlaylistSection({
     }
   }, [isLoggedIn, playlists.length, loading, onFetchMyPlaylists])
 
-  return (
-    <div className="min-w-0 space-y-4 overflow-hidden">
-      {/* My playlists */}
-      {isLoggedIn && (
-        <div className="space-y-2">
-          <div className="flex items-center justify-between">
-            <h4 className="text-sm font-medium">我的歌单</h4>
-            <Button
-              variant="ghost"
-              size="sm"
-              onClick={onFetchMyPlaylists}
-              disabled={loading}
-              className="text-muted-foreground h-7 gap-1 px-2 text-xs"
-            >
-              <RefreshCw className={`h-3 w-3 ${loading ? 'animate-spin' : ''}`} />
-              刷新
-            </Button>
-          </div>
+  if (!isLoggedIn) {
+    return (
+      <Section title="我的歌单">
+        {verifying ? (
+          <GridSkeleton count={5} />
+        ) : (
+          <Note>{`登录${PLATFORM_LABELS[platform]}后可以查看和点播自己的歌单`}</Note>
+        )}
+      </Section>
+    )
+  }
 
-          {loading && playlists.length === 0 ? (
-            <div className="space-y-1">
-              {Array.from({ length: 4 }).map((_, i) => (
-                <PlaylistSkeleton key={i} />
-              ))}
-            </div>
-          ) : playlists.length > 0 ? (
-            <div className="space-y-0.5">
-              {playlists.map((pl) => (
-                <button
-                  key={pl.id}
-                  className="hover:bg-accent flex w-full min-w-0 items-center gap-3 overflow-hidden rounded-lg p-2 text-left transition-colors"
-                  onClick={() => onSelectPlaylist(pl)}
-                >
-                  {pl.thumbnailCover ?? pl.cover ? (
-                    <img
-                      src={pl.thumbnailCover ?? pl.cover}
-                      alt={pl.name}
-                      className="h-12 w-12 shrink-0 rounded-md object-cover"
-                      loading="lazy"
-                    />
-                  ) : (
-                    <div className="bg-muted flex h-12 w-12 shrink-0 items-center justify-center rounded-md">
-                      <ListMusic className="text-muted-foreground h-5 w-5" />
-                    </div>
-                  )}
-                  <div className="min-w-0 flex-1">
-                    <p className="truncate text-sm font-medium">{pl.name}</p>
-                    <p className="text-muted-foreground truncate text-xs">
-                      {pl.trackCount} 首{pl.creator ? ` · ${pl.creator}` : ''}
-                    </p>
-                  </div>
-                </button>
-              ))}
-            </div>
-          ) : (
-            <p className="text-muted-foreground py-4 text-center text-xs">暂无歌单</p>
-          )}
-        </div>
+  return (
+    <Section
+      title="我的歌单"
+      subtitle={playlists.length > 0 ? `共 ${playlists.length} 个歌单` : undefined}
+      action={
+        <Button
+          variant="ghost"
+          size="sm"
+          onClick={onFetchMyPlaylists}
+          disabled={loading}
+          className="text-muted-foreground min-h-11 shrink-0 gap-1 px-2 text-xs sm:h-7 sm:min-h-0"
+        >
+          <RefreshCw className={`h-3 w-3 ${loading ? 'animate-spin' : ''}`} />
+          刷新
+        </Button>
+      }
+    >
+      {loading && playlists.length === 0 ? (
+        <GridSkeleton count={5} />
+      ) : playlists.length > 0 ? (
+        <CoverGrid>
+          {playlists.map((pl) => (
+            <CoverCard
+              key={pl.id}
+              title={pl.name}
+              subtitle={`${pl.trackCount} 首${pl.creator ? ` · ${pl.creator}` : ''}`}
+              cover={pl.thumbnailCover ?? pl.cover}
+              fallback={<ListMusic className="text-muted-foreground size-8" />}
+              onClick={() => onSelectPlaylist(pl)}
+            />
+          ))}
+        </CoverGrid>
+      ) : (
+        <Note>暂无歌单</Note>
       )}
-    </div>
+    </Section>
   )
 }

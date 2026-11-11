@@ -1,11 +1,11 @@
+import { ROOM_ID_PATTERN } from '@music-together/shared'
 import { Router, type Router as RouterType } from 'express'
 import { roomRepo } from '../repositories/roomRepository.js'
 
 const router: RouterType = Router()
 
-/** Validate roomId: alphanumeric + _ -, 1-20 chars (matches nanoid urlAlphabet) */
 function isValidRoomId(roomId: string): boolean {
-  return typeof roomId === 'string' && roomId.length >= 1 && roomId.length <= 20 && /^[A-Za-z0-9_-]+$/.test(roomId)
+  return typeof roomId === 'string' && ROOM_ID_PATTERN.test(roomId)
 }
 
 /**
