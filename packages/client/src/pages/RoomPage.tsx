@@ -18,6 +18,7 @@ import { Drawer, DrawerContent, DrawerHeader, DrawerTitle } from '@/components/u
 import { cn } from '@/lib/utils'
 import { isAudioUnlocked, unlockAudio } from '@/lib/audioUnlock'
 import { roomCheck } from '@/lib/roomCheck'
+import { wrongPasswordText } from '@/lib/passwordErrorText'
 import type { RoomCheckInfo } from '@/lib/RoomCheckReader'
 import { useRoom } from '@/hooks/useRoom'
 import { usePlayer } from '@/hooks/usePlayer'
@@ -201,14 +202,14 @@ export default function RoomPage() {
           // Password was sent from gate but rejected (e.g. race condition / password changed)
           // Reset gate so user can re-enter password
           setGateOpen(false)
-          setGatePasswordError('密码错误，请重试')
+          setGatePasswordError(wrongPasswordText(error.message))
           passwordRef.current = undefined
           return
         }
 
         // Fallback password dialog path
         if (passwordNeeded) {
-          setPasswordError('密码错误，请重试')
+          setPasswordError(wrongPasswordText(error.message))
           setPasswordLoading(false)
         } else {
           setPasswordNeeded(true)

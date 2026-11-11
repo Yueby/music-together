@@ -122,13 +122,10 @@ export function ArtistPage({
           <ArtistHeader artist={artist} loading={loading} />
 
           <Tabs value={tab} onValueChange={(value) => setTab(value as 'songs' | 'albums')} className="shrink-0">
-            <TabsList className="w-full">
-              <TabsTrigger value="songs" className="flex-1 text-xs sm:text-sm">
-                热门歌曲
-              </TabsTrigger>
-              <TabsTrigger value="albums" className="flex-1 text-xs sm:text-sm">
-                专辑
-              </TabsTrigger>
+            {/* The same tabs as the search type (see SearchDialog) */}
+            <TabsList variant="nav" aria-label="歌手内容" className="w-full justify-start">
+              <TabsTrigger value="songs">热门歌曲</TabsTrigger>
+              <TabsTrigger value="albums">专辑</TabsTrigger>
             </TabsList>
           </Tabs>
 

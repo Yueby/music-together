@@ -145,6 +145,17 @@ Web hostRuntime 保留全部原能力。`hostRuntime` 只记录**宿主确实做
 - **登录态保存**：网页端把 `mt-auth-cookies` 存在 localStorage 并在重开后自动恢复。微应用的存储适配器是同步接口，所以 `bootstrapClient` 在宿主创建前用 SDK 的异步 `localStorage`（IndexedDB，按应用与沙箱/正式隔离）把这一个键预读进内存，之后写入同步落盘；其余设置和重连票据仍只在内存。manifest 因此新增 `storage.read` / `storage.write` 两项权限（需要平台审核），没有授予权限时退化为只在本次会话内有效。
 - **二维码图片**：服务端返回 base64 `data:` 图片，沙箱 CSP 拦截 `data:` 图片，所以界面统一把它转成 Blob URL（`dataUrlToBlob` 只接受 png/jpeg/gif/webp 的 base64，不接受 SVG）显示，网页端同样使用。
 
+### `storage.read` / `storage.write` 权限审查（公开发布前）
+
+结论：用途收敛、没有需要收紧的地方，不改代码；公开发布时在应用说明里写明即可。
+
+- **写入范围**：`storageBackend` 只把 `mt-auth-cookies` 一个键写穿到 SDK 的持久存储；其余 `mt-` 设置只在内存，重连票据（`mt-rejoin-token`）明确不接受，也不写任何原生存储
+- **隔离**：`sdk.localStorage` 按应用与沙箱/正式环境隔离；内容与网页端放在 localStorage 里的一致（音乐平台登录 Cookie 明文），没有比网页端更宽
+- **读出时校验**：`getAuthCookies` 校验数组形状与每项字段（平台在 `MUSIC_SOURCES` 内、Cookie 是字符串），畸形数据返回 `[]`，不会让账号弹窗崩溃
+- **清除**：用户在"音乐账号"里登出某个平台会走 `removeAuthCookie`，同步写穿删除持久副本；卸载应用只清内存、不删持久副本（登录态是为下次打开保留的）
+- **降级**：平台没批准权限时 `bootstrapClient` 不预读，退化为只在本次会话内有效
+- **仍要知道的**：Cookie 是明文放在应用私有的 IndexedDB 里，设备上能读到该存储的人能拿到登录态，与网页端 localStorage 同级。应用说明里应写明"登录态保存在本地"
+
 ### 平台运行环境限制与兜底
 
 微应用运行在 `sandbox="allow-scripts"` 的 iframe 中，并受平台 CSP 与 Trusted Types 约束（`autoplay` 权限策略为 `none`，需用户手势后才能发声）。这对共享的网页前端造成两类实际问题，由 `bootstrapClient` 在微应用里安装两个兜底，网页端不受影响：
