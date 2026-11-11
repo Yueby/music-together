@@ -2,6 +2,7 @@ import {
   ERROR_CODE,
   EVENTS,
   LIMITS,
+  PASSWORD_LOCKED_MESSAGE,
   roomCreateSchema,
   roomJoinSchema,
   roomSettingsSchema,
@@ -152,7 +153,7 @@ export function registerRoomController(io: TypedServer, socket: TypedSocket) {
           if (passwordLocked) {
             socket.emit(EVENTS.ROOM_ERROR, {
               code: ERROR_CODE.WRONG_PASSWORD,
-              message: '密码错误次数过多，请稍后再试',
+              message: PASSWORD_LOCKED_MESSAGE,
             })
             return
           }

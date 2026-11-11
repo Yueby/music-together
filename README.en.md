@@ -129,6 +129,7 @@ packages/
 | [Zustand](https://github.com/pmndrs/zustand)                                                  | State management              |
 | [shadcn/ui](https://github.com/shadcn-ui/ui)                                                  | UI component library          |
 | [Motion](https://github.com/motiondivision/motion)                                            | Animation library             |
+| [qq-music-download](https://github.com/tooplick/qq-music-download)                            | QQ Music login reference      |
 | [SPlayer-Next](https://github.com/SPlayer-Dev/SPlayer-Next)                                   | Account page layout reference |
 
 ## Links

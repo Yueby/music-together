@@ -9,6 +9,7 @@ import { Separator } from '@/components/ui/separator'
 import { useLobby } from '@/hooks/useLobby'
 import { unlockAudio } from '@/lib/audioUnlock'
 import { ACTION_LOADING_TIMEOUT_MS } from '@/lib/constants'
+import { wrongPasswordText } from '@/lib/passwordErrorText'
 import { storage } from '@/lib/storage'
 import { hostRuntime } from '@/lib/hostRuntime'
 import { useSocketContext } from '@/providers/SocketProvider'
@@ -122,7 +123,7 @@ export default function HomePage() {
       if (error.code === ERROR_CODE.WRONG_PASSWORD) {
         // If password dialog is already open, show error
         if (passwordDialogRef.current.open) {
-          setPasswordError('密码错误，请重试')
+          setPasswordError(wrongPasswordText(error.message))
         } else {
           // Direct join hit a password-protected room — open password dialog
           const targetRoomId = lastJoinedRoomIdRef.current || directRoomIdRef.current.trim()

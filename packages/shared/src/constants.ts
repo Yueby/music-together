@@ -6,6 +6,13 @@ export const MUSIC_SOURCES = ['netease', 'tencent', 'kugou'] as const satisfies 
 /** A room id as it travels in URLs, queries and events: nanoid's alphabet, 1–20 characters. The one definition. */
 export const ROOM_ID_PATTERN = /^[A-Za-z0-9_-]{1,20}$/
 
+/**
+ * The `WRONG_PASSWORD` message of a join that was refused because too many passwords were tried (see
+ * `LIMITS.ROOM_JOIN_PASSWORD_MAX_FAILURES`). The code stays the same so the password field stays open; the clients show
+ * this text instead of their usual "wrong password, try again".
+ */
+export const PASSWORD_LOCKED_MESSAGE = '密码错误次数过多，请稍后再试'
+
 /** What a track's artist list says when the platform credited nobody. It names no one, so it must not be linked. */
 export const UNKNOWN_ARTIST = 'Unknown'
 
