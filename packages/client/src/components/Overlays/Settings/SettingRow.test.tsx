@@ -42,33 +42,16 @@ function render(props: { description?: string; value?: string }) {
 }
 
 describe('SettingRow', () => {
-  it('keeps the description out of the layout and behind a hint button', () => {
+  it('shows the description under the label', () => {
     render({ description: '更高帧率更流畅' })
-    expect(container.textContent).not.toContain('更高帧率更流畅')
-    const hint = container.querySelector('button[aria-label="更高帧率更流畅"]')
-    expect(hint).not.toBeNull()
+    const description = Array.from(container.querySelectorAll('p')).find((p) => p.textContent === '更高帧率更流畅')
+    expect(description).toBeDefined()
+    expect(description?.previousElementSibling?.textContent).toBe('帧率')
   })
 
-  it('shows the description in a tooltip when the hint gets focus', () => {
-    render({ description: '更高帧率更流畅' })
-    const hint = container.querySelector<HTMLButtonElement>('button[aria-label="更高帧率更流畅"]')!
-    act(() => hint.focus())
-    expect(document.body.textContent).toContain('更高帧率更流畅')
-  })
-
-  it('shows the description on tap too, as touch screens have no hover', () => {
-    render({ description: '更高帧率更流畅' })
-    const hint = container.querySelector<HTMLButtonElement>('button[aria-label="更高帧率更流畅"]')!
-    act(() => {
-      hint.dispatchEvent(new PointerEvent('pointerdown', { bubbles: true, pointerType: 'touch' }))
-      hint.click()
-    })
-    expect(document.body.textContent).toContain('更高帧率更流畅')
-  })
-
-  it('has no hint button without a description', () => {
+  it('has no description line without one', () => {
     render({})
-    expect(container.querySelector('button')).toBeNull()
+    expect(container.querySelector('p')).toBeNull()
   })
 
   it('shows a live value beside the control', () => {
