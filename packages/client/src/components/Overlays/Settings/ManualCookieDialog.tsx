@@ -7,6 +7,7 @@ import {
   DialogHeader,
   DialogTitle,
 } from '@/components/ui/dialog'
+import { Textarea } from '@/components/ui/textarea'
 import { PLATFORM_LABELS } from '@/lib/platform'
 import type { MusicSource } from '@music-together/shared'
 import { useState } from 'react'
@@ -43,8 +44,8 @@ export function ManualCookieDialog({ open, onOpenChange, platform, onSubmit }: M
         </DialogHeader>
 
         <div className="space-y-3 py-2">
-          <textarea
-            className="border-input bg-background placeholder:text-muted-foreground focus-visible:ring-ring h-32 w-full resize-none rounded-md border px-3 py-2 text-sm focus-visible:ring-1 focus-visible:outline-none"
+          <Textarea
+            className="h-32 resize-none"
             placeholder="粘贴 Cookie 字符串..."
             value={cookie}
             onChange={(e) => setCookie(e.target.value)}

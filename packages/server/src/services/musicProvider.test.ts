@@ -7,6 +7,7 @@ import { getNeteasePlaybackUrl } from './neteasePlayback.js'
 vi.mock('./neteasePlayback.js', () => ({ getNeteasePlaybackUrl: vi.fn() }))
 import { deriveThumbnailCoverUrl, normalizeKugouTemplateCoverUrl, normalizeNeteaseCoverUrl } from './coverUrls.js'
 import { musicProvider, playlistCacheKey } from './musicProvider.js'
+import { SearchError } from './catalogUtils.js'
 
 const tencentSong = {
   id: 410316279,
@@ -62,19 +63,46 @@ describe('Tencent music search', () => {
     })
   })
 
-  it('returns an empty list for malformed upstream song data', async () => {
-    vi.spyOn(tencentAuth, 'requestSignedApi').mockResolvedValue({
+  it('fails the search for malformed upstream song data, and does not remember it as an empty result', async () => {
+    const request = vi.spyOn(tencentAuth, 'requestSignedApi').mockResolvedValue({
       body: {},
       meta: { curpage: 1, perpage: 20, sum: 0, nextpage: -1 },
     } as never)
 
-    await expect(musicProvider.search('tencent', 'malformed test fixture', 20, 1)).resolves.toEqual([])
+    await expect(musicProvider.search('tencent', 'malformed test fixture', 20, 1)).rejects.toBeInstanceOf(SearchError)
+    // Asking again goes upstream again: a failure is not cached.
+    await expect(musicProvider.search('tencent', 'malformed test fixture', 20, 1)).rejects.toBeInstanceOf(SearchError)
+    expect(request).toHaveBeenCalledTimes(2)
   })
 
-  it('returns an empty list when the signed request fails', async () => {
+  it('fails the search when the signed request fails', async () => {
     vi.spyOn(tencentAuth, 'requestSignedApi').mockRejectedValue(new Error('upstream unavailable'))
 
-    await expect(musicProvider.search('tencent', 'failure test fixture', 20, 1)).resolves.toEqual([])
+    await expect(musicProvider.search('tencent', 'failure test fixture', 20, 1)).rejects.toBeInstanceOf(SearchError)
+  })
+
+  it('answers an empty list when QQ found nothing', async () => {
+    vi.spyOn(tencentAuth, 'requestSignedApi').mockResolvedValue({
+      body: { song: { list: [] } },
+      meta: { curpage: 1, perpage: 20, sum: 0, nextpage: -1 },
+    })
+
+    await expect(musicProvider.search('tencent', 'nothing test fixture', 20, 1)).resolves.toEqual([])
+  })
+})
+
+describe('Meting song search (NetEase, Kugou)', () => {
+  it('fails the search for an unreadable answer or a failed request', async () => {
+    const search = vi.spyOn(Meting.prototype, 'search')
+    search.mockResolvedValueOnce('<html>not json</html>')
+    await expect(musicProvider.search('netease', 'unreadable fixture', 20, 1)).rejects.toBeInstanceOf(SearchError)
+    search.mockRejectedValueOnce(new Error('offline'))
+    await expect(musicProvider.search('kugou', 'offline fixture', 20, 1)).rejects.toBeInstanceOf(SearchError)
+  })
+
+  it('answers an empty list, and no error, when the platform found nothing', async () => {
+    vi.spyOn(Meting.prototype, 'search').mockResolvedValue(JSON.stringify({ result: { songCount: 0 } }))
+    await expect(musicProvider.search('netease', 'nothing fixture', 20, 1)).resolves.toEqual([])
   })
 })
 

@@ -12,6 +12,7 @@ import * as tencentAuth from './tencentAuthService.js'
 import { logger } from '../utils/logger.js'
 import { withTimeoutOrNull } from '../utils/withTimeout.js'
 import { searchAlbums, searchPlaylists } from './catalogSearch.js'
+import { SearchError } from './catalogUtils.js'
 import { kugouSongToTrack, navigatePath, rawToTrack } from './trackMapping.js'
 import { deriveThumbnailCoverUrl, normalizeKugouTemplateCoverUrl, normalizeNeteaseCoverUrl } from './coverUrls.js'
 import { getStreamUrlCacheTtl, isStreamUrlExpired } from './streamUrlLifetime.js'
@@ -313,13 +314,13 @@ class MusicProvider {
       // Fail Fast: timeout or null response
       if (!response) {
         logger.warn(`Tencent search timeout for "${keyword}"`)
-        return []
+        throw new SearchError()
       }
 
       const songList = response.body?.song?.list
       if (!Array.isArray(songList)) {
         logger.warn(`Tencent search returned an invalid song list for "${keyword}"`)
-        return []
+        throw new SearchError()
       }
 
       // Transform to Track format (Atomic Predictability: pure transformation)
@@ -348,8 +349,8 @@ class MusicProvider {
       logger.info(`Search "${keyword}" on tencent: ${tracks.length} results`)
       return tracks
     } catch (error) {
-      logger.error('Tencent search failed:', error)
-      return []
+      if (!(error instanceof SearchError)) logger.error('Tencent search failed:', error)
+      throw error instanceof SearchError ? error : new SearchError()
     }
   }
 
@@ -396,7 +397,7 @@ class MusicProvider {
       const raw = await withTimeout(meting.search(keyword, { limit, page }))
       if (raw === null) {
         logger.warn(`Search timeout for ${source}: "${keyword}"`)
-        return []
+        throw new SearchError()
       }
 
       let rawData: MetingJson
@@ -408,7 +409,7 @@ class MusicProvider {
         logger.error(`Full raw response:`, raw)
         logger.error(`Raw response type:`, typeof raw)
         logger.error(`Raw response length:`, raw?.length)
-        return []
+        throw new SearchError()
       }
 
       const songs = navigatePath(rawData, SEARCH_PATHS[source])
@@ -429,8 +430,9 @@ class MusicProvider {
       logger.info(`Search "${keyword}" on ${source}: ${tracks.length} results`)
       return tracks
     } catch (err) {
+      if (err instanceof SearchError) throw err
       logger.error(`Search failed for ${source}:`, err)
-      return []
+      throw new SearchError()
     }
   }
 

@@ -61,13 +61,6 @@ function validated<T>(
 }
 
 router.get(
-  '/search',
-  validated(searchQuerySchema, 'Search', async (data, _req, res) => {
-    res.json(await searchMusicMetadata(data))
-  }),
-)
-
-router.get(
   '/url',
   validated(urlQuerySchema, 'Get stream URL', async (data, _req, res) => {
     const { source, urlId, bitrate } = data
@@ -108,13 +101,13 @@ const ACCOUNT_CACHE = 'private, no-store'
 function catalogRoute<T>(
   schema: ZodSchema<T>,
   label: string,
-  cacheControl: string,
+  cacheControl: string | null,
   load: (data: T, userId: string | undefined) => Promise<unknown>,
 ) {
   return validated(schema, label, async (data, req, res) => {
     try {
       const body = await load(data, req.identityUserId)
-      res.setHeader('Cache-Control', cacheControl)
+      if (cacheControl) res.setHeader('Cache-Control', cacheControl)
       res.json(body)
     } catch (error) {
       res.setHeader('Cache-Control', 'no-store')
@@ -128,6 +121,8 @@ function catalogRoute<T>(
   })
 }
 
+// No cache policy of its own (as before); a search that could not run answers 503 `SEARCH_UPSTREAM`, not an empty list.
+router.get('/search', catalogRoute(searchQuerySchema, 'Search', null, (data) => searchMusicMetadata(data)))
 router.get('/artist', catalogRoute(artistQuerySchema, 'Get artist', PUBLIC_CACHE(300), getArtistMetadata))
 router.get(
   '/artist/songs',

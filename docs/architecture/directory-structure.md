@@ -61,7 +61,7 @@ src/
 │   │   ├── ArtistDialog.tsx    #     **全局唯一**的歌手页弹窗（挂在 RoomPage，由 `artistPageStore` 驱动）：搜索、队列、正在播放、账号页的歌手推荐都通过 `openArtistPage` 打开它，叠在当前弹窗之上，关闭回到原处；点歌手页里的专辑在原位展开，换歌手则重新开始
 │   │   ├── CollectionRow.tsx   #     可点击的结果行（专辑/歌单方形封面，歌手圆形头像）
 │   │   ├── CoverCard.tsx       #     封面网格磁贴（方形或圆形封面 + 标题 + 副标题；进入视口才加载封面）与 CoverGrid（手机 3 列，随弹窗变宽到 4、5 列）
-│   │   ├── SettingsDialog.tsx  #     设置弹窗（壳，Tab 导航：房间/成员/外观/歌词，移动端 nav scrollbar-hide；不再包含账号）
+│   │   ├── SettingsDialog.tsx  #     设置弹窗（壳，用 ui/tabs 的 Tabs：房间/成员/外观/歌词；宽屏（`useMediaQuery('(min-width: 768px)')`）左侧竖排，窄屏顶部横向可滚动；不再包含账号）
 │   │   ├── AccountDialog.tsx   #     音乐账号弹窗（网易云/QQ/酷狗登录、VIP 状态、个人歌单导入，内容是 PlatformHub；入口在房间顶栏的"音乐账号"按钮，桌面为独立图标、移动端在"更多"菜单；`hostRuntime.platformAccounts` 为 false 的宿主不渲染）
 │   │   └── Settings/
 │   │       ├── SettingRow.tsx              # 设置行共享组件
@@ -114,6 +114,7 @@ src/
 │       ├── slider.tsx
 │       ├── switch.tsx
 │       ├── tabs.tsx
+│       ├── textarea.tsx
 │       └── tooltip.tsx
 │
 ├── hooks/                      # 自定义 Hooks
@@ -124,6 +125,7 @@ src/
 │   ├── useBackgroundAlbum.ts   #   流体背景的封面来源：需读字节的宿主把 Blob URL 转成已加载的 `<img>`（避免库内 fetch 被 CSP 拦截）
 │   ├── usePlayerSync.ts        #   播放同步（Scheduled Execution + conductor 上报 + 周期性漂移校正）
 │   ├── useClockSync.ts         #   NTP 时钟同步 hook（校准客户端时钟与服务器对齐）
+│   ├── useMediaQuery.ts        #   订阅一条 CSS 媒体查询的匹配结果（需要按屏宽切换组件方向/结构而非仅样式时用）
 │   ├── useRoom.ts              #   房间组合 hook（编排 5 个子 hook，对外 API 不变）
 │   ├── room/                   #   useRoom 子 hook（按职责拆分）
 │   │   ├── useRoomState.ts     #     ROOM_STATE / JOIN / LEFT / SETTINGS / ROLE_CHANGED / ERROR + 挂载时补发 cookie（覆盖 HomePage 提前消费 ROOM_STATE 的场景）
@@ -219,7 +221,7 @@ src/
 │   ├── lyricFetch.ts          #   读取一首歌的歌词：网易云走 SDK（含逐词 YRC），QQ/酷狗走 Meting，酷狗再加 KRC 逐词行；超时或无法解析返回 null（调用方不缓存），硬失败抛出
 │   ├── trackMapping.ts        #   各平台原始歌曲数据 → `Track` 的纯函数（`rawToTrack`、`kugouSongToTrack`、`navigatePath`），含网易云歌手 id 对齐与"没人署名"占位符
 │   ├── coverUrls.ts           #   封面地址的纯函数：网易云去尺寸限制并升级 https、酷狗模板尺寸、各平台缩略图推导（网易云可指定任意尺寸）
-│   ├── catalogSearch.ts       #   三个平台的专辑/歌单搜索（`searchAlbums`/`searchPlaylists`）：QQ 请求、酷狗请求、网易云 Meting 各一个小函数共用；检查 HTTP 状态与业务码，失败或超时返回空列表并记日志；QQ 封面升级 https
+│   ├── catalogSearch.ts       #   三个平台的专辑/歌单搜索（`searchAlbums`/`searchPlaylists`）：QQ 请求、酷狗请求、网易云 Meting 各一个小函数共用；检查 HTTP 状态与业务码，搜索没有结果返回空列表，请求失败/超时/答复无法解析则抛 `SearchError` 并记日志（让界面提示重试，而不是显示"没有结果"）；QQ 封面升级 https
 │   ├── platformMediaService.ts #   可选房间音频读取授权、取链与有界流响应（默认未挂载）
 │   ├── mediaSourceRequest.ts   #   音乐 CDN HTTPS/公网 DNS 固定及音频响应校验
 │   ├── authService.ts          #   Cookie 池管理（房间级作用域；getAnyCookie 用于 VIP 播放共享，getUserCookie 用于歌单等用户私有操作）
@@ -231,7 +233,7 @@ src/
 │   ├── tencentAuthService.ts  #   QQ 音乐认证与通用 zzc 签名请求
 │   ├── kugouLyricService.ts   #   酷狗 KRC 搜索、下载、XOR/压缩解密与逐词解析，以及转成歌词播放器行格式的 `krcToAmllLines`
 │   ├── discoverService.ts     #   网易云每日推荐（按账号缓存 30 分钟，无登录直接 401）、雷达歌单列表（7 个固定歌单，匿名读取，缓存 1 小时，单个失败不影响其余）、首页区块 `getHome`（推荐歌单：登录用 `recommend_resource` 按账号缓存、未登录/登录失效用 `personalized` 共享缓存；热门歌手与新碟共享缓存 1 小时；区块各自失败为空，全部失败才报错）
-│   ├── catalogUtils.ts        #   网易云目录服务共用工具：统一的 `CatalogError`（kind/code/status，ArtistError 与 DiscoverError 的基类，Web 路由与微应用适配器按 kind 映射）、宽松解析、`neteaseArtist`/`neteaseAlbum`/`neteaseCover` 映射、`withDeadline`、带 TTL 且合并并发请求的 `sharedCache`
+│   ├── catalogUtils.ts        #   网易云目录服务共用工具：统一的 `CatalogError`（kind/code/status，ArtistError、DiscoverError、`SearchError` 的基类，Web 路由与微应用适配器按 kind 映射）、宽松解析、`neteaseArtist`/`neteaseAlbum`/`neteaseCover` 映射、`withDeadline`、带 TTL 且合并并发请求的 `sharedCache`
 │   ├── artistService.ts       #   网易云歌手搜索与主页（资料 + 最热歌曲 + 专辑并行取数，业务码校验、10 秒超时、带 TTL 的合并缓存；歌曲经 `musicProvider.ingestNeteaseSongs` 登记，之后加入队列与搜索结果一致）
 │   ├── ttmlService.ts         #   TTML 逐词歌词库读取并解析为 AMLL 歌词行（固定上游路径、超时、仅同站点公网重定向、大小上限、命中/缺失/故障分级缓存、并发合并）
 │   ├── voteActionService.ts    #   已通过投票的播放器/队列动作统一执行

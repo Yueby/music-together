@@ -65,6 +65,13 @@ describe('SettingsDialog hostRuntime platformAccounts isolation', () => {
 
   beforeEach(() => {
     vi.stubGlobal('IS_REACT_ACT_ENVIRONMENT', true)
+    // The tabs lay out by screen width.
+    vi.stubGlobal('matchMedia', (query: string) => ({
+      matches: false,
+      media: query,
+      addEventListener: () => {},
+      removeEventListener: () => {},
+    }))
     container = document.createElement('div')
     document.body.appendChild(container)
     root = createRoot(container)

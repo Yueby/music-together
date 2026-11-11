@@ -9,6 +9,7 @@ vi.mock('@meting/core', () => ({
 }))
 
 import { searchAlbums, searchPlaylists } from './catalogSearch.js'
+import { SearchError } from './catalogUtils.js'
 
 const QQ_KEY = 'music.search.SearchCgiService.DoSearchForQQMusicDesktop'
 const json = (body: unknown, status = 200) => ({ ok: status < 400, status, json: async () => body }) as Response
@@ -82,9 +83,13 @@ describe('QQ Music', () => {
   it.each([
     ['an HTTP error', json({}, 500)],
     ['a business error', json({ [QQ_KEY]: { code: 2001 } })],
-    ['no list in the answer', qq({})],
-  ])('answers an empty list for %s', async (_name, response) => {
+  ])('fails the search for %s, rather than answering "no results"', async (_name, response) => {
     fetchMock.mockResolvedValue(response)
+    await expect(searchAlbums('tencent', 'x')).rejects.toBeInstanceOf(SearchError)
+  })
+
+  it('answers an empty list for an answer with no list', async () => {
+    fetchMock.mockResolvedValue(qq({}))
     await expect(searchAlbums('tencent', 'x')).resolves.toEqual([])
   })
 })
@@ -115,8 +120,13 @@ describe('Kugou', () => {
     ['an HTTP error', json({}, 502)],
     ['a refused search', kugou([], 1)],
     ['no info', json({ errcode: 0, data: {} })],
-  ])('answers an empty list for %s', async (_name, response) => {
+  ])('fails the search for %s, rather than answering "no results"', async (_name, response) => {
     fetchMock.mockResolvedValue(response)
+    await expect(searchPlaylists('kugou', 'x')).rejects.toBeInstanceOf(SearchError)
+  })
+
+  it('answers an empty list when Kugou found nothing', async () => {
+    fetchMock.mockResolvedValue(kugou([]))
     await expect(searchPlaylists('kugou', 'x')).resolves.toEqual([])
   })
 })
@@ -159,10 +169,14 @@ describe('NetEase', () => {
 
   it.each([
     ['unparseable text', 'not json'],
-    ['no result', JSON.stringify({})],
     ['a timeout', null],
-  ])('answers an empty list for %s', async (_name, raw) => {
+  ])('fails the search for %s, rather than answering "no results"', async (_name, raw) => {
     meting.search.mockResolvedValue(raw)
+    await expect(searchAlbums('netease', 'x')).rejects.toBeInstanceOf(SearchError)
+  })
+
+  it('answers an empty list when NetEase leaves the list out because nothing matched', async () => {
+    meting.search.mockResolvedValue(JSON.stringify({ result: { albumCount: 0 } }))
     await expect(searchAlbums('netease', 'x')).resolves.toEqual([])
   })
 })
@@ -175,9 +189,9 @@ describe('any platform', () => {
     expect(meting.search).not.toHaveBeenCalled()
   })
 
-  it('answers an empty list, not an error, when the upstream call throws', async () => {
+  it('fails the search, with the same error whatever went wrong, when the upstream call throws', async () => {
     fetchMock.mockRejectedValue(new Error('offline'))
-    await expect(searchAlbums('tencent', 'x')).resolves.toEqual([])
-    await expect(searchPlaylists('kugou', 'x')).resolves.toEqual([])
+    await expect(searchAlbums('tencent', 'x')).rejects.toBeInstanceOf(SearchError)
+    await expect(searchPlaylists('kugou', 'x')).rejects.toMatchObject({ code: 'SEARCH_UPSTREAM', status: 503 })
   })
 })

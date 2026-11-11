@@ -3,12 +3,13 @@ import type { MusicSource, Playlist } from '@music-together/shared'
 import { httpsCoverUrl } from '../utils/httpsCoverUrl.js'
 import { logger } from '../utils/logger.js'
 import { withTimeoutOrNull } from '../utils/withTimeout.js'
+import { SearchError } from './catalogUtils.js'
 import { deriveThumbnailCoverUrl, normalizeKugouTemplateCoverUrl, normalizeNeteaseCoverUrl } from './coverUrls.js'
 
 /**
  * Album and playlist search for the three platforms. Both answer with `Playlist` entries (an album is a playlist-shaped
- * list whose tracks are read with `type: 'album'`). A search that fails or times out answers an empty list: the user
- * sees "no results" and can try again, and the failure is logged.
+ * list whose tracks are read with `type: 'album'`). A search that ran and found nothing answers an empty list; one that
+ * failed or timed out throws `SearchError` (logged), so the user is told to retry instead of seeing "no results".
  */
 
 const API_TIMEOUT_MS = 15_000
@@ -80,6 +81,12 @@ async function neteaseSearch(type: number, keyword: string, limit: number, page:
   }
 }
 
+/** The answer of a search request, or `SearchError` when there was none (as opposed to an answer with no hits). */
+function answered<T>(response: T | null): T {
+  if (response === null) throw new SearchError()
+  return response
+}
+
 function album(
   source: MusicSource,
   fields: { id: unknown; name: unknown; cover: string; thumbnail: string; trackCount: unknown; creator: unknown },
@@ -117,7 +124,7 @@ export async function searchAlbums(source: MusicSource, keyword: string, limit =
   if (!keyword.trim()) return []
   try {
     if (source === 'tencent') {
-      const list = (await qqSearch(QQ_ALBUM, keyword, limit, page))?.album?.list
+      const list = answered(await qqSearch(QQ_ALBUM, keyword, limit, page)).album?.list
       if (!Array.isArray(list)) return []
       return list.map((hit: Raw) => {
         const cover = httpsCoverUrl(hit.albumPic || '')
@@ -133,8 +140,8 @@ export async function searchAlbums(source: MusicSource, keyword: string, limit =
     }
 
     if (source === 'kugou') {
-      const list = await kugouSearch('album', keyword, limit, page)
-      return (list ?? []).map((hit) =>
+      const list = answered(await kugouSearch('album', keyword, limit, page))
+      return list.map((hit) =>
         album('kugou', {
           id: hit.albumid,
           name: hit.albumname,
@@ -146,7 +153,8 @@ export async function searchAlbums(source: MusicSource, keyword: string, limit =
       )
     }
 
-    const albums = (await neteaseSearch(NETEASE_ALBUM, keyword, limit, page))?.result?.albums
+    // NetEase leaves the list out of an answer with no hits.
+    const albums = answered(await neteaseSearch(NETEASE_ALBUM, keyword, limit, page)).result?.albums
     if (!Array.isArray(albums)) return []
     return albums.map((hit: Raw) => {
       const cover = normalizeNeteaseCoverUrl(hit.picUrl || hit.blurPicUrl || '')
@@ -161,7 +169,7 @@ export async function searchAlbums(source: MusicSource, keyword: string, limit =
     })
   } catch (error) {
     logger.error(`Search album failed for ${source}:`, error)
-    return []
+    throw error instanceof SearchError ? error : new SearchError()
   }
 }
 
@@ -169,7 +177,7 @@ export async function searchPlaylists(source: MusicSource, keyword: string, limi
   if (!keyword.trim()) return []
   try {
     if (source === 'tencent') {
-      const list = (await qqSearch(QQ_PLAYLIST, keyword, limit, page))?.songlist?.list
+      const list = answered(await qqSearch(QQ_PLAYLIST, keyword, limit, page)).songlist?.list
       if (!Array.isArray(list)) return []
       return list.map((hit: Raw) => {
         const cover = httpsCoverUrl(hit.imgurl || '')
@@ -186,8 +194,8 @@ export async function searchPlaylists(source: MusicSource, keyword: string, limi
     }
 
     if (source === 'kugou') {
-      const list = await kugouSearch('special', keyword, limit, page)
-      return (list ?? []).map((hit) =>
+      const list = answered(await kugouSearch('special', keyword, limit, page))
+      return list.map((hit) =>
         playlist('kugou', {
           id: hit.specialid,
           name: hit.specialname,
@@ -200,7 +208,7 @@ export async function searchPlaylists(source: MusicSource, keyword: string, limi
       )
     }
 
-    const playlists = (await neteaseSearch(NETEASE_PLAYLIST, keyword, limit, page))?.result?.playlists
+    const playlists = answered(await neteaseSearch(NETEASE_PLAYLIST, keyword, limit, page)).result?.playlists
     if (!Array.isArray(playlists)) return []
     return playlists.map((hit: Raw) => {
       const cover = normalizeNeteaseCoverUrl(hit.coverImgUrl || hit.picUrl || '')
@@ -216,6 +224,6 @@ export async function searchPlaylists(source: MusicSource, keyword: string, limi
     })
   } catch (error) {
     logger.error(`Search playlist failed for ${source}:`, error)
-    return []
+    throw error instanceof SearchError ? error : new SearchError()
   }
 }

@@ -5,7 +5,8 @@ import {
   ResponsiveDialogTitle,
 } from '@/components/ui/responsive-dialog'
 import { ScrollArea } from '@/components/ui/scroll-area'
-import { cn } from '@/lib/utils'
+import { Tabs, TabsContent, TabsList, TabsTrigger } from '@/components/ui/tabs'
+import { useMediaQuery } from '@/hooks/useMediaQuery'
 import { Palette, Settings2, Type, Users, type LucideIcon } from 'lucide-react'
 import { useEffect, useState } from 'react'
 import { RoomSettingsSection } from './Settings/RoomSettingsSection'
@@ -33,37 +34,6 @@ interface SettingsDialogProps {
 }
 
 // ---------------------------------------------------------------------------
-// Nav Item
-// ---------------------------------------------------------------------------
-
-function NavItem({
-  icon: Icon,
-  label,
-  active,
-  onClick,
-}: {
-  icon: LucideIcon
-  label: string
-  active: boolean
-  onClick: () => void
-}) {
-  return (
-    <button
-      role="tab"
-      aria-selected={active}
-      onClick={onClick}
-      className={cn(
-        'flex w-full items-center gap-2 rounded-md px-3 py-2 text-sm font-medium transition-colors',
-        active ? 'bg-accent text-accent-foreground' : 'text-muted-foreground hover:bg-accent/50 hover:text-foreground',
-      )}
-    >
-      <Icon className="h-4 w-4" />
-      {label}
-    </button>
-  )
-}
-
-// ---------------------------------------------------------------------------
 // Tab config
 // ---------------------------------------------------------------------------
 
@@ -86,6 +56,8 @@ export function SettingsDialog({
   initialTab,
 }: SettingsDialogProps) {
   const [tab, setTab] = useState<SettingsTab>(initialTab ?? 'room')
+  // Wide: the categories are a column on the left; narrow: a row under the title.
+  const wide = useMediaQuery('(min-width: 768px)')
 
   // When dialog opens with an initialTab, jump to it
   useEffect(() => {
@@ -96,50 +68,46 @@ export function SettingsDialog({
     <ResponsiveDialog open={open} onOpenChange={onOpenChange}>
       <ResponsiveDialogContent className="gap-0 p-0 md:max-w-[75vw] lg:max-w-[60vw]">
         <ResponsiveDialogDescription className="sr-only">调整房间、歌词和其他设置</ResponsiveDialogDescription>
-        <div className="flex h-[70vh] flex-col md:flex-row">
-          {/* Mobile: top tab bar */}
-          <div className="flex shrink-0 flex-col border-b md:hidden">
-            <ResponsiveDialogTitle className="px-4 pt-4 pb-2 text-lg font-semibold">设置</ResponsiveDialogTitle>
-            <nav className="scrollbar-hide flex gap-1 overflow-x-auto px-4 pb-2" role="tablist" aria-label="设置分类">
-              {TABS.map((t) => (
-                <button
-                  key={t.id}
-                  role="tab"
-                  aria-selected={tab === t.id}
-                  onClick={() => setTab(t.id)}
-                  className={cn(
-                    'flex shrink-0 items-center gap-1.5 rounded-md px-3 py-1.5 text-sm font-medium transition-colors',
-                    tab === t.id
-                      ? 'bg-accent text-accent-foreground'
-                      : 'text-muted-foreground hover:bg-accent/50 hover:text-foreground',
-                  )}
-                >
-                  <t.icon className="h-3.5 w-3.5" />
-                  {t.label}
-                </button>
+        <Tabs
+          value={tab}
+          onValueChange={(value) => setTab(value as SettingsTab)}
+          orientation={wide ? 'vertical' : 'horizontal'}
+          className="h-[70vh] gap-0"
+        >
+          <div className="flex shrink-0 flex-col border-b md:w-48 md:border-r md:border-b-0 md:p-4">
+            <ResponsiveDialogTitle className="px-4 pt-4 pb-2 text-lg font-semibold md:mb-2 md:px-3 md:pt-0">
+              设置
+            </ResponsiveDialogTitle>
+            <TabsList
+              aria-label="设置分类"
+              className="scrollbar-hide mx-4 mb-2 w-auto justify-start overflow-x-auto md:mx-0 md:mb-0 md:w-full"
+            >
+              {TABS.map(({ id, icon: Icon, label }) => (
+                <TabsTrigger key={id} value={id} className="flex-none md:flex-none">
+                  <Icon />
+                  {label}
+                </TabsTrigger>
               ))}
-            </nav>
+            </TabsList>
           </div>
-
-          {/* Desktop: left side nav */}
-          <nav className="hidden w-48 shrink-0 flex-col border-r p-4 md:flex" role="tablist" aria-label="设置分类">
-            <ResponsiveDialogTitle className="mb-4 px-3 text-lg font-semibold">设置</ResponsiveDialogTitle>
-            <div className="space-y-1">
-              {TABS.map((t) => (
-                <NavItem key={t.id} icon={t.icon} label={t.label} active={tab === t.id} onClick={() => setTab(t.id)} />
-              ))}
-            </div>
-          </nav>
 
           <ScrollArea className="min-h-0 flex-1">
             <div className="p-4 sm:p-6">
-              {tab === 'room' && <RoomSettingsSection onUpdateSettings={onUpdateSettings} />}
-              {tab === 'members' && <MembersSection onSetUserRole={onSetUserRole} />}
-              {tab === 'lyrics' && <LyricsSection />}
-              {tab === 'appearance' && <AppearanceSection />}
+              <TabsContent value="room">
+                <RoomSettingsSection onUpdateSettings={onUpdateSettings} />
+              </TabsContent>
+              <TabsContent value="members">
+                <MembersSection onSetUserRole={onSetUserRole} />
+              </TabsContent>
+              <TabsContent value="appearance">
+                <AppearanceSection />
+              </TabsContent>
+              <TabsContent value="lyrics">
+                <LyricsSection />
+              </TabsContent>
             </div>
           </ScrollArea>
-        </div>
+        </Tabs>
       </ResponsiveDialogContent>
     </ResponsiveDialog>
   )
