@@ -217,7 +217,8 @@ src/
 │   ├── queueService.ts         #   队列操作（reorder 保留未包含曲目防丢歌，getNextTrack 支持 4 种播放模式，clearQueue 清空，addBatchTracks 批量添加）
 │   ├── chatService.ts          #   聊天消息处理 + HTML 转义（含系统消息）
 │   ├── syncService.ts          #   播放位置估算工具（estimateCurrentTime）
-│   ├── musicProvider.ts        #   音乐数据聚合（3 层引用式 LRU 缓存 + 外部 API 超时保护 + 歌单分页获取；Netease 歌单使用 ncmApi.playlist_track_all 分块请求突破 1000 首限制，Kugou 用户歌单使用原生 API (get_other_list_file_nofilt) + Meting fallback，Tencent 使用 Meting 原始模式保留 VIP/时长字段）；仍是最大的文件，其中不依赖缓存状态的部分已陆续拆出：封面地址处理 `coverUrls`、专辑/歌单搜索 `catalogSearch`、歌词读取 `lyricFetch`、各平台原始曲目到 `Track` 的映射 `trackMapping`、KRC 转逐词歌词 `kugouLyricService`；留在这里的是缓存与曲目注册表、播放地址、歌单分页（它们与缓存交织）
+│   ├── musicProvider.ts        #   音乐数据聚合（3 层引用式 LRU 缓存 + 外部 API 超时保护 + 歌单分页获取）；不依赖缓存状态的部分已陆续拆出：封面地址处理 `coverUrls`、专辑/歌单搜索 `catalogSearch`、歌词读取 `lyricFetch`、各平台原始曲目到 `Track` 的映射 `trackMapping`、整份歌单/专辑的来源 `playlistFetchers`、KRC 转逐词歌词 `kugouLyricService`；留在这里的是缓存与曲目注册表、搜索、播放地址、歌单分页切片与封面补全
+│   ├── playlistFetchers.ts    #   整份歌单/专辑从哪里取：网易云用 ncmApi.playlist_track_all 每 1000 首一块（突破 Meting 的 1000 首限制，带调用者 cookie 读私有歌单）和 ncmApi.album；酷狗/QQ 歌单先走原生接口（酷狗 300 首、QQ 100 首一页），没数据回退 Meting 原始模式（保留 VIP/时长字段），专辑只走 Meting；每个函数只取数据，成功返回曲目、无数据/超时/失败（记日志）返回空数组，不碰缓存与注册表，由 `musicProvider` 收录。行为由 `musicProvider.playlist.test.ts` 固定
 │   ├── lyricFetch.ts          #   读取一首歌的歌词：网易云走 SDK（含逐词 YRC），QQ/酷狗走 Meting，酷狗再加 KRC 逐词行；超时或无法解析返回 null（调用方不缓存），硬失败抛出
 │   ├── trackMapping.ts        #   各平台原始歌曲数据 → `Track` 的纯函数（`rawToTrack`、`kugouSongToTrack`、`navigatePath`），含网易云歌手 id 对齐与"没人署名"占位符
 │   ├── coverUrls.ts           #   封面地址的纯函数：网易云去尺寸限制并升级 https、酷狗模板尺寸、各平台缩略图推导（网易云可指定任意尺寸）
