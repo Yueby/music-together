@@ -53,12 +53,17 @@ src/
 │   ├── TrackListItem.tsx        #   共享曲目行渲染（序号+封面+标题VIP+歌手名（ArtistNames，点击开歌手页）+时长+isAdded 添加按钮，memo 优化）
 │   ├── ArtistNames.tsx          #   一首歌的歌手名 "A / B"，每个名字都可点击打开歌手页（有歌手 id 直达，否则按名字查找）；没有歌手页的平台为纯文本或由调用方指定点击行为。**凡是显示歌手名的地方都用它**：曲目行、播放队列、正在播放（桌面/移动/紧凑三种布局）
 │   ├── VirtualTrackList.tsx     #   共享虚拟滚动曲目列表（@tanstack/react-virtual + 无限加载 + skeleton + 空态，forwardRef 暴露 scrollToTop）
+│   ├── EmptyState.tsx           #   空状态（图标 + 一行字，撑满所在区域并上下左右居中）；曲目列表与搜索结果共用
 │   ├── ArtworkImage.tsx         #   所有封面/头像的统一外框：图片在路上（已请求或宿主还在读取字节）时显示脉动骨架，到了再淡入；没有封面或读取失败（`useArtwork` 的 `failed`）才显示占位图标，因此占位图只代表"没有图"，不会是"可能还在加载"；`load=false`（列表行未进入视口）与 `pending`（所属对象还在获取）也显示为加载中
 │   ├── PlatformSelect.tsx       #   音乐平台下拉（网易云/QQ/酷狗 + 彩色圆点）；搜索弹窗与音乐账号共用，取代占满一行的按钮条/标签条
+│   ├── DialogNav.tsx            #   弹窗里"进入下一级"的两个部件：`DialogNavBar`（标题栏：返回按钮在标题左侧，出现/消失时宽度过渡、标题被推开；标题换页时淡入）与 `DialogPageTransition`（换页淡出淡入）。页面本身不带标题和返回，由容器弹窗提供
+│   ├── Pages/                   #   可复用的独立页面（由弹窗当容器显示，自己不含返回按钮和标题）
+│   │   ├── PlaylistPage.tsx    #     歌单/专辑的曲目页（TrackCollection）
+│   │   ├── ArtistPage.tsx      #     歌手主页（头像/简介/热门歌曲/专辑两个标签，目前仅网易云有数据；网页端与微应用同一份代码）
+│   │   └── TrackCollection.tsx #     可分页曲目列表（VirtualTrackList + queueKeys/addedIds 去重 + 动态全部添加过滤重复），歌单、专辑、歌手主页共用
 │   ├── Overlays/
 │   │   ├── QueueDrawer.tsx     #     播放队列抽屉（vaul Drawer，移动端底部/桌面端右侧）
 │   │   ├── SearchDialog.tsx    #     音乐搜索弹窗（单曲/歌手/专辑/歌单四个标签；VirtualTrackList 虚拟滚动 + 自动无限加载 + AbortController 竞态防护；专辑/歌单点进详情视图；歌手（搜索结果或歌曲行里的歌手名）打开全局歌手页）
-│   │   ├── ArtistDetail.tsx    #     歌手主页内容（头像/简介/热门歌曲/专辑两个标签，目前仅网易云有数据；网页端与微应用同一份代码）
 │   │   ├── ArtistDialog.tsx    #     **全局唯一**的歌手页弹窗（挂在 RoomPage，由 `artistPageStore` 驱动）：搜索、队列、正在播放、账号页的歌手推荐都通过 `openArtistPage` 打开它，叠在当前弹窗之上，关闭回到原处；点歌手页里的专辑在原位展开，换歌手则重新开始
 │   │   ├── CollectionRow.tsx   #     可点击的结果行（专辑/歌单方形封面，歌手圆形头像）
 │   │   ├── CoverCard.tsx       #     封面网格磁贴（方形或圆形封面 + 标题 + 副标题；进入视口才加载封面）与 CoverGrid（手机 3 列，随弹窗变宽到 4、5 列）
@@ -68,15 +73,13 @@ src/
 │   │       ├── SettingRow.tsx              # 设置行共享组件
 │   │       ├── RoomSettingsSection.tsx     # 房间设置（名称、密码）
 │   │       ├── MembersSection.tsx          # 成员列表（角色管理）
-│   │       ├── PlatformHub.tsx            # 账号弹窗正文的导航层：主页（AccountHome）与从它打开的歌单/专辑/每日推荐/歌手详情，就地展示并带返回；切换平台退出已打开的内容
+│   │       ├── PlatformHub.tsx            # 账号弹窗正文：主页（AccountHome）与从它打开的歌单/专辑/每日推荐（PlaylistPage），就地换页；页面栈、标题与返回按钮属于弹窗（`useDialogPages` + `DialogNavBar`），这里只管两页共用的数据；切换平台退出已打开的内容
 │   │       ├── AccountHome.tsx            # 账号主页，照流媒体首页做成**一页滚动的区块**（不是标签页）：我的歌单 → 推荐歌单 → 私人雷达 → 歌手推荐 → 新碟上架；每日推荐是推荐歌单的第一块普通磁贴；平台不支持的区块合并成一条"暂不提供…"提示；只负责展示与上报选择，不管怎么打开
 │   │       ├── DiscoverSections.tsx       # 区块组件：Section、CoverSection（封面网格 + 加载/空/失败状态）、Note（明确提示：需要登录 / 该平台暂不提供 / 加载失败可重试）
 │   │       ├── AccountMenu.tsx            # 弹窗右上角：平台下拉 + 头像（点开账号卡：昵称、VIP badge、房间登录情况、登录/登出）
 │   │       ├── LoginActions.tsx           # 扫码登录 / Cookie 登录两个按钮（账号卡与各区块的登录提示共用）
 │   │       ├── LoginBanner.tsx            # 账号页**唯一**的登录入口（未登录时置顶；各区块只写"需要登录"的文字，不再各放一组按钮）
 │   │       ├── PlaylistSection.tsx        # 我的歌单封面网格（未登录时给出提示和登录按钮；封面经 useArtworkUrl，微应用同样可见）
-│   │       ├── PlaylistDetail.tsx         # 歌单/专辑详情（返回行 + TrackCollection）
-│   │       ├── TrackCollection.tsx        # 可分页曲目列表（VirtualTrackList + queueKeys/addedIds 去重 + 动态全部添加过滤重复），歌单、专辑、歌手主页共用
 │   │       ├── ProfileSettingsSection.tsx  # 个人设置（昵称）
 │   │       ├── AppearanceSection.tsx       # 外观设置（歌词 + 背景 + 布局）
 │   │       ├── ManualCookieDialog.tsx      # 手动输入 Cookie 弹窗
@@ -110,7 +113,7 @@ src/
 │       ├── select.tsx
 │       ├── separator.tsx
 │       ├── marquee-text.tsx
-│       ├── responsive-dialog.tsx
+│       ├── responsive-dialog.tsx  #   响应式弹窗（桌面 Dialog / 手机 Drawer）；所有弹窗共用同一个标题栏：`DIALOG_BAR_CLASS`（h-14、下分割线、右侧给关闭按钮留位）与正文内边距 `DIALOG_BODY_CLASS`，弹窗内容本身用 `gap-0 p-0`，这样标题在每个弹窗里位置和高度一致
 │       ├── sheet.tsx
 │       ├── skeleton.tsx
 │       ├── slider.tsx
@@ -128,6 +131,7 @@ src/
 │   ├── usePlayerSync.ts        #   播放同步（Scheduled Execution + conductor 上报 + 周期性漂移校正）
 │   ├── useClockSync.ts         #   NTP 时钟同步 hook（校准客户端时钟与服务器对齐）
 │   ├── useArtworkUrl.ts        #   封面地址：`useArtwork` 返回 `{ src, failed }`（网页端直接用 URL；需读字节的宿主加载并重试一次，仍失败则 `failed`），`useArtworkUrl` 只取地址
+│   ├── useDialogPages.ts       #   弹窗的页面栈（`open`/`back`/`reset`，`current` 为当前页或 null=弹窗自己的首页）；每页带 `title`，标题栏显示它；搜索、账号、歌手页弹窗共用
 │   ├── useMediaQuery.ts        #   订阅一条 CSS 媒体查询的匹配结果（需要按屏宽切换组件方向/结构而非仅样式时用）
 │   ├── useRoom.ts              #   房间组合 hook（编排 5 个子 hook，对外 API 不变）
 │   ├── room/                   #   useRoom 子 hook（按职责拆分）
@@ -217,7 +221,7 @@ src/
 │   ├── playerService.ts        #   已提交/待执行播放状态 + revision 边界 + 流 URL 解析/过期刷新 + 切歌防抖 + 加入播放同步
 │   ├── streamUrlLifetime.ts    #   网易云 CDN 签名有效期解析、调度余量与按链接 TTL
 │   ├── neteasePlayback.ts      #   登录态正常 v1 取链、官方公钥缓存与有界媒体可用性验证
-│   ├── queueService.ts         #   队列操作（reorder 保留未包含曲目防丢歌，getNextTrack 支持 4 种播放模式，clearQueue 清空，addBatchTracks 批量添加）
+│   ├── queueService.ts         #   队列操作（reorder 保留未包含曲目防丢歌，getNextTrack 支持 4 种播放模式（队列模式为 consume 时按 `effectivePlayMode` 不循环），clearQueue 清空，addBatchTracks 批量添加）
 │   ├── chatService.ts          #   聊天消息处理 + HTML 转义（含系统消息）
 │   ├── syncService.ts          #   播放位置估算工具（estimateCurrentTime）
 │   ├── musicProvider.ts        #   音乐数据聚合（3 层引用式 LRU 缓存 + 外部 API 超时保护 + 歌单分页获取）；不依赖缓存状态的部分已陆续拆出：封面地址处理 `coverUrls`、专辑/歌单搜索 `catalogSearch`、歌词读取 `lyricFetch`、各平台原始曲目到 `Track` 的映射 `trackMapping`、整份歌单/专辑的来源 `playlistFetchers`、KRC 转逐词歌词 `kugouLyricService`；留在这里的是缓存与曲目注册表、搜索、播放地址、歌单分页切片与封面补全
@@ -225,6 +229,7 @@ src/
 │   ├── lyricFetch.ts          #   读取一首歌的歌词：网易云走 SDK（含逐词 YRC），QQ/酷狗走 Meting，酷狗再加 KRC 逐词行；超时或无法解析返回 null（调用方不缓存），硬失败抛出
 │   ├── trackMapping.ts        #   各平台原始歌曲数据 → `Track` 的纯函数（`rawToTrack`、`kugouSongToTrack`、`navigatePath`），含网易云歌手 id 对齐与"没人署名"占位符
 │   ├── coverUrls.ts           #   封面地址的纯函数：网易云去尺寸限制并升级 https、酷狗模板尺寸、各平台缩略图推导（网易云可指定任意尺寸）
+│   ├── idLookup.ts            #   按 ID 找一首歌/一张专辑/一个歌单/一位歌手（`lookupById`）：网易云与 QQ 通过 Meting 原始模式拿元数据（歌曲经 `musicProvider.ingest` 注册，之后点歌与搜索结果一致）；酷狗的专辑和歌单答复只有歌曲，所以名称取自其中内容（"专辑 <id>"/"歌单 <id>"）；酷狗对付费歌曲不报时长（0，播放器从音频读取）；不存在返回空列表，平台不应答抛 `SearchError`；歌手走 `artistService`
 │   ├── catalogSearch.ts       #   三个平台的专辑/歌单搜索（`searchAlbums`/`searchPlaylists`）：QQ 请求、酷狗请求、网易云 Meting 各一个小函数共用；检查 HTTP 状态与业务码，搜索没有结果返回空列表，请求失败/超时/答复无法解析则抛 `SearchError` 并记日志（让界面提示重试，而不是显示"没有结果"）；QQ 封面升级 https
 │   ├── platformMediaService.ts #   可选房间音频读取授权、取链与有界流响应（默认未挂载）
 │   ├── mediaSourceRequest.ts   #   音乐 CDN HTTPS/公网 DNS 固定及音频响应校验
@@ -282,6 +287,7 @@ src/
 ├── constants.ts       # 业务常量：LIMITS（长度/数量限制）, TIMING（同步间隔/宽限期）, NTP（时钟同步参数）, QR_STATUS（扫码状态码）, QR_TIMING（轮询间隔）
 ├── schemas.ts         # Zod 验证 schema
 ├── mappMetadata.ts    # 平台只读元数据 target/query 合同与大小预算
+├── musicRef.ts        # 按 ID 查找：各平台歌曲/专辑/歌单/歌手的 ID 形状（`normalizeMusicId`，只放行合法 ID，纯 ID 或同平台同类型分享链接里的 ID）、分享链接解析（`parseMusicLink`，识别平台与类型；网易云/QQ/酷狗常见链接格式，不会信任仿冒域名）、`looksLikeMusicId`（比前者更严：短数字、普通词仍当作关键词）、`supportsIdLookup`（歌手页仅网易云）
 └── abilities.ts       # CASL 权限定义（Actions incl. set-mode, Subjects, defineAbilityFor）
 ```
 

@@ -2,6 +2,8 @@ import { useState } from 'react'
 import { UserRound } from 'lucide-react'
 import { LIMITS } from '@music-together/shared'
 import {
+  DIALOG_BAR_CLASS,
+  DIALOG_BODY_CLASS,
   ResponsiveDialog,
   ResponsiveDialogBody,
   ResponsiveDialogContent,
@@ -41,16 +43,18 @@ export function NicknameDialog({ open, onOpenChange, onConfirm }: NicknameDialog
 
   return (
     <ResponsiveDialog open={open} onOpenChange={handleOpenChange}>
-      <ResponsiveDialogContent className="sm:max-w-sm">
-        <ResponsiveDialogHeader>
-          <ResponsiveDialogTitle className="flex items-center gap-2 text-lg">
+      <ResponsiveDialogContent className="gap-0 p-0 sm:max-w-sm">
+        <ResponsiveDialogHeader className={DIALOG_BAR_CLASS}>
+          <ResponsiveDialogTitle className="flex items-center gap-2">
             <UserRound className="h-5 w-5 text-primary" />
             设置昵称
           </ResponsiveDialogTitle>
-          <ResponsiveDialogDescription>加入房间前，请先设置你的昵称</ResponsiveDialogDescription>
         </ResponsiveDialogHeader>
 
-        <ResponsiveDialogBody>
+        <ResponsiveDialogBody className={DIALOG_BODY_CLASS}>
+          <ResponsiveDialogDescription className="text-muted-foreground mb-4 text-sm">
+            加入房间前，请先设置你的昵称
+          </ResponsiveDialogDescription>
           <form onSubmit={handleSubmit} className="space-y-4">
             <div className="space-y-2">
               <Label htmlFor="nickname-input">昵称</Label>

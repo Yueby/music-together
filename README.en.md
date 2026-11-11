@@ -119,16 +119,21 @@ packages/
 
 ## Acknowledgements
 
-| Library                                                                                       | Description                |
-| --------------------------------------------------------------------------------------------- | -------------------------- |
-| [Howler.js](https://github.com/goldfire/howler.js)                                            | Web audio playback         |
-| [Apple Music-like Lyrics](https://github.com/Steve-xmh/applemusic-like-lyrics)                | Lyrics component (GPL-3.0) |
-| [Meting](https://github.com/metowolf/Meting)                                                  | Multi-platform music API   |
-| [NeteaseCloudMusicApi Enhanced](https://github.com/NeteaseCloudMusicApiEnhanced/api-enhanced) | NetEase Cloud Music API    |
-| [CASL](https://github.com/stalniy/casl)                                                       | Permission management      |
-| [Zustand](https://github.com/pmndrs/zustand)                                                  | State management           |
-| [shadcn/ui](https://github.com/shadcn-ui/ui)                                                  | UI component library       |
-| [Motion](https://github.com/motiondivision/motion)                                            | Animation library          |
+| Library                                                                                       | Description                   |
+| --------------------------------------------------------------------------------------------- | ----------------------------- |
+| [Howler.js](https://github.com/goldfire/howler.js)                                            | Web audio playback            |
+| [Apple Music-like Lyrics](https://github.com/Steve-xmh/applemusic-like-lyrics)                | Lyrics component (GPL-3.0)    |
+| [Meting](https://github.com/metowolf/Meting)                                                  | Multi-platform music API      |
+| [NeteaseCloudMusicApi Enhanced](https://github.com/NeteaseCloudMusicApiEnhanced/api-enhanced) | NetEase Cloud Music API       |
+| [CASL](https://github.com/stalniy/casl)                                                       | Permission management         |
+| [Zustand](https://github.com/pmndrs/zustand)                                                  | State management              |
+| [shadcn/ui](https://github.com/shadcn-ui/ui)                                                  | UI component library          |
+| [Motion](https://github.com/motiondivision/motion)                                            | Animation library             |
+| [SPlayer-Next](https://github.com/SPlayer-Dev/SPlayer-Next)                                   | Account page layout reference |
+
+## Links
+
+- [LINUX DO](https://linux.do/) -- A community built on sincerity, friendliness, unity and professionalism. This project acknowledges and thanks the LINUX DO community.
 
 ## License
 

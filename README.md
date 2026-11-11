@@ -143,6 +143,11 @@ packages/
 | [shadcn/ui](https://github.com/shadcn-ui/ui)                                                  | UI 组件库          |
 | [Motion](https://github.com/motiondivision/motion)                                            | 动画库             |
 | [qq-music-download](https://github.com/tooplick/qq-music-download)                            | QQ 音乐登录参考    |
+| [SPlayer-Next](https://github.com/SPlayer-Dev/SPlayer-Next)                                   | 账号页布局参考     |
+
+## 友情链接
+
+- [LINUX DO](https://linux.do/) -- 真诚、友善、团结、专业，共建你我引以为荣之社区。本项目认可并感谢 LINUX DO 社区。
 
 ## 协议
 

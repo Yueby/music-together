@@ -66,6 +66,7 @@ const room = (): RoomState => ({
   users: [{ id: 'fixture-user', nickname: 'Fixture', role: 'owner' }],
   playState: { isPlaying: false, currentTime: 0, serverTimestamp: 0, revision: 0 },
   playMode: 'sequential',
+  queueMode: 'keep',
 })
 
 // Never a real browser account or socket. These callbacks are owned by the rendered hook tree.

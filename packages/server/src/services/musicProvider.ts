@@ -261,6 +261,18 @@ class MusicProvider {
     return tracks
   }
 
+  /**
+   * Tracks found by a direct lookup (by id), registered like search results so queueing them later is enriched the same
+   * way: known covers kept, missing ones resolved. All tracks are from one platform.
+   */
+  async ingest(tracks: Track[]): Promise<Track[]> {
+    if (tracks.length === 0) return tracks
+    for (const track of tracks) this.enrichFromRegistry(track)
+    await this.batchResolveCover(tracks, tracks[0].source)
+    this.registerTracks(tracks)
+    return tracks
+  }
+
   // ---------------------------------------------------------------------------
   // Public API — Search
   // ---------------------------------------------------------------------------

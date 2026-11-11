@@ -1,12 +1,15 @@
 import { Button } from '@/components/ui/button'
 import { Input } from '@/components/ui/input'
 import {
+  DIALOG_BAR_CLASS,
+  DIALOG_BODY_CLASS,
   ResponsiveDialog,
   ResponsiveDialogBody,
   ResponsiveDialogContent,
   ResponsiveDialogHeader,
   ResponsiveDialogTitle,
 } from '@/components/ui/responsive-dialog'
+import { cn } from '@/lib/utils'
 import { Loader2, Lock } from 'lucide-react'
 import { motion } from 'motion/react'
 import { useState } from 'react'
@@ -37,15 +40,15 @@ export function PasswordDialog({ open, onOpenChange, roomName, onSubmit, error, 
 
   return (
     <ResponsiveDialog open={open} onOpenChange={handleOpenChange}>
-      <ResponsiveDialogContent className="sm:max-w-sm">
-        <ResponsiveDialogHeader>
-          <ResponsiveDialogTitle className="flex items-center gap-2 text-lg">
+      <ResponsiveDialogContent className="gap-0 p-0 sm:max-w-sm">
+        <ResponsiveDialogHeader className={DIALOG_BAR_CLASS}>
+          <ResponsiveDialogTitle className="flex items-center gap-2">
             <Lock className="h-5 w-5 text-muted-foreground" />
             需要密码
           </ResponsiveDialogTitle>
         </ResponsiveDialogHeader>
 
-        <ResponsiveDialogBody className="space-y-4">
+        <ResponsiveDialogBody className={cn(DIALOG_BODY_CLASS, 'space-y-4')}>
           <p className="text-sm text-muted-foreground">房间「{roomName}」已设置密码保护</p>
 
           <form onSubmit={handleSubmit} className="space-y-4">

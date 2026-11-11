@@ -7,12 +7,16 @@ import {
   dailyQuerySchema,
   discoverQuerySchema,
   homeQuerySchema,
+  looksLikeMusicId,
   myPlaylistQuerySchema,
+  normalizeMusicId,
   playlistQuerySchema,
+  supportsIdLookup,
   type MusicSource,
 } from '@music-together/shared'
 import { config } from '../config.js'
 import { discoverService } from '../services/discoverService.js'
+import { lookupById } from '../services/idLookup.js'
 import { roomRepo } from '../repositories/roomRepository.js'
 import * as authService from '../services/authService.js'
 import { artistService } from '../services/artistService.js'
@@ -36,6 +40,13 @@ const ttmlService = createTtmlService({ baseUrl: config.ttml.dbBaseUrl })
 /** Public catalog orchestration shared by the Web route and the opt-in platform adapter. */
 export async function searchMusicMetadata(data: MusicSearchQuery) {
   const { source, keyword, limit, page, type } = data
+  // A keyword shaped like an id (or a share link) is looked up first: names are not always findable, ids always are.
+  // What it finds is the whole answer; nothing found (or the lookup failing) falls back to searching for the words.
+  const id = page === 1 && looksLikeMusicId(source, type, keyword) ? normalizeMusicId(source, type, keyword) : null
+  if (id && supportsIdLookup(source, type)) {
+    const found = await lookupById(source, type, id).catch(() => [])
+    if (found.length > 0) return { tracks: found, page, hasMore: false }
+  }
   // `tracks` is the historical name of the result list; it holds albums, playlists or artists for those search types.
   const tracks =
     type === 'album'

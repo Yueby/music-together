@@ -18,12 +18,73 @@ const provider = vi.hoisted(() => ({
 }))
 const discover = vi.hoisted(() => ({ getDaily: vi.fn(), getRadar: vi.fn() }))
 vi.mock('../services/discoverService.js', () => ({ discoverService: discover }))
+const lookup = vi.hoisted(() => ({ lookupById: vi.fn() }))
+vi.mock('../services/idLookup.js', () => lookup)
 const rooms = vi.hoisted(() => ({ get: vi.fn() }))
 const accounts = vi.hoisted(() => ({ getUserCookie: vi.fn() }))
 vi.mock('../services/musicProvider.js', () => ({ musicProvider: provider }))
 vi.mock('../repositories/roomRepository.js', () => ({ roomRepo: rooms }))
 vi.mock('../services/authService.js', () => accounts)
 beforeEach(() => vi.resetAllMocks())
+
+describe('a keyword that is an id or a share link', () => {
+  const base = { limit: 20, page: 1 } as const
+
+  it.each([
+    ['song', 'song'],
+    ['album', 'album'],
+    ['playlist', 'playlist'],
+    ['artist', 'artist'],
+  ] as const)('looks the %s up directly and does not search for the words', async (type, kind) => {
+    lookup.lookupById.mockResolvedValue([{ id: 'found' }])
+    await expect(searchMusicMetadata({ ...base, source: 'netease', keyword: ' 3778678 ', type })).resolves.toEqual({
+      tracks: [{ id: 'found' }],
+      page: 1,
+      hasMore: false,
+    })
+    expect(lookup.lookupById).toHaveBeenCalledExactlyOnceWith('netease', kind, '3778678')
+    expect(provider.search).not.toHaveBeenCalled()
+    expect(provider.searchAlbum).not.toHaveBeenCalled()
+    expect(provider.searchPlaylist).not.toHaveBeenCalled()
+  })
+
+  it('takes the id out of a share link of the same platform and kind', async () => {
+    lookup.lookupById.mockResolvedValue([{ id: 'found' }])
+    await searchMusicMetadata({
+      ...base,
+      source: 'tencent',
+      keyword: 'https://y.qq.com/n/ryqq/songDetail/003VHaBb0wCHop',
+      type: 'song',
+    })
+    expect(lookup.lookupById).toHaveBeenCalledExactlyOnceWith('tencent', 'song', '003VHaBb0wCHop')
+  })
+
+  it.each([
+    ['nothing is found', () => lookup.lookupById.mockResolvedValue([])],
+    ['the lookup fails', () => lookup.lookupById.mockRejectedValue(new Error('SEARCH_UPSTREAM'))],
+  ])('searches for the words after all when %s', async (_name, arrange) => {
+    arrange()
+    provider.search.mockResolvedValue([{ id: 'by-name' }])
+    await expect(
+      searchMusicMetadata({ ...base, source: 'netease', keyword: '1901371647', type: 'song' }),
+    ).resolves.toEqual({ tracks: [{ id: 'by-name' }], page: 1, hasMore: false })
+    expect(provider.search).toHaveBeenCalledWith('netease', '1901371647', 20, 1)
+  })
+
+  it.each([
+    ['ordinary words', 'netease', '周杰伦', 'song', 1],
+    ['a short number (a year, a band)', 'netease', '1975', 'artist', 1],
+    ['a link to another platform', 'netease', 'https://y.qq.com/n/ryqq/songDetail/003VHaBb0wCHop', 'song', 1],
+    ['an artist on a platform without artist pages', 'tencent', '003VHaBb0wCHop', 'artist', 1],
+    ['a second page', 'netease', '3778678', 'playlist', 2],
+  ] as const)('is searched for by name, without a lookup, for %s', async (_name, source, keyword, type, page) => {
+    provider.search.mockResolvedValue([])
+    provider.searchAlbum.mockResolvedValue([])
+    provider.searchPlaylist.mockResolvedValue([])
+    await searchMusicMetadata({ limit: 20, page, source, keyword, type }).catch(() => undefined)
+    expect(lookup.lookupById).not.toHaveBeenCalled()
+  })
+})
 
 describe('discovery', () => {
   const query = { source: 'netease', roomId: 'ROOM01' } as const
@@ -34,7 +95,7 @@ describe('discovery', () => {
     expect(discover.getRadar).toHaveBeenCalledExactlyOnceWith('netease')
   })
 
-  it('reads today\'s songs with the verified caller\'s own login in that room', async () => {
+  it("reads today's songs with the verified caller's own login in that room", async () => {
     rooms.get.mockReturnValue({ users: [{ id: 'mapp_me' }] })
     accounts.getUserCookie.mockReturnValue('MUSIC_U=mine')
     discover.getDaily.mockResolvedValue([{ id: 't' }])
@@ -68,21 +129,40 @@ describe('playlist pages', () => {
 
   it('reads a public page anonymously and treats total 0 as unknown', async () => {
     provider.getPlaylistPage.mockResolvedValue(page)
-    const result = await getPlaylistPageMetadata({ source: 'netease', id: '9', limit: 50, offset: 10, total: 0, type: 'album' }, null)
+    const result = await getPlaylistPageMetadata(
+      { source: 'netease', id: '9', limit: 50, offset: 10, total: 0, type: 'album' },
+      null,
+    )
     expect(result).toEqual({ tracks: page.tracks, total: 5, offset: 10, hasMore: true })
     expect(provider.getPlaylistPage).toHaveBeenCalledExactlyOnceWith('netease', '9', 50, 10, undefined, null, 'album')
   })
 
   describe('own playlist', () => {
-    const query = { source: 'netease', id: '9', limit: 50, offset: 0, total: 7, roomId: 'ROOM01', type: 'playlist' } as const
+    const query = {
+      source: 'netease',
+      id: '9',
+      limit: 50,
+      offset: 0,
+      total: 7,
+      roomId: 'ROOM01',
+      type: 'playlist',
+    } as const
 
-    it('uses the verified caller\'s own login in that room', async () => {
+    it("uses the verified caller's own login in that room", async () => {
       rooms.get.mockReturnValue({ users: [{ id: 'mapp_me' }, { id: 'someone-else' }] })
       accounts.getUserCookie.mockReturnValue('MUSIC_U=mine')
       provider.getPlaylistPage.mockResolvedValue(page)
       await getMyPlaylistPageMetadata(query, 'mapp_me')
       expect(accounts.getUserCookie).toHaveBeenCalledExactlyOnceWith('mapp_me', 'netease', 'ROOM01')
-      expect(provider.getPlaylistPage).toHaveBeenCalledExactlyOnceWith('netease', '9', 50, 0, 7, 'MUSIC_U=mine', 'playlist')
+      expect(provider.getPlaylistPage).toHaveBeenCalledExactlyOnceWith(
+        'netease',
+        '9',
+        50,
+        0,
+        7,
+        'MUSIC_U=mine',
+        'playlist',
+      )
     })
 
     it('falls back to an anonymous read when the caller has no login in the room', async () => {

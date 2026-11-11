@@ -1,15 +1,12 @@
-import {
-  ResponsiveDialog,
-  ResponsiveDialogContent,
-  ResponsiveDialogDescription,
-  ResponsiveDialogHeader,
-  ResponsiveDialogTitle,
-} from '@/components/ui/responsive-dialog'
+import { DialogNavBar } from '@/components/DialogNav'
+import { DIALOG_BODY_CLASS, ResponsiveDialog, ResponsiveDialogContent } from '@/components/ui/responsive-dialog'
 import { useAccountSession } from '@/hooks/useAccountSession'
+import { useDialogPages } from '@/hooks/useDialogPages'
 import { hostRuntime } from '@/lib/hostRuntime'
+import { cn } from '@/lib/utils'
 import { AccountMenu } from './Settings/AccountMenu'
 import { ManualCookieDialog } from './Settings/ManualCookieDialog'
-import { PlatformHub } from './Settings/PlatformHub'
+import { PlatformHub, type AccountPage } from './Settings/PlatformHub'
 import { QrLoginDialog } from './Settings/QrLoginDialog'
 
 interface AccountDialogProps {
@@ -36,29 +33,31 @@ export function AccountDialog({ open, onOpenChange }: AccountDialogProps) {
 function AccountDialogBody() {
   const session = useAccountSession()
   const { auth } = session
+  // A playlist, album or today's songs opened from the home page: one level in, named in the title bar
+  const pages = useDialogPages<AccountPage>()
 
   return (
     <>
       {/* The platform switcher and the avatar sit top-right, left of the close button */}
-      <ResponsiveDialogHeader className="shrink-0 border-b px-4 py-3 pr-14 sm:px-6 sm:pr-14">
-        <div className="flex items-center justify-between gap-3">
-          <ResponsiveDialogTitle className="text-lg font-semibold">音乐账号</ResponsiveDialogTitle>
-          <AccountMenu
-            platform={session.platform}
-            setPlatform={session.setPlatform}
-            myStatus={session.myStatus}
-            roomStatus={session.roomStatus}
-            verifying={session.verifying}
-            startQrLogin={session.startQrLogin}
-            setCookieOpen={session.setCookieOpen}
-            logout={session.logout}
-          />
-        </div>
-        <ResponsiveDialogDescription className="sr-only">管理音乐平台账号和歌单</ResponsiveDialogDescription>
-      </ResponsiveDialogHeader>
+      <DialogNavBar
+        title={pages.current?.title ?? '音乐账号'}
+        description="管理音乐平台账号和歌单"
+        onBack={pages.current ? pages.back : undefined}
+      >
+        <AccountMenu
+          platform={session.platform}
+          setPlatform={session.setPlatform}
+          myStatus={session.myStatus}
+          roomStatus={session.roomStatus}
+          verifying={session.verifying}
+          startQrLogin={session.startQrLogin}
+          setCookieOpen={session.setCookieOpen}
+          logout={session.logout}
+        />
+      </DialogNavBar>
       {/* The lists virtualize their own scrolling, so this area must not scroll itself. */}
-      <div className="flex min-h-0 min-w-0 flex-1 flex-col overflow-hidden p-4 sm:p-6">
-        <PlatformHub session={session} />
+      <div className={cn(DIALOG_BODY_CLASS, 'flex min-h-0 min-w-0 flex-1 flex-col overflow-hidden')}>
+        <PlatformHub session={session} pages={pages} />
       </div>
 
       <QrLoginDialog

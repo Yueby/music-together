@@ -36,7 +36,10 @@ export function LyricsSection() {
           description="当前歌词行在视口中的锚定方式"
           onReset={s.lyricAlignAnchor !== s.lyricAlignAnchorDefault ? s.resetLyricAlignAnchor : undefined}
         >
-          <Select value={s.lyricAlignAnchor} onValueChange={(v) => s.setLyricAlignAnchor(v as 'top' | 'center' | 'bottom')}>
+          <Select
+            value={s.lyricAlignAnchor}
+            onValueChange={(v) => s.setLyricAlignAnchor(v as 'top' | 'center' | 'bottom')}
+          >
             <SelectTrigger className="w-28">
               <SelectValue />
             </SelectTrigger>
@@ -50,7 +53,8 @@ export function LyricsSection() {
 
         <SettingRow
           label="对齐位置"
-          description={`当前: ${Math.round(s.lyricAlignPosition * 100)}%`}
+          description="当前歌词行停靠在视口纵向的哪个位置"
+          value={`${Math.round(s.lyricAlignPosition * 100)}%`}
           onReset={s.lyricAlignPosition !== s.lyricAlignPositionDefault ? s.resetLyricAlignPosition : undefined}
         >
           <Slider
@@ -95,7 +99,8 @@ export function LyricsSection() {
 
         <SettingRow
           label="逐词渐变宽度"
-          description={`当前: ${s.lyricWordFadeWidth.toFixed(2)} 倍字号`}
+          description="逐词高亮时，字与字之间渐变过渡的宽度（以字号的倍数计）"
+          value={`${s.lyricWordFadeWidth.toFixed(2)} 倍`}
           onReset={s.lyricWordFadeWidth !== s.lyricWordFadeWidthDefault ? s.resetLyricWordFadeWidth : undefined}
         >
           <Slider
@@ -107,7 +112,6 @@ export function LyricsSection() {
             className="w-32"
           />
         </SettingRow>
-
       </div>
 
       {/* ---- 歌词交互 ---- */}
@@ -202,7 +206,11 @@ export function LyricsSection() {
         <SettingRow
           label="翻译字体大小"
           description="翻译歌词相对主歌词的字号比例（10-200）"
-          onReset={s.lyricTranslationFontSize !== s.lyricTranslationFontSizeDefault ? s.resetLyricTranslationFontSize : undefined}
+          onReset={
+            s.lyricTranslationFontSize !== s.lyricTranslationFontSizeDefault
+              ? s.resetLyricTranslationFontSize
+              : undefined
+          }
         >
           <NumericInput value={s.lyricTranslationFontSize} onChange={s.setLyricTranslationFontSize} />
         </SettingRow>

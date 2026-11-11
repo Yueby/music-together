@@ -9,7 +9,7 @@ import { hostRuntime } from '@/lib/hostRuntime'
 import { storage } from '@/lib/storage'
 import { usePlayerStore } from '@/stores/playerStore'
 import { useRoomStore } from '@/stores/roomStore'
-import type { AudioQuality } from '@music-together/shared'
+import type { AudioQuality, QueueMode, RoomSettingsUpdate } from '@music-together/shared'
 import { LIMITS } from '@music-together/shared'
 import { Check, Copy, Lock, LockOpen, Pencil, X } from 'lucide-react'
 import { useEffect, useMemo, useState } from 'react'
@@ -27,8 +27,17 @@ function getQualityLabel(quality: AudioQuality): string {
   return QUALITY_OPTIONS.find((o) => o.value === quality)?.label ?? `${quality}kbps`
 }
 
+const QUEUE_MODE_OPTIONS: { value: QueueMode; label: string }[] = [
+  { value: 'keep', label: '保留已播放' },
+  { value: 'consume', label: '播完即移除' },
+]
+
+function getQueueModeLabel(mode: QueueMode): string {
+  return QUEUE_MODE_OPTIONS.find((o) => o.value === mode)?.label ?? mode
+}
+
 interface RoomSettingsSectionProps {
-  onUpdateSettings: (settings: { name?: string; password?: string | null; audioQuality?: AudioQuality }) => void
+  onUpdateSettings: (settings: RoomSettingsUpdate) => void
 }
 
 export function RoomSettingsSection({ onUpdateSettings }: RoomSettingsSectionProps) {
@@ -124,7 +133,7 @@ export function RoomSettingsSection({ onUpdateSettings }: RoomSettingsSectionPro
         <h3 className="text-base font-semibold">房间信息</h3>
         <Separator className="mt-2 mb-4" />
 
-        <SettingRow label="房间名">
+        <SettingRow label="房间名" description={isOwner ? '点击右侧编辑，所有人都会看到新名称' : '房间对外显示的名称，仅房主可修改'}>
           {editingName ? (
             <div className="flex items-center gap-1.5">
               <Input
@@ -163,7 +172,7 @@ export function RoomSettingsSection({ onUpdateSettings }: RoomSettingsSectionPro
           )}
         </SettingRow>
 
-        <SettingRow label="房间号">
+        <SettingRow label="房间号" description="把房间号或房间链接发给朋友，对方即可加入">
           <div className="flex items-center gap-2">
             <code className="rounded bg-muted px-2 py-0.5 text-sm">{room?.id}</code>
             {hostRuntime.clipboard && (
@@ -185,13 +194,13 @@ export function RoomSettingsSection({ onUpdateSettings }: RoomSettingsSectionPro
           </div>
         </SettingRow>
 
-        <SettingRow label="同步偏移">
+        <SettingRow label="同步偏移" description="你的播放进度与房间的差距，偏大时会自动校正">
           <span className={`text-sm font-mono ${driftDisplay.isHigh ? 'text-yellow-500' : 'text-muted-foreground'}`}>
             {driftDisplay.label}
           </span>
         </SettingRow>
 
-        <SettingRow label="音质" description={isOwner ? '切换后对下一首歌生效' : undefined}>
+        <SettingRow label="音质" description={isOwner ? '切换后对下一首歌生效' : '房间统一的播放音质，仅房主可修改'}>
           {isOwner ? (
             <Select
               value={String(room?.audioQuality ?? 320)}
@@ -222,7 +231,42 @@ export function RoomSettingsSection({ onUpdateSettings }: RoomSettingsSectionPro
           )}
         </SettingRow>
 
-        <SettingRow label="密码保护">
+        <SettingRow
+          label="队列模式"
+          description={
+            isOwner
+              ? '「播完即移除」：听完（或切走）的歌离开队列，不再循环，后点的歌依次排在后面'
+              : room?.queueMode === 'consume'
+                ? '听完的歌会离开队列，不循环'
+                : '听过的歌会保留在队列里，可循环播放；仅房主可切换'
+          }
+        >
+          {isOwner ? (
+            <Select
+              value={room?.queueMode ?? 'keep'}
+              onValueChange={(v) => {
+                const mode = v as QueueMode
+                onUpdateSettings({ queueMode: mode })
+                toast.success(`队列模式已切换为「${getQueueModeLabel(mode)}」`)
+              }}
+            >
+              <SelectTrigger className="h-8 w-[145px] text-sm" aria-label="队列模式">
+                <SelectValue />
+              </SelectTrigger>
+              <SelectContent>
+                {QUEUE_MODE_OPTIONS.map((opt) => (
+                  <SelectItem key={opt.value} value={opt.value}>
+                    {opt.label}
+                  </SelectItem>
+                ))}
+              </SelectContent>
+            </Select>
+          ) : (
+            <span className="text-sm text-muted-foreground">{getQueueModeLabel(room?.queueMode ?? 'keep')}</span>
+          )}
+        </SettingRow>
+
+        <SettingRow label="密码保护" description="设置后，新成员需输入密码才能进入房间">
           {room?.hasPassword ? (
             <div className="flex items-center gap-2">
               <Badge variant="secondary" className="gap-1">

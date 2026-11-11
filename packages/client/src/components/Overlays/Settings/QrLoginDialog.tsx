@@ -1,5 +1,7 @@
 import { Button } from '@/components/ui/button'
 import { Dialog, DialogContent, DialogDescription, DialogHeader, DialogTitle } from '@/components/ui/dialog'
+import { DIALOG_BAR_CLASS, DIALOG_BODY_CLASS } from '@/components/ui/responsive-dialog'
+import { cn } from '@/lib/utils'
 import { useDataImageUrl } from '@/hooks/useDataImageUrl'
 import { PLATFORM_LABELS } from '@/lib/platform'
 import type { MusicSource } from '@music-together/shared'
@@ -80,23 +82,19 @@ export function QrLoginDialog({
 
   return (
     <Dialog open={open} onOpenChange={onOpenChange}>
-      <DialogContent className="sm:max-w-sm">
-        <DialogHeader>
+      <DialogContent className="gap-0 p-0 sm:max-w-sm">
+        <DialogHeader className={DIALOG_BAR_CLASS}>
           <DialogTitle>{label}扫码登录</DialogTitle>
-          <DialogDescription>使用{scanApp}扫描二维码登录</DialogDescription>
         </DialogHeader>
 
-        <div className="flex flex-col items-center gap-4 py-4">
+        <div className={cn(DIALOG_BODY_CLASS, 'flex flex-col items-center gap-4')}>
+          <DialogDescription>使用{scanApp}扫描二维码登录</DialogDescription>
           {/* QR Code */}
           <div className="relative flex h-52 w-52 items-center justify-center rounded-lg border bg-white">
             {isLoading && <Loader2 className="text-muted-foreground h-8 w-8 animate-spin" />}
             {!isLoading && qrSrc && (
               <>
-                <img
-                  src={qrSrc}
-                  alt={`${label}登录二维码`}
-                  className="h-full w-full rounded-lg object-contain p-2"
-                />
+                <img src={qrSrc} alt={`${label}登录二维码`} className="h-full w-full rounded-lg object-contain p-2" />
                 {/* Overlay for expired/success */}
                 {statusCode === QR_STATUS.EXPIRED && (
                   <div className="absolute inset-0 flex flex-col items-center justify-center rounded-lg bg-black/60">

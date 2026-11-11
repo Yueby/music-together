@@ -34,9 +34,7 @@ async function reconcileAndBroadcastVote(io: TypedServer, roomId: string, room: 
 
   const claimedVote = voteService.claimVote(roomId, result.vote.id)
   if (!claimedVote) return
-  const executed = result.passed
-    ? await executeVoteAction(io, roomId, claimedVote.action, claimedVote.payload)
-    : false
+  const executed = result.passed ? await executeVoteAction(io, roomId, claimedVote.action, claimedVote.payload) : false
   io.to(roomId).emit(EVENTS.VOTE_RESULT, {
     passed: result.passed && executed,
     action: claimedVote.action,
@@ -210,6 +208,7 @@ export function registerRoomController(io: TypedServer, socket: TypedSocket) {
         name: parsed.data.name,
         password: parsed.data.password,
         audioQuality: parsed.data.audioQuality,
+        queueMode: parsed.data.queueMode,
       })
 
       const updatedRoom = roomRepo.get(ctx.roomId)
@@ -220,6 +219,7 @@ export function registerRoomController(io: TypedServer, socket: TypedSocket) {
         name: updatedRoom.name,
         hasPassword: updatedRoom.password !== null,
         audioQuality: updatedRoom.audioQuality,
+        queueMode: updatedRoom.queueMode,
       }
       // 给 owner 发送含密码的设置
       ctx.socket.emit(EVENTS.ROOM_SETTINGS, {
@@ -228,6 +228,9 @@ export function registerRoomController(io: TypedServer, socket: TypedSocket) {
       })
       // 给房间内其他成员发送不含密码的设置
       ctx.socket.to(ctx.roomId).emit(EVENTS.ROOM_SETTINGS, baseSettings)
+
+      // How the queue is walked decides what comes next (and whether it is known in advance).
+      if (parsed.data.queueMode !== undefined) void playerService.preloadUpcoming(io, ctx.roomId)
 
       logger.info(`Room ${ctx.roomId} settings updated`, { roomId: ctx.roomId })
 

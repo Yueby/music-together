@@ -78,15 +78,31 @@ vi.mock('@/hooks/usePlaylist', () => ({
     addBatchToQueue: vi.fn(),
   }),
 }))
-vi.mock('./PlaylistDetail', () => ({
-  PlaylistDetail: ({ playlist }: { playlist: Playlist | null }) => <div data-testid="detail">{playlist?.name}</div>,
+// The page transition is tested on its own; here the page just swaps.
+vi.mock('@/components/DialogNav', () => ({
+  DialogPageTransition: ({ children }: { children: React.ReactNode }) => <div>{children}</div>,
+}))
+vi.mock('@/components/Pages/PlaylistPage', () => ({
+  PlaylistPage: ({ playlist }: { playlist: Playlist | null }) => <div data-testid="detail">{playlist?.name}</div>,
 }))
 vi.mock('./PlaylistSection', () => ({ PlaylistSection: () => <div data-testid="my-playlists" /> }))
 
 import { useArtistPageStore } from '@/stores/artistPageStore'
 import { useRoomStore } from '@/stores/roomStore'
 import type { AccountSession } from '@/hooks/useAccountSession'
-import { PlatformHub } from './PlatformHub'
+import { useDialogPages } from '@/hooks/useDialogPages'
+import { PlatformHub, type AccountPage } from './PlatformHub'
+
+/** What the account dialog does around the hub: holds the pages and shows their title. */
+function Hub({ session }: { session: AccountSession }) {
+  const pages = useDialogPages<AccountPage>()
+  return (
+    <>
+      <h2 data-testid="title">{pages.current?.title ?? '音乐账号'}</h2>
+      <PlatformHub session={session} pages={pages} />
+    </>
+  )
+}
 
 let container: HTMLDivElement
 let root: ReturnType<typeof createRoot>
@@ -119,7 +135,7 @@ const session = (platform: MusicSource, loggedIn: boolean, verifying = false) =>
   }) as unknown as AccountSession
 
 const render = (platform: MusicSource, loggedIn: boolean) =>
-  act(() => root.render(<PlatformHub session={session(platform, loggedIn)} />))
+  act(() => root.render(<Hub session={session(platform, loggedIn)} />))
 const tile = (label: string) =>
   [...container.querySelectorAll('button')].find((button) => button.textContent?.includes(label))!
 
@@ -149,7 +165,15 @@ describe('PlatformHub', () => {
     render('netease', true)
     act(() => tile('每天更新').click())
     expect(container.querySelector('[data-testid="detail"]')?.textContent).toBe('每日推荐')
+    expect(container.querySelector('[data-testid="title"]')?.textContent).toBe('每日推荐')
     expect(hooks.fetchPlaylistTracks).not.toHaveBeenCalled()
+  })
+
+  it('names a list it opened in the dialog title, which is the account until one is open', () => {
+    render('netease', true)
+    expect(container.querySelector('[data-testid="title"]')?.textContent).toBe('音乐账号')
+    act(() => tile('新专辑').click())
+    expect(container.querySelector('[data-testid="title"]')?.textContent).toBe('新专辑')
   })
 
   it('retries a failed day instead of opening an empty list', () => {
@@ -196,12 +220,12 @@ describe('PlatformHub', () => {
   })
 
   it('waits for a saved login to be confirmed instead of loading twice', () => {
-    act(() => root.render(<PlatformHub session={session('netease', false, true)} />))
+    act(() => root.render(<Hub session={session('netease', false, true)} />))
     expect(hooks.loadHome).not.toHaveBeenCalled()
     expect(hooks.loadDaily).not.toHaveBeenCalled()
     // Radar is the same for everyone, so it does not wait.
     expect(hooks.loadRadar).toHaveBeenCalledOnce()
-    act(() => root.render(<PlatformHub session={session('netease', true, false)} />))
+    act(() => root.render(<Hub session={session('netease', true, false)} />))
     expect(hooks.loadHome).toHaveBeenCalledOnce()
     expect(hooks.loadDaily).toHaveBeenCalledOnce()
   })

@@ -1,3 +1,4 @@
+import { EmptyState } from '@/components/EmptyState'
 import { Skeleton } from '@/components/ui/skeleton'
 import { cn } from '@/lib/utils'
 import type { Track } from '@music-together/shared'
@@ -106,10 +107,7 @@ export const VirtualTrackList = forwardRef<VirtualTrackListRef, VirtualTrackList
   if (tracks.length === 0) {
     return (
       <div className={cn('min-h-0 flex-1 overflow-y-auto rounded-md border', className)}>
-        <div className="flex h-48 flex-col items-center justify-center gap-2 text-muted-foreground">
-          {emptyIcon ?? <Music2 className="h-8 w-8" />}
-          <span className="text-sm">{emptyMessage}</span>
-        </div>
+        <EmptyState icon={emptyIcon ?? <Music2 className="h-8 w-8" />} message={emptyMessage} />
       </div>
     )
   }

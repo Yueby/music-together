@@ -3,7 +3,7 @@ import { useRoomStore } from '@/stores/roomStore'
 import { storage } from '@/lib/storage'
 import { hostRuntime } from '@/lib/hostRuntime'
 import { ERROR_CODE, EVENTS } from '@music-together/shared'
-import type { AudioQuality, RoomAutoFallbackEvent, RoomState, User, UserRole } from '@music-together/shared'
+import type { AudioQuality, QueueMode, RoomAutoFallbackEvent, RoomState, User, UserRole } from '@music-together/shared'
 import { useEffect, useRef } from 'react'
 import { useNavigate } from 'react-router'
 import { toast } from 'sonner'
@@ -66,6 +66,7 @@ export function useRoomState() {
       hasPassword: boolean
       password?: string | null
       audioQuality: AudioQuality
+      queueMode: QueueMode
     }) => {
       useRoomStore.getState().updateRoom(settings)
       // 存储密码明文（服务端广播）

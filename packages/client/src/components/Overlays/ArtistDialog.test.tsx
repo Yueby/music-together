@@ -12,6 +12,8 @@ const hooks = vi.hoisted(() => {
 })
 
 vi.mock('@/components/ui/responsive-dialog', () => ({
+  DIALOG_BAR_CLASS: '',
+  DIALOG_BODY_CLASS: '',
   ResponsiveDialog: ({ open, children }: { open: boolean; children: React.ReactNode }) =>
     open ? <div role="dialog">{children}</div> : null,
   ResponsiveDialogContent: ({ children }: { children: React.ReactNode }) => <div>{children}</div>,
@@ -54,27 +56,26 @@ vi.mock('@/hooks/usePlaylist', () => ({
 }))
 
 const album: Playlist = { id: 'a1', name: 'Album', cover: '', trackCount: 10, source: 'netease' }
-vi.mock('./ArtistDetail', () => ({
-  ArtistDetail: ({
-    onBack,
-    onRetry,
-    onSelectAlbum,
-  }: {
-    onBack: () => void
-    onRetry: () => void
-    onSelectAlbum: (album: Playlist) => void
-  }) => (
+// The title bar and the page transition are tested on their own; here the bar is a plain title and back button.
+vi.mock('@/components/DialogNav', () => ({
+  DialogNavBar: ({ title, onBack }: { title: string; onBack?: () => void }) => (
+    <div>
+      <h2>{title}</h2>
+      {onBack ? <button onClick={onBack}>back</button> : null}
+    </div>
+  ),
+  DialogPageTransition: ({ children }: { children: React.ReactNode }) => <div>{children}</div>,
+}))
+vi.mock('@/components/Pages/ArtistPage', () => ({
+  ArtistPage: ({ onRetry, onSelectAlbum }: { onRetry: () => void; onSelectAlbum: (album: Playlist) => void }) => (
     <div data-testid="artist-detail">
-      <button onClick={onBack}>back</button>
       <button onClick={onRetry}>retry</button>
       <button onClick={() => onSelectAlbum(album)}>open-album</button>
     </div>
   ),
 }))
-vi.mock('./Settings/PlaylistDetail', () => ({
-  PlaylistDetail: ({ playlist }: { playlist: Playlist | null }) => (
-    <div data-testid="album-detail">{playlist?.name}</div>
-  ),
+vi.mock('@/components/Pages/PlaylistPage', () => ({
+  PlaylistPage: ({ playlist }: { playlist: Playlist | null }) => <div data-testid="album-detail">{playlist?.name}</div>,
 }))
 
 import { resetAllRoomState } from '@/lib/resetStores'
@@ -140,13 +141,26 @@ describe('ArtistDialog', () => {
     expect(hooks.load).toHaveBeenCalledOnce()
   })
 
-  it('retries a failed page the way it was opened, and closes from the back button', () => {
+  it('retries a failed page the way it was opened', () => {
     act(() => openArtistPage({ source: 'netease', name: 'Somebody' }))
     press('retry')
     expect(hooks.loadByName).toHaveBeenCalledTimes(2)
+  })
+
+  it('titles the artist page with the artist and has no back button of its own', () => {
+    act(() => openArtistPage({ source: 'netease', id: '1', name: 'A' }))
+    expect(container.querySelector('h2')?.textContent).toBe('A')
+    expect([...container.querySelectorAll('button')].some((button) => button.textContent === 'back')).toBe(false)
+  })
+
+  it('names an opened album in the title, with a way back to the artist that keeps the artist loaded', () => {
+    act(() => openArtistPage({ source: 'netease', id: '1', name: 'A' }))
+    press('open-album')
+    expect(container.querySelector('h2')?.textContent).toBe('Album')
     press('back')
-    expect(useArtistPageStore.getState().target).toBeNull()
-    expect(container.querySelector('[role="dialog"]')).toBeNull()
+    expect(container.querySelector('h2')?.textContent).toBe('A')
+    expect(container.querySelector('[data-testid="artist-detail"]')).not.toBeNull()
+    expect(hooks.load).toHaveBeenCalledOnce()
   })
 
   it('closes when the room is left, so it does not greet the next room', () => {

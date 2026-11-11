@@ -23,10 +23,13 @@ export const roomJoinSchema = z.object({
 
 export const audioQualitySchema = z.union([z.literal(128), z.literal(192), z.literal(320), z.literal(999)])
 
+export const queueModeSchema = z.enum(['keep', 'consume'])
+
 export const roomSettingsSchema = z.object({
   name: z.string().min(1).max(LIMITS.ROOM_NAME_MAX_LENGTH).optional(),
   password: z.string().max(LIMITS.ROOM_PASSWORD_MAX_LENGTH).nullable().optional(),
   audioQuality: audioQualitySchema.optional(),
+  queueMode: queueModeSchema.optional(),
 })
 
 export const setRoleSchema = z.object({

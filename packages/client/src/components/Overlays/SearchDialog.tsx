@@ -1,10 +1,13 @@
+import { DialogNavBar, DialogPageTransition } from '@/components/DialogNav'
+import { EmptyState } from '@/components/EmptyState'
+import { PlaylistPage } from '@/components/Pages/PlaylistPage'
+import { useDialogPages } from '@/hooks/useDialogPages'
 import { Button } from '@/components/ui/button'
 import {
+  DIALOG_BODY_CLASS,
   ResponsiveDialog,
   ResponsiveDialogBody,
   ResponsiveDialogContent,
-  ResponsiveDialogHeader,
-  ResponsiveDialogTitle,
 } from '@/components/ui/responsive-dialog'
 import { Input } from '@/components/ui/input'
 import { Tabs, TabsList, TabsTrigger } from '@/components/ui/tabs'
@@ -17,12 +20,25 @@ import { useSearch, type SearchType } from '@/hooks/useSearch'
 import { usePlaylist } from '@/hooks/usePlaylist'
 import { useQueueMembership } from '@/hooks/useQueueMembership'
 import { useSocketContext } from '@/providers/SocketProvider'
-import { EVENTS } from '@music-together/shared'
+import { EVENTS, parseMusicLink, supportsIdLookup } from '@music-together/shared'
 import type { Artist, MusicSource, Track, Playlist } from '@music-together/shared'
 import { Loader2, Music2, Search, ListMusic, User } from 'lucide-react'
 import { useCallback, useRef, useState, useEffect } from 'react'
 import { CollectionRow } from './CollectionRow'
-import { PlaylistDetail } from './Settings/PlaylistDetail'
+
+// An id or a share link works in the same box: it is looked up directly (names are not always findable).
+const PLACEHOLDERS: Record<SearchType, string> = {
+  song: '搜索歌曲、歌手，或粘贴 ID / 分享链接...',
+  artist: '搜索歌手，或粘贴 ID / 分享链接...',
+  album: '搜索专辑，或粘贴 ID / 分享链接...',
+  playlist: '搜索歌单，或粘贴 ID / 分享链接...',
+}
+
+/** An album or playlist opened from the results. */
+interface AlbumPage {
+  title: string
+  album: Playlist
+}
 
 interface SearchDialogProps {
   open: boolean
@@ -39,8 +55,10 @@ export function SearchDialog({ open, onOpenChange, onAddToQueue, onInsertAfterCu
   const { isAdded: isTrackAdded, markPending, addOnce } = useQueueMembership()
   const { socket } = useSocketContext()
 
-  // Detail view: an album/playlist. (An artist opens the app's artist page, on top of this dialog.)
-  const [selectedAlbum, setSelectedAlbum] = useState<Playlist | null>(null)
+  // One level in: an album or playlist opened from the results, named in the title bar. (An artist opens the app's
+  // artist page, on top of this dialog.)
+  const pages = useDialogPages<AlbumPage>()
+  const page = pages.current
   const supportsArtists = hasArtistPages(source)
   const {
     playlistTracks,
@@ -61,7 +79,7 @@ export function SearchDialog({ open, onOpenChange, onAddToQueue, onInsertAfterCu
   // lengths so the change animates; it stays tall afterwards (switching the type clears the results, which must not
   // shrink the dialog just to grow it again).
   const [expanded, setExpanded] = useState(false)
-  if ((hasSearched || selectedAlbum) && !expanded) setExpanded(true)
+  if ((hasSearched || page) && !expanded) setExpanded(true)
 
   // Auto re-search when source or type changes
   const prevSourceRef = useRef(source)
@@ -84,15 +102,25 @@ export function SearchDialog({ open, onOpenChange, onAddToQueue, onInsertAfterCu
     resetState()
   }
 
-  // Reset the detail view when the dialog closes
+  // Back to the search itself when the dialog closes
+  const { reset: backToSearch } = pages
   useEffect(() => {
-    if (!open) setSelectedAlbum(null)
-  }, [open])
+    if (!open) backToSearch()
+  }, [open, backToSearch])
 
   const handleSearch = (overrideKeyword?: string) => {
     const searchKeyword = (overrideKeyword ?? keyword).trim()
     if (!searchKeyword) return
     if (overrideKeyword !== undefined) setKeyword(overrideKeyword)
+    // A pasted share link says which platform and kind it is for: follow it (the re-search effect above does the work)
+    const link = parseMusicLink(searchKeyword)
+    if (link && supportsIdLookup(link.source, link.kind) && (link.source !== source || link.kind !== searchType)) {
+      // Results of the old type must not be drawn as the new one while the new search is on its way
+      resetState()
+      setSource(link.source)
+      setSearchType(link.kind)
+      return
+    }
     search(searchKeyword)
     if (searchType === 'song') {
       listRef.current?.scrollToTop()
@@ -117,7 +145,7 @@ export function SearchDialog({ open, onOpenChange, onAddToQueue, onInsertAfterCu
   )
 
   const handleSelectAlbum = (album: Playlist, type: 'album' | 'playlist') => {
-    setSelectedAlbum(album)
+    pages.open({ title: album.name, album })
     fetchPlaylistTracks(source, album.id, album.trackCount, type)
   }
 
@@ -133,160 +161,148 @@ export function SearchDialog({ open, onOpenChange, onAddToQueue, onInsertAfterCu
     <ResponsiveDialog open={open} onOpenChange={onOpenChange}>
       <ResponsiveDialogContent
         className={cn(
-          'flex h-[70vh] flex-col overflow-hidden transition-[height] [transition-duration:300ms] motion-reduce:transition-none sm:max-h-[80vh] sm:max-w-2xl',
-          expanded ? 'sm:h-[70vh]' : 'sm:h-[24.5rem]',
+          'flex h-[70vh] flex-col gap-0 overflow-hidden p-0 transition-[height] [transition-duration:300ms] motion-reduce:transition-none sm:max-h-[80vh] sm:max-w-2xl',
+          expanded ? 'sm:h-[70vh]' : 'sm:h-[25rem]',
         )}
       >
-        <ResponsiveDialogHeader>
-          <div className="flex items-center justify-between gap-3 pr-8">
-            <ResponsiveDialogTitle className="min-w-0 truncate">
-              {selectedAlbum ? selectedAlbum.name : '搜索点歌'}
-            </ResponsiveDialogTitle>
-            {!selectedAlbum && <PlatformSelect value={source} onChange={handleSourceChange} />}
-          </div>
-        </ResponsiveDialogHeader>
+        <DialogNavBar
+          title={page?.title ?? '搜索点歌'}
+          description="按名称、ID 或分享链接查找歌曲"
+          onBack={page ? pages.back : undefined}
+        >
+          {!page && <PlatformSelect value={source} onChange={handleSourceChange} />}
+        </DialogNavBar>
 
-        {/* No clipping here and a little room on top: the focus ring of the input, button and tabs is drawn outside them */}
-        <ResponsiveDialogBody className="-mt-1 flex min-h-0 flex-1 flex-col gap-4 pt-1">
-          {selectedAlbum ? (
-            <PlaylistDetail
-              playlist={selectedAlbum}
-              tracks={playlistTracks}
-              loading={tracksLoading}
-              loadingMore={albumLoadingMore}
-              hasMore={hasMoreTracks}
-              total={playlistTotal}
-              onBack={() => setSelectedAlbum(null)}
-              onAddTrack={handleAdd}
-              onInsertAfterCurrent={handleInsertAfterCurrent}
-              onAddAll={handleAddBatch}
-              onLoadMore={loadMoreTracks}
-            />
-          ) : (
-            <>
-              {/* Search input */}
-              <div className="flex gap-2">
-                <Input
-                  placeholder={
-                    searchType === 'song'
-                      ? '搜索歌曲、歌手...'
-                      : searchType === 'artist'
-                        ? '搜索歌手...'
-                        : searchType === 'album'
-                          ? '搜索专辑...'
-                          : '搜索歌单...'
-                  }
-                  value={keyword}
-                  onChange={(e) => setKeyword(e.target.value)}
-                  onKeyDown={(e) => e.key === 'Enter' && handleSearch()}
-                  className="flex-1"
-                  autoFocus
-                  aria-label="搜索关键词"
-                />
-                <Button onClick={() => handleSearch()} disabled={loading} aria-label="搜索">
-                  {loading ? <Loader2 className="h-4 w-4 animate-spin" /> : <Search className="h-4 w-4" />}
-                </Button>
-              </div>
-
-              {/* What to search for: a filter of the results below, so it sits between the input and them */}
-              <Tabs
-                value={searchType}
-                onValueChange={(v) => {
-                  setSearchType(v as SearchType)
-                  resetState()
-                }}
-              >
-                <TabsList variant="nav" aria-label="搜索类型" className="w-full justify-start">
-                  <TabsTrigger value="song">单曲</TabsTrigger>
-                  {supportsArtists && <TabsTrigger value="artist">歌手</TabsTrigger>}
-                  <TabsTrigger value="album">专辑</TabsTrigger>
-                  <TabsTrigger value="playlist">歌单</TabsTrigger>
-                </TabsList>
-              </Tabs>
-
-              {/* Results area — virtual scrolling with auto-load */}
-              {hasSearched ? (
-                searchType === 'song' ? (
-                  <VirtualTrackList
-                    ref={listRef}
-                    tracks={results as Track[]}
-                    loading={loading}
-                    hasMore={hasMore}
-                    loadingMore={loadingMore}
-                    onLoadMore={loadMore}
-                    isTrackAdded={isTrackAdded}
-                    onAddTrack={handleAdd}
-                    onInsertAfterCurrent={handleInsertAfterCurrent}
-                    onUnsupportedArtistClick={handleUnsupportedArtistClick}
-                    emptyIcon={<Music2 className="h-8 w-8" />}
-                    emptyMessage="暂无结果，换个关键词试试"
+        {/* The padding leaves room for the focus ring of the input, button and tabs, which is drawn outside them */}
+        <ResponsiveDialogBody className={cn(DIALOG_BODY_CLASS, 'flex min-h-0 flex-1 flex-col')}>
+          <DialogPageTransition pageKey={page ? `album:${page.album.id}` : 'search'}>
+            {page ? (
+              <PlaylistPage
+                playlist={page.album}
+                tracks={playlistTracks}
+                loading={tracksLoading}
+                loadingMore={albumLoadingMore}
+                hasMore={hasMoreTracks}
+                total={playlistTotal}
+                onAddTrack={handleAdd}
+                onInsertAfterCurrent={handleInsertAfterCurrent}
+                onAddAll={handleAddBatch}
+                onLoadMore={loadMoreTracks}
+              />
+            ) : (
+              <div className="flex min-h-0 flex-1 flex-col gap-4">
+                {/* Search input */}
+                <div className="flex gap-2">
+                  <Input
+                    placeholder={PLACEHOLDERS[searchType]}
+                    value={keyword}
+                    onChange={(e) => setKeyword(e.target.value)}
+                    onKeyDown={(e) => e.key === 'Enter' && handleSearch()}
+                    className="flex-1"
+                    autoFocus
+                    aria-label="搜索关键词"
                   />
-                ) : (
-                  <div className="min-h-0 flex-1 overflow-y-auto rounded-md border p-2">
-                    {loading && results.length === 0 ? (
-                      <div className="flex h-full items-center justify-center">
-                        <Loader2 className="h-6 w-6 animate-spin text-muted-foreground" />
-                      </div>
-                    ) : results.length === 0 ? (
-                      <div className="flex h-48 flex-col items-center justify-center gap-2 text-muted-foreground">
-                        <Music2 className="h-8 w-8" />
-                        <span className="text-sm">暂无结果，换个关键词试试</span>
-                      </div>
-                    ) : (
-                      <div className="flex flex-col gap-2">
-                        {searchType === 'artist'
-                          ? (results as Artist[]).map((artist, index) => (
-                              <CollectionRow
-                                key={`${artist.id}-${index}`}
-                                round
-                                title={artist.name}
-                                subtitle={[
-                                  artist.songCount != null ? `${artist.songCount} 首歌曲` : null,
-                                  artist.albumCount != null ? `${artist.albumCount} 张专辑` : null,
-                                ]
-                                  .filter(Boolean)
-                                  .join(' · ')}
-                                cover={artist.thumbnailCover ?? artist.cover}
-                                fallback={<User className="text-muted-foreground size-5" />}
-                                onClick={() => handleSelectArtist(artist)}
-                              />
-                            ))
-                          : (results as Playlist[]).map((album, index) => (
-                              <CollectionRow
-                                key={`${album.id}-${index}`}
-                                title={album.name}
-                                subtitle={`${album.trackCount} 首${album.creator ? ` · ${album.creator}` : ''}`}
-                                cover={album.thumbnailCover ?? album.cover}
-                                fallback={<ListMusic className="text-muted-foreground size-5" />}
-                                onClick={() => handleSelectAlbum(album, searchType === 'album' ? 'album' : 'playlist')}
-                              />
-                            ))}
-                        {hasMore && (
-                          <Button
-                            variant="ghost"
-                            size="sm"
-                            className="w-full mt-2"
-                            onClick={loadMore}
-                            disabled={loadingMore}
-                          >
-                            {loadingMore ? <Loader2 className="mr-2 h-4 w-4 animate-spin" /> : null}
-                            {loadingMore ? '加载中...' : '加载更多'}
-                          </Button>
-                        )}
-                      </div>
-                    )}
-                  </div>
-                )
-              ) : (
-                <div className="min-h-0 flex-1 overflow-y-auto rounded-md border">
-                  <div className="flex h-48 flex-col items-center justify-center gap-2 text-muted-foreground">
-                    <Music2 className="h-8 w-8" />
-                    <span className="text-sm">输入关键词开始搜索</span>
-                  </div>
+                  <Button onClick={() => handleSearch()} disabled={loading} aria-label="搜索">
+                    {loading ? <Loader2 className="h-4 w-4 animate-spin" /> : <Search className="h-4 w-4" />}
+                  </Button>
                 </div>
-              )}
-            </>
-          )}
+
+                {/* What to search for: a filter of the results below, so it sits between the input and them */}
+                <Tabs
+                  value={searchType}
+                  onValueChange={(v) => {
+                    setSearchType(v as SearchType)
+                    resetState()
+                  }}
+                >
+                  <TabsList variant="nav" aria-label="搜索类型" className="w-full justify-start">
+                    <TabsTrigger value="song">单曲</TabsTrigger>
+                    {supportsArtists && <TabsTrigger value="artist">歌手</TabsTrigger>}
+                    <TabsTrigger value="album">专辑</TabsTrigger>
+                    <TabsTrigger value="playlist">歌单</TabsTrigger>
+                  </TabsList>
+                </Tabs>
+
+                {/* Results area — virtual scrolling with auto-load */}
+                {hasSearched ? (
+                  searchType === 'song' ? (
+                    <VirtualTrackList
+                      ref={listRef}
+                      tracks={results as Track[]}
+                      loading={loading}
+                      hasMore={hasMore}
+                      loadingMore={loadingMore}
+                      onLoadMore={loadMore}
+                      isTrackAdded={isTrackAdded}
+                      onAddTrack={handleAdd}
+                      onInsertAfterCurrent={handleInsertAfterCurrent}
+                      onUnsupportedArtistClick={handleUnsupportedArtistClick}
+                      emptyIcon={<Music2 className="h-8 w-8" />}
+                      emptyMessage="暂无结果，换个关键词试试"
+                    />
+                  ) : (
+                    <div className="min-h-0 flex-1 overflow-y-auto rounded-md border p-2">
+                      {loading && results.length === 0 ? (
+                        <div className="flex h-full items-center justify-center">
+                          <Loader2 className="h-6 w-6 animate-spin text-muted-foreground" />
+                        </div>
+                      ) : results.length === 0 ? (
+                        <EmptyState icon={<Music2 className="h-8 w-8" />} message="暂无结果，换个关键词试试" />
+                      ) : (
+                        <div className="flex flex-col gap-2">
+                          {searchType === 'artist'
+                            ? (results as Artist[]).map((artist, index) => (
+                                <CollectionRow
+                                  key={`${artist.id}-${index}`}
+                                  round
+                                  title={artist.name}
+                                  subtitle={[
+                                    artist.songCount != null ? `${artist.songCount} 首歌曲` : null,
+                                    artist.albumCount != null ? `${artist.albumCount} 张专辑` : null,
+                                  ]
+                                    .filter(Boolean)
+                                    .join(' · ')}
+                                  cover={artist.thumbnailCover ?? artist.cover}
+                                  fallback={<User className="text-muted-foreground size-5" />}
+                                  onClick={() => handleSelectArtist(artist)}
+                                />
+                              ))
+                            : (results as Playlist[]).map((album, index) => (
+                                <CollectionRow
+                                  key={`${album.id}-${index}`}
+                                  title={album.name}
+                                  subtitle={`${album.trackCount} 首${album.creator ? ` · ${album.creator}` : ''}`}
+                                  cover={album.thumbnailCover ?? album.cover}
+                                  fallback={<ListMusic className="text-muted-foreground size-5" />}
+                                  onClick={() =>
+                                    handleSelectAlbum(album, searchType === 'album' ? 'album' : 'playlist')
+                                  }
+                                />
+                              ))}
+                          {hasMore && (
+                            <Button
+                              variant="ghost"
+                              size="sm"
+                              className="w-full mt-2"
+                              onClick={loadMore}
+                              disabled={loadingMore}
+                            >
+                              {loadingMore ? <Loader2 className="mr-2 h-4 w-4 animate-spin" /> : null}
+                              {loadingMore ? '加载中...' : '加载更多'}
+                            </Button>
+                          )}
+                        </div>
+                      )}
+                    </div>
+                  )
+                ) : (
+                  <div className="min-h-0 flex-1 overflow-y-auto rounded-md border">
+                    <EmptyState icon={<Music2 className="h-8 w-8" />} message="输入关键词开始搜索" />
+                  </div>
+                )}
+              </div>
+            )}
+          </DialogPageTransition>
         </ResponsiveDialogBody>
       </ResponsiveDialogContent>
     </ResponsiveDialog>

@@ -1,46 +1,40 @@
-import { Button } from '@/components/ui/button'
-import { CLIPPING_PANE } from '@/lib/utils'
+import { CLIPPING_PANE, cn } from '@/lib/utils'
 import type { Playlist, Track } from '@music-together/shared'
-import { ArrowLeft } from 'lucide-react'
 import { TrackCollection } from './TrackCollection'
 
-interface PlaylistDetailProps {
+interface PlaylistPageProps {
   playlist: Playlist | null
   tracks: Track[]
   loading: boolean
   loadingMore: boolean
   hasMore: boolean
   total: number
-  onBack: () => void
   onAddTrack: (track: Track) => void
   onInsertAfterCurrent?: (track: Track) => void
   onAddAll: (tracks: Track[], playlistName?: string) => void
   onLoadMore: () => void
 }
 
-export function PlaylistDetail({
+/**
+ * The songs of a playlist or album, with "add all". A page of its own: whatever dialog holds it supplies the title and
+ * the way back (see `DialogNavBar`), so it can be shown from anywhere.
+ */
+export function PlaylistPage({
   playlist,
   tracks,
   loading,
   loadingMore,
   hasMore,
   total,
-  onBack,
   onAddTrack,
   onInsertAfterCurrent,
   onAddAll,
   onLoadMore,
-}: PlaylistDetailProps) {
+}: PlaylistPageProps) {
   return (
-    <div className={CLIPPING_PANE}>
-      {/* Back + Title — pr-8 reserves space for dialog close button */}
-      <div className="flex shrink-0 items-center gap-2 pr-8">
-        <Button variant="ghost" size="icon" onClick={onBack} className="h-8 w-8 shrink-0" aria-label="返回">
-          <ArrowLeft className="h-4 w-4" />
-        </Button>
-        <h4 className="min-w-0 flex-1 truncate text-sm font-semibold">{playlist?.name ?? '歌单详情'}</h4>
-      </div>
-
+    // A list reaches nearly to the edges of the dialog (its rows carry their own side padding), instead of sitting
+    // inside the dialog body's padding as well: the pane takes back most of that padding.
+    <div className={cn(CLIPPING_PANE, '-mx-3 -mb-3 sm:-mx-5 sm:-mb-5')}>
       <TrackCollection
         tracks={tracks}
         loading={loading}
@@ -49,6 +43,7 @@ export function PlaylistDetail({
         total={total}
         subtitle={playlist?.creator}
         collectionName={playlist?.name}
+        infoClassName="px-3"
         onAddTrack={onAddTrack}
         onInsertAfterCurrent={onInsertAfterCurrent}
         onAddAll={onAddAll}
