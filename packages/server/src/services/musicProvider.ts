@@ -5,15 +5,14 @@ import type { MusicSource, Playlist, Track } from '@music-together/shared'
 import { LRUCache } from 'lru-cache'
 import { nanoid } from 'nanoid'
 import pLimit from 'p-limit'
-import ncmApi from '@neteasecloudmusicapienhanced/api'
-import * as kugouAuth from './kugouAuthService.js'
 import { fetchLyric, type LyricResult } from './lyricFetch.js'
+import { fetchPlaylistTracks } from './playlistFetchers.js'
 import * as tencentAuth from './tencentAuthService.js'
 import { logger } from '../utils/logger.js'
 import { withTimeoutOrNull } from '../utils/withTimeout.js'
 import { searchAlbums, searchPlaylists } from './catalogSearch.js'
 import { SearchError } from './catalogUtils.js'
-import { kugouSongToTrack, navigatePath, rawToTrack } from './trackMapping.js'
+import { navigatePath, rawToTrack } from './trackMapping.js'
 import { deriveThumbnailCoverUrl, normalizeKugouTemplateCoverUrl, normalizeNeteaseCoverUrl } from './coverUrls.js'
 import { getStreamUrlCacheTtl, isStreamUrlExpired } from './streamUrlLifetime.js'
 import { getNeteasePlaybackUrl } from './neteasePlayback.js'
@@ -25,17 +24,6 @@ type MetingInstance = InstanceType<typeof Meting>
 
 /** Parsed JSON from Meting API responses */
 type MetingJson = Record<string, unknown>
-
-/** Loosely typed ncmApi response (the library has no TS declarations). */
-interface NcmApiResponse {
-  body?: {
-    code?: number
-    songs?: Record<string, unknown>[]
-    playlist?: Record<string, unknown>[]
-    [key: string]: unknown
-  }
-  [key: string]: unknown
-}
 
 /** Tencent 新版搜索 API 响应结构 */
 interface TencentSearchData {
@@ -110,13 +98,6 @@ const withTimeout = <T>(work: Promise<T> | ((signal: AbortSignal) => Promise<T>)
 const SEARCH_PATHS: Record<MusicSource, string> = {
   netease: 'result.songs',
   tencent: 'data.song.list',
-  kugou: 'data.info',
-}
-
-// Path to song list in raw playlist API response per platform
-const PLAYLIST_PATHS: Record<MusicSource, string> = {
-  netease: 'playlist.tracks', // Not used (Netease uses ncmApi)
-  tencent: 'data.cdlist.0.songlist', // JS arrays support string numeric index
   kugou: 'data.info',
 }
 
@@ -592,277 +573,15 @@ class MusicProvider {
       logger.info(`Playlist index stale (registry eviction): ${source}/${playlistId}`)
     }
 
-    // Netease: use ncmApi.playlist_track_all to bypass Meting's 1000-track limit
-    if (source === 'netease') {
-      if (type === 'album') {
-        return this.fetchNeteaseAlbum(playlistId, cacheKey)
-      }
-      return this.fetchNeteasePlaylist(playlistId, cacheKey, playlistTotal, cookie)
-    }
+    const tracks = await fetchPlaylistTracks(source, playlistId, type, playlistTotal, cookie)
+    if (tracks.length === 0) return { ids: [], total: 0 }
 
-    // Kugou: try native API (works with global_collection_id from user playlists)
-    // Falls back to Meting for public playlists / special IDs
-    if (source === 'kugou') {
-      if (type === 'album') {
-        return this.fetchMetingPlaylist(source, playlistId, cacheKey, type)
-      }
-      const result = await this.fetchKugouPlaylist(playlistId, cacheKey, cookie)
-      if (result.total > 0) return result
-      logger.info(`Kugou native API returned empty for ${playlistId}, falling back to Meting`)
-    }
-
-    // Tencent: use new native API (supports fav & custom lists)
-    if (source === 'tencent') {
-      if (type === 'album') {
-        return this.fetchMetingPlaylist(source, playlistId, cacheKey, type)
-      }
-      const result = await this.fetchTencentPlaylist(playlistId, cacheKey, cookie)
-      if (result.total > 0) return result
-      logger.info(`Tencent native API returned empty for ${playlistId}, falling back to Meting`)
-    }
-
-    // Fallback: use Meting raw mode
-    return this.fetchMetingPlaylist(source, playlistId, cacheKey, type)
-  }
-
-  /**
-   * Fetch full Netease playlist via ncmApi.playlist_track_all.
-   * No 1000-track limit; returns full song data including duration/album/artist.
-   */
-  
-  /** Fetch Netease album using ncmApi.album */
-  private async fetchNeteaseAlbum(
-    albumId: string,
-    cacheKey: string,
-  ): Promise<{ ids: string[]; total: number }> {
-    try {
-      const res = await withTimeout(ncmApi.album({ id: albumId, timestamp: Date.now() }), 30_000)
-      if (res === null) {
-        logger.warn(`Netease album timeout: ${albumId}`)
-        return { ids: [], total: 0 }
-      }
-
-      const songs = res?.body?.songs
-      if (!Array.isArray(songs) || songs.length === 0) {
-        return { ids: [], total: 0 }
-      }
-
-      const allTracks = songs.map((song: any) => rawToTrack(song, 'netease'))
-      
-      for (const t of allTracks) this.enrichFromRegistry(t)
-      this.registerTracks(allTracks)
-
-      const ids = allTracks.map((t) => t.sourceId)
-      this.playlistIndex.set(cacheKey, { source: 'netease', ids })
-
-      logger.info(`Netease album ${albumId}: ${ids.length} tracks`)
-      return { ids, total: ids.length }
-    } catch (err) {
-      logger.error(`Netease album failed: ${albumId}`, err)
-      return { ids: [], total: 0 }
-    }
-  }
-
-  private async fetchNeteasePlaylist(
-    playlistId: string,
-    cacheKey: string,
-    playlistTotal?: number,
-    cookie?: string | null,
-  ): Promise<{ ids: string[]; total: number }> {
-    // Netease /api/v3/song/detail can't handle more than ~1000 IDs per request,
-    // so we paginate through playlist_track_all in chunks of 1000.
-    const CHUNK_SIZE = 1000
-    const totalToFetch = playlistTotal || 100000
-    const baseParams = { id: playlistId, timestamp: Date.now(), ...(cookie ? { cookie } : {}) }
-
-    try {
-      const allTracks: Track[] = []
-      let offset = 0
-
-      while (offset < totalToFetch) {
-        const res = await withTimeout(ncmApi.playlist_track_all({ ...baseParams, limit: CHUNK_SIZE, offset }), 60_000)
-
-        if (res === null) {
-          logger.warn(`Netease playlist_track_all timeout: ${playlistId} (offset=${offset})`)
-          break
-        }
-
-        const songs = res?.body?.songs
-        if (!Array.isArray(songs) || songs.length === 0) {
-          if (offset === 0) {
-            logger.warn(`Netease playlist_track_all empty: ${playlistId}`, { code: res?.body?.code })
-            return { ids: [], total: 0 }
-          }
-          break
-        }
-
-        const chunk = songs.map((song: Record<string, unknown>) => rawToTrack(song, 'netease'))
-        allTracks.push(...chunk)
-
-        // If we got fewer than CHUNK_SIZE, we've reached the end
-        if (songs.length < CHUNK_SIZE) break
-        offset += CHUNK_SIZE
-      }
-
-      if (allTracks.length === 0) return { ids: [], total: 0 }
-
-      for (const t of allTracks) this.enrichFromRegistry(t)
-      this.registerTracks(allTracks)
-
-      const ids = allTracks.map((t) => t.sourceId)
-      this.playlistIndex.set(cacheKey, { source: 'netease', ids })
-
-      logger.info(
-        `Netease playlist ${playlistId}: ${ids.length} tracks (via ncmApi, ${Math.ceil(ids.length / CHUNK_SIZE)} chunks)`,
-      )
-      return { ids, total: ids.length }
-    } catch (err) {
-      logger.error(`Netease playlist_track_all failed: ${playlistId}`, err)
-      return { ids: [], total: 0 }
-    }
-  }
-
-  /**
-   * Fetch kugou playlist via native kugou API (global_collection_id).
-   * Supports user playlists that Meting cannot access.
-   */
-  private async fetchKugouPlaylist(
-    playlistId: string,
-    cacheKey: string,
-    cookie?: string | null,
-  ): Promise<{ ids: string[]; total: number }> {
-    try {
-      const PAGE_SIZE = 300
-      const allTracks: Track[] = []
-      let page = 1
-      let totalFromApi = 0
-
-      // Paginate until all tracks are fetched
-      while (true) {
-        const { songs, total } = await kugouAuth.getPlaylistTracks(playlistId, page, PAGE_SIZE, cookie)
-        if (page === 1) totalFromApi = total
-
-        if (songs.length === 0) break
-
-        for (const song of songs) {
-          const track = kugouSongToTrack(song)
-          if (track) allTracks.push(track)
-        }
-
-        if (allTracks.length >= totalFromApi || songs.length < PAGE_SIZE) break
-        page++
-      }
-
-      if (allTracks.length === 0) return { ids: [], total: 0 }
-
-      for (const t of allTracks) this.enrichFromRegistry(t)
-      this.registerTracks(allTracks)
-
-      const ids = allTracks.map((t) => t.sourceId)
-      this.playlistIndex.set(cacheKey, { source: 'kugou', ids })
-
-      logger.info(`Kugou playlist ${playlistId}: ${ids.length} tracks (via native API, ${page} pages)`)
-      return { ids, total: ids.length }
-    } catch (err) {
-      logger.error(`Kugou playlist fetch failed: ${playlistId}`, err)
-      return { ids: [], total: 0 }
-    }
-  }
-
-  /**
-   * Fetch Tencent playlist via native API.
-   * Leverages the new encrypted-uin based getPlaylistTracks implementation.
-   */
-  private async fetchTencentPlaylist(
-    playlistId: string,
-    cacheKey: string,
-    cookie?: string | null,
-  ): Promise<{ ids: string[]; total: number }> {
-    try {
-      const PAGE_SIZE = 100
-      const allTracks: Track[] = []
-      let page = 1
-      let totalFromApi = 0
-
-      while (true) {
-        const { songs, total } = await tencentAuth.getPlaylistTracks(playlistId, page, PAGE_SIZE, cookie)
-        if (page === 1) totalFromApi = total
-
-        if (songs.length === 0) break
-
-        for (const song of songs) {
-          const track = rawToTrack(song, 'tencent')
-          if (track) allTracks.push(track)
-        }
-
-        if (allTracks.length >= totalFromApi || songs.length < PAGE_SIZE) break
-        page++
-      }
-
-      if (allTracks.length === 0) return { ids: [], total: 0 }
-
-      for (const t of allTracks) this.enrichFromRegistry(t)
-      this.registerTracks(allTracks)
-
-      const ids = allTracks.map((t) => t.sourceId)
-      this.playlistIndex.set(cacheKey, { source: 'tencent', ids })
-
-      logger.info(`Tencent playlist ${playlistId}: ${ids.length} tracks (via native API, ${page} pages)`)
-      return { ids, total: ids.length }
-    } catch (err) {
-      logger.error(`Tencent playlist fetch failed: ${playlistId}`, err)
-      return { ids: [], total: 0 }
-    }
-  }
-
-  /**
-   * Fetch playlist via Meting raw mode — used for Tencent/Kugou.
-   * Raw mode preserves VIP/pay fields and duration (format mode strips them).
-   */
-  private async fetchMetingPlaylist(
-    source: MusicSource,
-    playlistId: string,
-    cacheKey: string,
-    type: 'playlist' | 'album' = 'playlist'
-  ): Promise<{ ids: string[]; total: number }> {
-    try {
-      const meting = new Meting(source)
-      const raw = await withTimeout(type === 'album' ? meting.album(playlistId) : meting.playlist(playlistId), 30_000)
-      if (raw === null) {
-        logger.warn(`Playlist fetch timeout for ${source}: ${playlistId}`)
-        return { ids: [], total: 0 }
-      }
-
-      let rawData: MetingJson
-      try {
-        rawData = JSON.parse(raw as string) as MetingJson
-      } catch {
-        logger.error(`Playlist JSON parse failed for ${source}`, (raw as string)?.substring?.(0, 200))
-        return { ids: [], total: 0 }
-      }
-
-      // For Tencent album, the path is data.getSongInfo, for Kugou it's data.info
-      let path = PLAYLIST_PATHS[source]
-      if (type === 'album') {
-        if (source === 'tencent') path = 'data.getSongInfo'
-        if (source === 'kugou') path = 'data.info'
-      }
-      const songs = navigatePath(rawData, path)
-      if (!Array.isArray(songs) || songs.length === 0) return { ids: [], total: 0 }
-
-      const tracks = songs.map((song: MetingJson) => rawToTrack(song, source))
-      for (const t of tracks) this.enrichFromRegistry(t)
-      this.registerTracks(tracks)
-
-      const ids = tracks.map((t) => t.sourceId)
-      this.playlistIndex.set(cacheKey, { source, ids })
-
-      logger.info(`Playlist ${playlistId} on ${source}: ${tracks.length} tracks (raw mode)`)
-      return { ids, total: ids.length }
-    } catch (err) {
-      logger.error(`Get playlist failed for ${source}:`, err)
-      return { ids: [], total: 0 }
-    }
+    // Register the tracks (keeping covers already known) and remember the id list.
+    for (const t of tracks) this.enrichFromRegistry(t)
+    this.registerTracks(tracks)
+    const ids = tracks.map((t) => t.sourceId)
+    this.playlistIndex.set(cacheKey, { source, ids })
+    return { ids, total: ids.length }
   }
 
   /**
