@@ -1,6 +1,7 @@
 import {
   ERROR_CODE,
   EVENTS,
+  LIMITS,
   roomCreateSchema,
   roomJoinSchema,
   roomSettingsSchema,
@@ -9,7 +10,12 @@ import {
 import type { TypedServer, TypedSocket } from '../middleware/types.js'
 import type { RoomData } from '../repositories/types.js'
 import { createWithOwnerOnly } from '../middleware/withControl.js'
-import { cleanupSocketRateLimit } from '../middleware/socketRateLimiter.js'
+import {
+  checkRoomEntryRateLimit,
+  clearJoinPasswordFailures,
+  isJoinPasswordLocked,
+  recordJoinPasswordFailure,
+} from '../middleware/socketRateLimiter.js'
 import { roomRepo } from '../repositories/roomRepository.js'
 import * as chatService from '../services/chatService.js'
 import * as playerService from '../services/playerService.js'
@@ -42,6 +48,16 @@ async function reconcileAndBroadcastVote(io: TypedServer, roomId: string, room: 
   })
 }
 
+/** Rooms this identity created that still exist (a room lives until it has been empty for the grace period). */
+function countRoomsCreatedBy(identityUserId: string | undefined): number {
+  if (!identityUserId) return 0
+  let count = 0
+  for (const room of roomRepo.getAll().values()) {
+    if (room.creatorId === identityUserId) count++
+  }
+  return count
+}
+
 export function registerRoomController(io: TypedServer, socket: TypedSocket) {
   const withOwnerOnly = createWithOwnerOnly(io)
 
@@ -55,7 +71,8 @@ export function registerRoomController(io: TypedServer, socket: TypedSocket) {
   })
 
   // ---- Create room (含可选密码) ----
-  socket.on(EVENTS.ROOM_CREATE, (raw) => {
+  socket.on(EVENTS.ROOM_CREATE, async (raw) => {
+    if (!(await checkRoomEntryRateLimit(socket))) return
     try {
       const parsed = roomCreateSchema.safeParse(raw)
       if (!parsed.success) {
@@ -66,6 +83,16 @@ export function registerRoomController(io: TypedServer, socket: TypedSocket) {
         return
       }
       const { nickname, roomName, password } = parsed.data
+
+      // One identity may not fill the server with rooms (checked before leaving the current room, so a refusal
+      // does not also kick the user out of where they are).
+      if (countRoomsCreatedBy(socket.data.identityUserId) >= LIMITS.ROOM_MAX_CREATED_PER_IDENTITY) {
+        socket.emit(EVENTS.ROOM_ERROR, {
+          code: ERROR_CODE.RATE_LIMITED,
+          message: `你创建的房间已达上限（${LIMITS.ROOM_MAX_CREATED_PER_IDENTITY} 个），请先关闭不用的房间`,
+        })
+        return
+      }
 
       // Auto-leave any previous room before creating a new one
       handleLeave(io, socket, 'auto-leave before create', true)
@@ -96,6 +123,7 @@ export function registerRoomController(io: TypedServer, socket: TypedSocket) {
 
   // ---- Join room (含密码校验) ----
   socket.on(EVENTS.ROOM_JOIN, async (raw) => {
+    if (!(await checkRoomEntryRateLimit(socket))) return
     try {
       const parsed = roomJoinSchema.safeParse(raw)
       if (!parsed.success) {
@@ -107,20 +135,38 @@ export function registerRoomController(io: TypedServer, socket: TypedSocket) {
       }
       const { roomId, nickname, password, rejoinToken } = parsed.data
 
+      // After too many wrong passwords, no password is evaluated any more (so a lucky guess cannot succeed), but a
+      // join that needs none — rejoin ticket, already a member, creator, admin — still goes through untouched.
+      const passwordLocked = await isJoinPasswordLocked(socket, roomId)
+
       // Validate join request (password, rejoin scenarios) — pure business logic
       const validation = roomService.validateJoinRequest(
         roomId,
         socket.id,
         socket.data.identityUserId,
-        password,
+        passwordLocked ? undefined : password,
         rejoinToken,
       )
       if (!validation.valid) {
+        if (validation.errorCode === 'WRONG_PASSWORD') {
+          if (passwordLocked) {
+            socket.emit(EVENTS.ROOM_ERROR, {
+              code: ERROR_CODE.WRONG_PASSWORD,
+              message: '密码错误次数过多，请稍后再试',
+            })
+            return
+          }
+          await recordJoinPasswordFailure(socket, roomId)
+        }
         socket.emit(EVENTS.ROOM_ERROR, {
           code: ERROR_CODE[validation.errorCode as keyof typeof ERROR_CODE] ?? ERROR_CODE.JOIN_FAILED,
           message: validation.errorMessage ?? '加入房间失败',
         })
         return
+      }
+      // A password that was actually checked and accepted: forget earlier typos.
+      if (password && !passwordLocked && !validation.skipPassword) {
+        await clearJoinPasswordFailures(socket, roomId)
       }
 
       // Auto-leave any previous room (different from target) before joining
@@ -276,11 +322,12 @@ export function registerRoomController(io: TypedServer, socket: TypedSocket) {
     try {
       logger.info(`Client disconnected: ${socket.id}, reason: ${reason}`, { socketId: socket.id })
       handleLeave(io, socket)
-      // Safety net: always clean up socket mapping, RTT data, and rate limiter.
+      // Safety net: always clean up socket mapping and RTT data.
       // handleLeave only cleans up if the socket was in a room, but
       // NTP_PING can store RTT even for sockets that never joined a room.
+      // Rate limiter counters are deliberately kept: they expire on their own, and dropping them here would let a
+      // client reset its budget by reconnecting.
       roomRepo.deleteSocketMapping(socket.id)
-      cleanupSocketRateLimit(socket)
     } catch (err) {
       logger.error('disconnect handler error', err, { socketId: socket.id })
     }

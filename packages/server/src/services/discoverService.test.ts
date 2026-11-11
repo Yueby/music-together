@@ -1,4 +1,5 @@
 import type { Track } from '@music-together/shared'
+import { LRUCache } from 'lru-cache'
 import { describe, expect, it, vi } from 'vitest'
 import { createDiscoverService, DiscoverError, RADAR_PLAYLIST_IDS, type DiscoverNcm } from './discoverService.js'
 
@@ -140,6 +141,29 @@ describe('discoverService radar', () => {
       body: { code: 200, playlist: { id: Number(id), name: 'ok' } },
     }))
     await expect(service.getRadar('netease')).resolves.toHaveLength(RADAR_PLAYLIST_IDS.length)
+  })
+
+  it('keeps a partial radar answer only briefly, but a complete one for the full hour', async () => {
+    const set = vi.spyOn(LRUCache.prototype, 'set')
+    try {
+      const partial = setup()
+      partial.ncm.playlist_detail.mockImplementation(async ({ id }: { id: string }) => {
+        if (id === RADAR_PLAYLIST_IDS[0]) throw new Error('boom')
+        return { body: { code: 200, playlist: { id: Number(id), name: `Radar ${id}` } } }
+      })
+      await expect(partial.service.getRadar('netease')).resolves.toHaveLength(RADAR_PLAYLIST_IDS.length - 1)
+      expect(set).toHaveBeenCalledTimes(1)
+      expect(set).toHaveBeenLastCalledWith('radar', expect.any(Array), { ttl: 2 * 60_000 })
+
+      set.mockClear()
+      const complete = setup()
+      await expect(complete.service.getRadar('netease')).resolves.toHaveLength(RADAR_PLAYLIST_IDS.length)
+      expect(set).toHaveBeenCalledTimes(1)
+      // No explicit lifetime: the default one-hour TTL of the radar cache applies.
+      expect(set).toHaveBeenLastCalledWith('radar', expect.any(Array))
+    } finally {
+      set.mockRestore()
+    }
   })
 
   it('caches the list and shares a concurrent request', async () => {

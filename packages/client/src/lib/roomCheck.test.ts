@@ -39,11 +39,19 @@ describe('Web room check', () => {
     )
   })
 
-  it.each([400, 401, 403, 404, 500])('preserves null for HTTP %i without parsing the body', async (status) => {
+  it.each([400, 404])('returns null for definitive HTTP %i without parsing the body', async (status) => {
     const { roomCheck } = await import('./roomCheck')
     const json = vi.fn()
     fetchFixture.mockResolvedValue({ ok: false, status, json } as unknown as Response)
     await expect(roomCheck(socket, 'room-a')).resolves.toBeNull()
+    expect(json).not.toHaveBeenCalled()
+  })
+
+  it.each([401, 403, 429, 500, 502, 503])('throws a transient error for HTTP %i instead of reporting a missing room', async (status) => {
+    const { roomCheck } = await import('./roomCheck')
+    const json = vi.fn()
+    fetchFixture.mockResolvedValue({ ok: false, status, json } as unknown as Response)
+    await expect(roomCheck(socket, 'room-a')).rejects.toThrow(`HTTP ${status}`)
     expect(json).not.toHaveBeenCalled()
   })
 

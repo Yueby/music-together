@@ -15,9 +15,9 @@ export function registerChatController(io: TypedServer, socket: TypedSocket) {
   socket.on(
     EVENTS.CHAT_MESSAGE,
     withRoom(async (ctx, raw) => {
-      // Rate limit check
+      // Rate limit check — per identity (ctx.user.id), not per socket: several tabs of one person share one budget.
       try {
-        await chatLimiter.consume(ctx.socket.id)
+        await chatLimiter.consume(ctx.user.id)
       } catch {
         ctx.socket.emit(EVENTS.ROOM_ERROR, { code: ERROR_CODE.RATE_LIMITED, message: '发送过于频繁，请稍后再试' })
         return

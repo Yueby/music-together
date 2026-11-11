@@ -50,6 +50,8 @@ export const RADAR_PLAYLIST_IDS = [
 
 const REQUEST_TIMEOUT_MS = 10_000
 const RADAR_TTL_MS = 60 * 60_000
+/** A radar answer with a list missing (one failed or was unusable) is kept only briefly, so the gap heals soon. */
+const RADAR_PARTIAL_TTL_MS = 2 * 60_000
 const DAILY_TTL_MS = 30 * 60_000
 
 export type DiscoverErrorCode = 'DISCOVER_UNSUPPORTED' | 'DISCOVER_LOGIN_REQUIRED' | 'DISCOVER_UPSTREAM'
@@ -136,7 +138,9 @@ export function createDiscoverService(overrides: Partial<DiscoverDependencies> =
     timeoutMs: REQUEST_TIMEOUT_MS,
     ...overrides,
   }
-  const cachedRadar = sharedCache<Playlist[]>(4, RADAR_TTL_MS)
+  const cachedRadar = sharedCache<Playlist[]>(4, RADAR_TTL_MS, (lists) =>
+    lists.length < RADAR_PLAYLIST_IDS.length ? RADAR_PARTIAL_TTL_MS : undefined,
+  )
   const cachedDaily = sharedCache<Track[]>(200, DAILY_TTL_MS)
   const cachedPlaylists = sharedCache<Playlist[]>(200, HOME_TTL_MS)
   const cachedArtists = sharedCache<Artist[]>(2, CHART_TTL_MS)

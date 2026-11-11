@@ -106,9 +106,10 @@ export function withDeadline<T>(work: Promise<T>, ms: number, onTimeout: () => E
 
 /**
  * TTL cache whose misses share one upstream call per key: many members opening the same page must not multiply
- * requests to the (rate-limited) NetEase endpoints. A failed load is not cached.
+ * requests to the (rate-limited) NetEase endpoints. A failed load is not cached. `ttlFor` may give a loaded value its own
+ * (positive) lifetime, e.g. a short one for an incomplete answer; `undefined` keeps the default `ttl`.
  */
-export function sharedCache<T extends {}>(max: number, ttl: number) {
+export function sharedCache<T extends {}>(max: number, ttl: number, ttlFor?: (value: T) => number | undefined) {
   const cache = new LRUCache<string, T>({ max, ttl })
   const inflight = new Map<string, Promise<T>>()
   return (key: string, load: () => Promise<T>): Promise<T> => {
@@ -118,7 +119,9 @@ export function sharedCache<T extends {}>(max: number, ttl: number) {
     if (running) return running
     const started = load()
       .then((value) => {
-        cache.set(key, value)
+        const ownTtl = ttlFor?.(value)
+        if (ownTtl !== undefined) cache.set(key, value, { ttl: ownTtl })
+        else cache.set(key, value)
         return value
       })
       .finally(() => inflight.delete(key))

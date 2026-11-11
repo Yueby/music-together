@@ -112,7 +112,8 @@ export default function RoomPage() {
         setRoomInfo(data)
       } catch (err) {
         if (cancelled) return
-        // Network error — still allow the user to try (gate will show, join may fail)
+        // Network / transient HTTP error (502, 503, 429, ...) — the room may well exist,
+        // so don't bounce to the lobby: still allow the user to try (gate will show, join may fail)
         console.warn('Room pre-check failed:', err)
         setRoomInfo(null)
       } finally {
@@ -138,6 +139,13 @@ export default function RoomPage() {
     setGatePasswordError(null)
     setGateOpen(true)
   }, [])
+
+  // A join that was sent right before the socket dropped will never be answered
+  // with ROOM_STATE, so the in-flight flag must not survive the disconnect —
+  // otherwise the auto-join below would never re-run after reconnecting.
+  useEffect(() => {
+    if (!isConnected) joiningRef.current = false
+  }, [isConnected])
 
   // --- Auto-join if room state is missing (e.g. page refresh, direct URL access) ---
   // Only after the interaction gate is open — avoids autoplay warnings.
@@ -227,10 +235,34 @@ export default function RoomPage() {
     }
   }, [socket, passwordNeeded, gateOpen])
 
-  // No unmount cleanup needed — the server handles room membership:
-  // - On disconnect: server's disconnect handler removes user
-  // - On join/create another room: server auto-leaves old room
-  // - On explicit leave: user clicks the leave button below
+  // Leave the room when the page unmounts without an explicit leave (browser /
+  // phone back button, route change, error-boundary reset). Otherwise the server
+  // keeps treating this user as a member (possibly the conductor) while the audio
+  // is gone, which stalls playback for the whole room.
+  //
+  // The decision is deferred by one macrotask: React StrictMode (dev) runs
+  // cleanup -> setup synchronously on the same instance, and the setup flips
+  // `mountedRef` back to true before the timer fires, so a simulated remount
+  // never emits ROOM_LEAVE. Page refresh / tab close never runs cleanup at all
+  // (the server's disconnect handler covers those).
+  const mountedRef = useRef(false)
+  const leaveRoomRef = useRef(leaveRoom)
+  leaveRoomRef.current = leaveRoom
+  useEffect(() => {
+    mountedRef.current = true
+    return () => {
+      mountedRef.current = false
+      setTimeout(() => {
+        if (mountedRef.current || isLeavingRef.current) return
+        // Disconnected: the server already dropped us and the connection guard
+        // reset the stores. Emitting now would be buffered and replayed after reconnect.
+        if (!socket.connected) return
+        // Nothing to leave if we never joined and no join is in flight.
+        if (!useRoomStore.getState().room && !joiningRef.current) return
+        leaveRoomRef.current()
+      }, 0)
+    }
+  }, [socket])
 
   const handlePasswordSubmit = useCallback(
     (password: string) => {

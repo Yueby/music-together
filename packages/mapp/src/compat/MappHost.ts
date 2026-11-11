@@ -44,18 +44,31 @@ let activeHost = false
 /**
  * Aborts when any input aborts. `AbortSignal.any` is missing from older WebViews (Safari < 17.4, Chrome < 116), and
  * calling it there would throw synchronously past every promise handler, so fall back to a hand-built controller.
+ * The fallback listens on every input, including the long-lived host lifetime signal, so callers must call `dispose`
+ * once the request is over or each request leaks a listener and its closure. It is a no-op for `AbortSignal.any`.
  */
-export function anySignal(signals: AbortSignal[]): AbortSignal {
-  if (typeof AbortSignal.any === 'function') return AbortSignal.any(signals)
+export function anySignal(signals: AbortSignal[]): { signal: AbortSignal; dispose: () => void } {
+  if (typeof AbortSignal.any === 'function') return { signal: AbortSignal.any(signals), dispose: () => {} }
   const controller = new AbortController()
+  const listeners: Array<[AbortSignal, () => void]> = []
+  const dispose = () => {
+    for (const [signal, listener] of listeners) signal.removeEventListener('abort', listener)
+    listeners.length = 0
+  }
   for (const signal of signals) {
     if (signal.aborted) {
       controller.abort(signal.reason)
+      dispose()
       break
     }
-    signal.addEventListener('abort', () => controller.abort(signal.reason), { once: true })
+    const listener = () => {
+      controller.abort(signal.reason)
+      dispose()
+    }
+    signal.addEventListener('abort', listener, { once: true })
+    listeners.push([signal, listener])
   }
-  return controller.signal
+  return { signal: controller.signal, dispose }
 }
 
 /** The reviewed Socket.IO WSS URL and the HTTP metadata origin share one host. */
@@ -163,10 +176,16 @@ export function createMappHost(options: MappHostOptions): MappHost {
       serverOrigin,
       session: roomSession,
       roomCommands: createMappRoomCommands(roomSession),
-      metadataFetch: (input, init) => {
-        if (lifetime.signal.aborted) return Promise.reject(new DOMException('METADATA_CANCELLED', 'AbortError'))
-        const signal = init?.signal ? anySignal([init.signal, lifetime.signal]) : lifetime.signal
-        return metadata(input, { ...init, signal })
+      metadataFetch: async (input, init) => {
+        if (lifetime.signal.aborted) throw new DOMException('METADATA_CANCELLED', 'AbortError')
+        if (!init?.signal) return metadata(input, { ...init, signal: lifetime.signal })
+        const linked = anySignal([init.signal, lifetime.signal])
+        try {
+          return await metadata(input, { ...init, signal: linked.signal })
+        } finally {
+          // The response body is fully buffered by now, so nothing needs the link after the request settles.
+          linked.dispose()
+        }
       },
       artworkLoader: coverLoader,
       roomCheck: createMappRoomCheck(roomSession, lifetime.signal),

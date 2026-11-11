@@ -73,6 +73,15 @@ export default function HomePage() {
     }
   }, [actionLoading])
 
+  // True once the user started a create/join from this page and until the server answers.
+  // The lobby must only navigate into a room for a ROOM_STATE it asked for; broadcasts
+  // about a room we are not (or no longer) in — mode changes, other users joining —
+  // must not pull the user back into the room page.
+  const awaitingRoomStateRef = useRef(false)
+  useEffect(() => {
+    if (actionLoading) awaitingRoomStateRef.current = true
+  }, [actionLoading])
+
   // Listen for room created / room state / chat history events for navigation
   useEffect(() => {
     const onCreated = () => {
@@ -83,6 +92,8 @@ export default function HomePage() {
     }
 
     const onState = (roomState: RoomState) => {
+      if (!awaitingRoomStateRef.current) return
+      awaitingRoomStateRef.current = false
       // setRoom automatically derives currentUser from room.users
       setRoom(roomState)
       if ('password' in roomState) {
@@ -106,6 +117,7 @@ export default function HomePage() {
     }
 
     const onError = (error: { code: string; message: string }) => {
+      awaitingRoomStateRef.current = false
       setActionLoading(false)
       if (error.code === ERROR_CODE.WRONG_PASSWORD) {
         // If password dialog is already open, show error

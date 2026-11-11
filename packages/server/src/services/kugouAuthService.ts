@@ -19,6 +19,9 @@ const APPID = 1005
 const SRCAPPID = 2919
 const CLIENTVER = 20489
 
+/** A black-holed endpoint must not hold a login or playlist request for the runtime's default fetch limit. */
+const KUGOU_REQUEST_TIMEOUT_MS = 10_000
+
 const WEB_SIGNATURE_SALT = 'NVPh5oo715z5DIWAeQlhMDsWXXQV4hwt'
 const ANDROID_SIGNATURE_SALT = 'OIlwieks28dk2k092lksi2UIkp'
 
@@ -169,7 +172,7 @@ async function kugouRequest(config: KugouRequestConfig): Promise<KugouApiRespons
     ...config.headers,
   }
 
-  const fetchOpts: RequestInit = { method, headers }
+  const fetchOpts: RequestInit = { method, headers, signal: AbortSignal.timeout(KUGOU_REQUEST_TIMEOUT_MS) }
   if (method === 'POST' && bodyStr) {
     headers['Content-Type'] = 'application/json'
     fetchOpts.body = bodyStr
@@ -278,6 +281,13 @@ export async function checkQrStatus(key: string): Promise<{
     return { status: 800, message: '检查状态失败' }
   }
 }
+
+// ---------------------------------------------------------------------------
+// Cookie for @meting/core
+// ---------------------------------------------------------------------------
+
+// The conversion itself lives in utils/cookieUtils (the stream-URL path needs it without this whole service).
+export { toMetingKugouCookie } from '../utils/cookieUtils.js'
 
 // ---------------------------------------------------------------------------
 // User Detail (nickname via RSA-encrypted request)

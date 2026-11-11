@@ -68,17 +68,29 @@ async function kugouSearch(
   return response?.errcode === 0 && Array.isArray(response.data?.info) ? response.data.info : null
 }
 
-/** One NetEase search through Meting's raw mode (its formatter expects songs); the parsed answer, or `null`. */
+/**
+ * One NetEase search through Meting's raw mode (its formatter expects songs); the parsed answer, or `null`. A business
+ * `code` other than 200 (rate limiting answers 405 / -460 ...) is a refusal, not "no hits": a missing `result` with code
+ * 200 is the normal empty answer.
+ */
 async function neteaseSearch(type: number, keyword: string, limit: number, page: number): Promise<Raw | null> {
   const meting = new Meting('netease')
   meting.format(false)
   const raw = await withTimeoutOrNull(meting.search(keyword, { limit, page, type } as never), API_TIMEOUT_MS)
   if (!raw) return null
+  let parsed: unknown
   try {
-    return JSON.parse(raw as string) as Raw
+    parsed = JSON.parse(raw as string)
   } catch {
     return null
   }
+  if (typeof parsed !== 'object' || parsed === null || Array.isArray(parsed)) return null
+  const body = parsed as Raw
+  if (body.code !== undefined && body.code !== 200) {
+    logger.warn('NetEase catalog search returned business code', { code: body.code })
+    return null
+  }
+  return body
 }
 
 /** The answer of a search request, or `SearchError` when there was none (as opposed to an answer with no hits). */

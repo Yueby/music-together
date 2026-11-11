@@ -1,4 +1,5 @@
 import { Router, type Router as RouterType, type Request, type Response } from 'express'
+import { identityBootstrapRateLimit } from '../middleware/httpRateLimiter.js'
 import { issueIdentityCookie } from '../services/identityService.js'
 import { logger } from '../utils/logger.js'
 
@@ -8,7 +9,7 @@ const router: RouterType = Router()
  * Ensure identity cookie exists, and renew expiry on every call.
  * Returns 204 and exposes identity metadata via headers.
  */
-router.post('/identity/bootstrap', (req: Request, res: Response) => {
+router.post('/identity/bootstrap', identityBootstrapRateLimit, (req: Request, res: Response) => {
   const hasExistingIdentity = typeof req.identityUserId === 'string' && req.identityUserId.length > 0
   const issued = issueIdentityCookie(req, res, req.identityUserId)
   req.identityUserId = issued.userId

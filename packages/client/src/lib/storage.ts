@@ -1,4 +1,4 @@
-import type { MusicSource } from '@music-together/shared'
+import { MUSIC_SOURCES, type MusicSource } from '@music-together/shared'
 import storageBackend from '@/lib/storageBackend'
 
 const PREFIX = 'mt-'
@@ -31,14 +31,46 @@ function safeRemove(key: string): void {
 // JSON helpers (safe parse / stringify through the PREFIX system)
 // ---------------------------------------------------------------------------
 
-function safeGetJSON<T>(key: string): T | null {
+/**
+ * Parse JSON from storage. The value may be stale (older app version) or hand-edited, so
+ * callers must pass a `validate` that proves its shape; anything it rejects reads as `null`.
+ */
+function safeGetJSON<T>(key: string, validate: (value: unknown) => T | null): T | null {
   const raw = safeGet(key)
   if (!raw) return null
   try {
-    return JSON.parse(raw) as T
+    return validate(JSON.parse(raw))
   } catch {
     return null
   }
+}
+
+function isRecord(value: unknown): value is Record<string, unknown> {
+  return typeof value === 'object' && value !== null && !Array.isArray(value)
+}
+
+/** Keep only well-formed cookie entries; a non-array value yields `[]`. */
+function parseStoredCookies(value: unknown): StoredCookie[] | null {
+  if (!Array.isArray(value)) return null
+  return value.filter(
+    (entry): entry is StoredCookie =>
+      isRecord(entry) &&
+      typeof entry.platform === 'string' &&
+      (MUSIC_SOURCES as readonly string[]).includes(entry.platform) &&
+      typeof entry.cookie === 'string',
+  )
+}
+
+function parseStoredRejoinToken(value: unknown): StoredRejoinToken | null {
+  if (!isRecord(value)) return null
+  const { roomId, token, expiresAt } = value
+  if (typeof roomId !== 'string' || typeof token !== 'string') return null
+  if (typeof expiresAt !== 'number' || !Number.isFinite(expiresAt)) return null
+  return { roomId, token, expiresAt }
+}
+
+function readAuthCookies(): StoredCookie[] {
+  return safeGetJSON('auth-cookies', parseStoredCookies) ?? []
 }
 
 function safeSetJSON(key: string, value: unknown): void {
@@ -209,27 +241,26 @@ export const storage = {
   setBgRenderScale: (v: number) => safeSet('bgRenderScale', String(v)),
 
   // Auth cookie persistence
-  getAuthCookies: (): StoredCookie[] => safeGetJSON<StoredCookie[]>('auth-cookies') ?? [],
+  getAuthCookies: (): StoredCookie[] => readAuthCookies(),
   setAuthCookies: (cookies: StoredCookie[]) => safeSetJSON('auth-cookies', cookies),
 
   upsertAuthCookie: (platform: MusicSource, cookie: string) => {
-    const list = (safeGetJSON<StoredCookie[]>('auth-cookies') ?? []).filter((c) => c.platform !== platform)
+    const list = readAuthCookies().filter((c) => c.platform !== platform)
     list.push({ platform, cookie })
     safeSetJSON('auth-cookies', list)
   },
 
   removeAuthCookie: (platform: MusicSource) => {
-    const list = (safeGetJSON<StoredCookie[]>('auth-cookies') ?? []).filter((c) => c.platform !== platform)
+    const list = readAuthCookies().filter((c) => c.platform !== platform)
     safeSetJSON('auth-cookies', list)
   },
 
   hasAuthCookie: (platform: MusicSource): boolean => {
-    const list = safeGetJSON<StoredCookie[]>('auth-cookies') ?? []
-    return list.some((c) => c.platform === platform)
+    return readAuthCookies().some((c) => c.platform === platform)
   },
 
   getRejoinToken: (roomId: string): string | null => {
-    const data = safeGetJSON<StoredRejoinToken>('rejoin-token')
+    const data = safeGetJSON('rejoin-token', parseStoredRejoinToken)
     if (!data) return null
     if (data.roomId !== roomId) return null
     if (data.expiresAt <= Date.now()) return null
@@ -238,7 +269,7 @@ export const storage = {
   setRejoinToken: (roomId: string, token: string, expiresAt: number) =>
     safeSetJSON('rejoin-token', { roomId, token, expiresAt } satisfies StoredRejoinToken),
   clearRejoinToken: (roomId?: string) => {
-    const data = safeGetJSON<StoredRejoinToken>('rejoin-token')
+    const data = safeGetJSON('rejoin-token', parseStoredRejoinToken)
     if (!data) return
     if (roomId && data.roomId !== roomId) return
     safeRemove('rejoin-token')

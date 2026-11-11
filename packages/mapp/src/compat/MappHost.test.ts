@@ -5,7 +5,7 @@ import type { MetadataFetch, MetadataResponse } from '../../../client/src/lib/Me
 import type { PlaybackSound, PlaybackSoundOptions } from '../../../client/src/lib/PlaybackSound.ts'
 import type { MappPlaybackSoundFactoryOptions } from './MappPlaybackSoundFactory.ts'
 import type { MappRoomSession, MappRoomSessionOptions, MappRoomSessionSnapshot } from './RoomSession.ts'
-import { createMappHost, type MappHost, type MappHostOptions } from './MappHost.ts'
+import { anySignal, createMappHost, type MappHost, type MappHostOptions } from './MappHost.ts'
 import { clearMemoryStorage, storageBackend } from './storageBackend.ts'
 
 const mocks = vi.hoisted(() => ({
@@ -393,16 +393,91 @@ describe('MappHost metadata lifetime', () => {
       const f = fixture()
       const host = f.make()
       const caller = new AbortController()
-      expect(await host.metadataFetch('/fixture', { signal: caller.signal })).toBe(response)
+      let finish: (value: typeof response) => void = () => {}
+      f.fetchMetadata.mockReturnValueOnce(new Promise((resolve) => (finish = resolve)))
+      const inFlight = host.metadataFetch('/fixture', { signal: caller.signal })
       const forwarded = f.fetchMetadata.mock.calls[0][1]!.signal!
       expect(forwarded.aborted).toBe(false)
       caller.abort()
       expect(forwarded.aborted).toBe(true)
+      finish(response)
+      expect(await inFlight).toBe(response)
       // An already-aborted caller aborts the combined signal immediately.
       const done = new AbortController()
       done.abort()
       await host.metadataFetch('/fixture', { signal: done.signal })
       expect(f.fetchMetadata.mock.calls[1][1]!.signal!.aborted).toBe(true)
+    } finally {
+      Object.defineProperty(AbortSignal, 'any', original)
+    }
+  })
+
+  it('removes the fallback listeners from the long-lived lifetime signal once each request settles', async () => {
+    const original = Object.getOwnPropertyDescriptor(AbortSignal, 'any')!
+    Object.defineProperty(AbortSignal, 'any', { value: undefined, configurable: true, writable: true })
+    try {
+      const f = fixture()
+      const host = f.make()
+      // A request without a caller signal is forwarded the host lifetime signal itself.
+      await host.metadataFetch('/fixture')
+      const lifetime = f.fetchMetadata.mock.calls[0][1]!.signal!
+      const live = new Set<unknown>()
+      const add = vi.spyOn(lifetime, 'addEventListener').mockImplementation((type, listener) => {
+        if (type === 'abort') live.add(listener)
+      })
+      const remove = vi.spyOn(lifetime, 'removeEventListener').mockImplementation((type, listener) => {
+        if (type === 'abort') live.delete(listener)
+      })
+
+      for (let i = 0; i < 5; i += 1) await host.metadataFetch('/fixture', { signal: new AbortController().signal })
+      expect(add).toHaveBeenCalledTimes(5)
+      expect(remove).toHaveBeenCalledTimes(5)
+      expect(live.size).toBe(0)
+
+      // A failing request releases its listener too.
+      f.fetchMetadata.mockRejectedValueOnce(new Error('METADATA_REQUEST_FAILED'))
+      await expect(host.metadataFetch('/fixture', { signal: new AbortController().signal })).rejects.toThrow(
+        'METADATA_REQUEST_FAILED',
+      )
+      expect(live.size).toBe(0)
+    } finally {
+      Object.defineProperty(AbortSignal, 'any', original)
+    }
+  })
+
+  it('anySignal detaches every fallback listener on dispose, on abort, and when an input is already aborted', () => {
+    const original = Object.getOwnPropertyDescriptor(AbortSignal, 'any')!
+    Object.defineProperty(AbortSignal, 'any', { value: undefined, configurable: true, writable: true })
+    try {
+      const a = new AbortController()
+      const b = new AbortController()
+      const addA = vi.spyOn(a.signal, 'addEventListener')
+      const removeA = vi.spyOn(a.signal, 'removeEventListener')
+      const removeB = vi.spyOn(b.signal, 'removeEventListener')
+
+      const first = anySignal([a.signal, b.signal])
+      first.dispose()
+      expect(removeA).toHaveBeenCalledWith('abort', addA.mock.calls[0][1])
+      expect(removeB).toHaveBeenCalledTimes(1)
+      // A disposed link no longer follows its inputs.
+      a.abort()
+      expect(first.signal.aborted).toBe(false)
+
+      const c = new AbortController()
+      const d = new AbortController()
+      const removeD = vi.spyOn(d.signal, 'removeEventListener')
+      const second = anySignal([c.signal, d.signal])
+      c.abort('why')
+      expect(second.signal.aborted).toBe(true)
+      expect(second.signal.reason).toBe('why')
+      expect(removeD).toHaveBeenCalledTimes(1)
+
+      const done = new AbortController()
+      done.abort()
+      const e = new AbortController()
+      const removeE = vi.spyOn(e.signal, 'removeEventListener')
+      expect(anySignal([e.signal, done.signal]).signal.aborted).toBe(true)
+      expect(removeE).toHaveBeenCalledTimes(1)
     } finally {
       Object.defineProperty(AbortSignal, 'any', original)
     }

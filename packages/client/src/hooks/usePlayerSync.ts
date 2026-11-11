@@ -285,6 +285,12 @@ export function usePlayerSync(
     const onSyncResponse = (data: SyncResponse) => {
       if (!howlRef.current) return
       if (!howlRef.current.playing()) return
+      // Drift is measured against server-time extrapolation. Until NTP has converged,
+      // getServerTime() is just the local clock, so a skewed device clock would look like
+      // up to several seconds of drift and trigger a bogus cold-start hard seek.
+      // Ignore the response without touching the EMA / cold-start state; the periodic
+      // sync request keeps polling and the next response after calibration is used.
+      if (!isCalibrated()) return
 
       // Only the elected conductor socket is authoritative. Other tabs that
       // share the same identity remain followers and must still self-correct.

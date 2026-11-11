@@ -276,6 +276,15 @@ describe('a size the caller claims, and a list that is cut short', () => {
     expect(second.total).toBe(250)
   })
 
+  it('leaves out QQ songs without a mid instead of listing them as "undefined"', async () => {
+    tencent.getPlaylistTracks.mockResolvedValue({
+      songs: [...tencentSongs(1, 2), { name: 'no mid', singer: [{ name: 'A' }] }],
+      total: 3,
+    })
+    const page = await musicProvider.getPlaylistPage('tencent', fresh(), 10, 0)
+    expect(ids(page.tracks)).toEqual(['m1', 'm2'])
+  })
+
   it('remembers a list that was read to its end', async () => {
     const id = fresh()
     tencent.getPlaylistTracks.mockResolvedValue({ songs: tencentSongs(1, 30), total: 30 })

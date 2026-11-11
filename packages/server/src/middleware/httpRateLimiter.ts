@@ -5,6 +5,26 @@ function identityOrIp(req: Request): string {
   return req.identityUserId ? `identity:${req.identityUserId}` : `ip:${ipKeyGenerator(req.ip ?? '', 56)}`
 }
 
+function ipOnly(req: Request): string {
+  return `ip:${ipKeyGenerator(req.ip ?? '', 56)}`
+}
+
+/**
+ * Handing out a brand-new identity must cost something: every other limit is per identity, so a script that can mint
+ * identities for free steps around all of them. Keyed by IP only (the caller has no identity yet) — which needs
+ * `trust proxy` to be right behind a reverse proxy. Requests that already carry a valid identity just renew its
+ * cookie and are not counted, so people sharing one IP (a school, an office) are not affected by each other's visits.
+ */
+export const identityBootstrapRateLimit = rateLimit({
+  windowMs: 60_000,
+  limit: 30,
+  standardHeaders: 'draft-8',
+  legacyHeaders: false,
+  keyGenerator: ipOnly,
+  skip: (req) => typeof req.identityUserId === 'string' && req.identityUserId.length > 0,
+  message: { error: 'Too many identity requests' },
+})
+
 export const musicApiRateLimit = rateLimit({
   windowMs: 60_000,
   limit: 120,

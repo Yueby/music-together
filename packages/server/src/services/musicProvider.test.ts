@@ -89,6 +89,55 @@ describe('Tencent music search', () => {
 
     await expect(musicProvider.search('tencent', 'nothing test fixture', 20, 1)).resolves.toEqual([])
   })
+
+  it('does not remember an empty result: the same keyword goes upstream again', async () => {
+    const meta = { curpage: 1, perpage: 20, sum: 0, nextpage: -1 }
+    const request = vi
+      .spyOn(tencentAuth, 'requestSignedApi')
+      .mockResolvedValueOnce({ body: { song: { list: [] } }, meta })
+      .mockResolvedValueOnce({ body: { song: { list: [tencentSong] } }, meta })
+
+    await expect(musicProvider.search('tencent', 'risk control fixture', 20, 1)).resolves.toEqual([])
+    const second = await musicProvider.search('tencent', 'risk control fixture', 20, 1)
+    expect(second.map((t) => t.sourceId)).toEqual(['003VHaBb0wCHop'])
+    expect(request).toHaveBeenCalledTimes(2)
+    // A non-empty answer is cached as before.
+    await musicProvider.search('tencent', 'risk control fixture', 20, 1)
+    expect(request).toHaveBeenCalledTimes(2)
+  })
+
+  it('credits "Unknown" when a song has no singers, and drops songs without a mid, keeping the others', async () => {
+    vi.spyOn(tencentAuth, 'requestSignedApi').mockResolvedValue({
+      body: {
+        song: {
+          list: [
+            { ...tencentSong, mid: 'no-singer', singer: [] },
+            { ...tencentSong, mid: 'nameless-singer', singer: [{ id: 1, mid: 'x', name: '' }] },
+            { ...tencentSong, mid: undefined },
+            { ...tencentSong, mid: '' },
+            { ...tencentSong, mid: 'fine' },
+          ],
+        },
+      },
+      meta: { curpage: 1, perpage: 20, sum: 5, nextpage: -1 },
+    } as never)
+
+    const tracks = await musicProvider.search('tencent', 'odd songs fixture', 20, 1)
+    expect(tracks.map((t) => [t.sourceId, t.artist])).toEqual([
+      ['no-singer', ['Unknown']],
+      ['nameless-singer', ['Unknown']],
+      ['fine', ['Taylor Swift']],
+    ])
+    expect(tracks.map((t) => t.sourceId)).not.toContain('undefined')
+  })
+
+  it('answers an empty list, not an error, when every song lacks a mid', async () => {
+    vi.spyOn(tencentAuth, 'requestSignedApi').mockResolvedValue({
+      body: { song: { list: [{ ...tencentSong, mid: undefined }] } },
+      meta: { curpage: 1, perpage: 20, sum: 1, nextpage: -1 },
+    } as never)
+    await expect(musicProvider.search('tencent', 'all mid-less fixture', 20, 1)).resolves.toEqual([])
+  })
 })
 
 describe('Meting song search (NetEase, Kugou)', () => {
@@ -104,6 +153,26 @@ describe('Meting song search (NetEase, Kugou)', () => {
     vi.spyOn(Meting.prototype, 'search').mockResolvedValue(JSON.stringify({ result: { songCount: 0 } }))
     await expect(musicProvider.search('netease', 'nothing fixture', 20, 1)).resolves.toEqual([])
   })
+
+  it('answers an empty list for business code 200 without a result', async () => {
+    vi.spyOn(Meting.prototype, 'search').mockResolvedValue(JSON.stringify({ code: 200 }))
+    await expect(musicProvider.search('netease', 'code 200 empty fixture', 20, 1)).resolves.toEqual([])
+  })
+
+  it.each([405, -460])(
+    'fails the NetEase search for business code %i (rate limited) instead of answering "no results"',
+    async (code) => {
+      const search = vi.spyOn(Meting.prototype, 'search').mockResolvedValue(JSON.stringify({ code }))
+      await expect(musicProvider.search('netease', `rate limited ${code} fixture`, 20, 1)).rejects.toBeInstanceOf(
+        SearchError,
+      )
+      // The failure is not remembered.
+      await expect(musicProvider.search('netease', `rate limited ${code} fixture`, 20, 1)).rejects.toBeInstanceOf(
+        SearchError,
+      )
+      expect(search).toHaveBeenCalledTimes(2)
+    },
+  )
 })
 
 describe('stream URL lifetime caching', () => {
@@ -168,6 +237,15 @@ describe('stream URL lifetime caching', () => {
     expect(getNeteasePlaybackUrl).toHaveBeenCalledTimes(2)
     expect(getNeteasePlaybackUrl).toHaveBeenNthCalledWith(1, 'lifetime-cookie-fixture', 320, 'fixture-cookie')
     expect(getNeteasePlaybackUrl).toHaveBeenNthCalledWith(2, 'lifetime-cookie-fixture', 320, 'fixture-cookie')
+  })
+
+  it('signs in to Kugou with the cookie shape Meting reads, not the stored one', async () => {
+    vi.spyOn(Date, 'now').mockReturnValue(now)
+    vi.spyOn(Meting.prototype, 'url').mockResolvedValue(JSON.stringify({ url: signedUrl('20260720090000') }))
+    const cookie = vi.spyOn(Meting.prototype, 'cookie')
+
+    await musicProvider.getStreamUrl('kugou', 'kugou-cookie-fixture', 320, 'token=abc;userid=123')
+    expect(cookie).toHaveBeenCalledWith('t=abc;KugooID=123')
   })
 
   it('returns null when authenticated playback fails without falling back to Meting', async () => {

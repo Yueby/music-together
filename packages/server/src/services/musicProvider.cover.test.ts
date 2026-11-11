@@ -33,6 +33,17 @@ describe('musicProvider.getCover', () => {
     expect(pic).toHaveBeenCalledOnce()
   })
 
+  it('does not remember an empty address: the same cover is asked for again', async () => {
+    const pic = vi
+      .spyOn(Meting.prototype, 'pic')
+      .mockResolvedValueOnce(answer(''))
+      .mockResolvedValueOnce(answer('http://img.kugou.com/{size}/a.jpg'))
+    await expect(musicProvider.getCover('kugou', 'cover-empty-k')).resolves.toBe('')
+    await expect(musicProvider.getCover('kugou', 'cover-empty-k')).resolves.toBe('http://img.kugou.com/5000/a.jpg')
+    await musicProvider.getCover('kugou', 'cover-empty-k')
+    expect(pic).toHaveBeenCalledTimes(2)
+  })
+
   it.each([
     ['an unreadable answer', 'not json'],
     ['a timeout', null],

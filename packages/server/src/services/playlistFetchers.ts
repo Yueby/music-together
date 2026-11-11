@@ -5,7 +5,7 @@ import { logger } from '../utils/logger.js'
 import { withTimeoutOrNull } from '../utils/withTimeout.js'
 import * as kugouAuth from './kugouAuthService.js'
 import * as tencentAuth from './tencentAuthService.js'
-import { kugouSongToTrack, navigatePath, rawToTrack } from './trackMapping.js'
+import { kugouSongToTrack, navigatePath, rawToTrackOrNull } from './trackMapping.js'
 
 /**
  * Where each platform's whole playlist or album comes from. Every fetcher answers the tracks in list order, or an empty
@@ -54,7 +54,9 @@ export async function fetchNeteaseAlbumTracks(albumId: string): Promise<Track[]>
     }
     const songs = res?.body?.songs
     if (!Array.isArray(songs) || songs.length === 0) return []
-    const tracks = songs.map((song: Record<string, unknown>) => rawToTrack(song, 'netease'))
+    const tracks = songs
+      .map((song: Record<string, unknown>) => rawToTrackOrNull(song, 'netease'))
+      .filter((track): track is Track => track !== null)
     logger.info(`Netease album ${albumId}: ${tracks.length} tracks`)
     return tracks
   } catch (err) {
@@ -89,7 +91,10 @@ export async function fetchNeteasePlaylistTracks(playlistId: string, cookie?: st
         if (offset === 0) logger.warn(`Netease playlist_track_all empty: ${playlistId}`, { code: res?.body?.code })
         break
       }
-      tracks.push(...songs.map((song: Record<string, unknown>) => rawToTrack(song, 'netease')))
+      for (const song of songs as Record<string, unknown>[]) {
+        const track = rawToTrackOrNull(song, 'netease')
+        if (track) tracks.push(track)
+      }
       // A short chunk is the end of the list.
       if (songs.length < NETEASE_CHUNK_SIZE) break
     }
@@ -155,7 +160,10 @@ export async function fetchTencentPlaylistTracks(playlistId: string, cookie?: st
         complete = tracks.length >= totalFromApi
         break
       }
-      for (const song of songs) tracks.push(rawToTrack(song, 'tencent'))
+      for (const song of songs) {
+        const track = rawToTrackOrNull(song, 'tencent')
+        if (track) tracks.push(track)
+      }
       // Only a short page ends the list: the announced size may be missing or wrong.
       if (songs.length < TENCENT_PAGE_SIZE) break
       page++
@@ -202,7 +210,9 @@ export async function fetchMetingTracks(
     const songs = navigatePath(rawData, path)
     if (!Array.isArray(songs) || songs.length === 0) return []
 
-    const tracks = songs.map((song: MetingJson) => rawToTrack(song, source))
+    const tracks = songs
+      .map((song: MetingJson) => rawToTrackOrNull(song, source))
+      .filter((track): track is Track => track !== null)
     logger.info(`Playlist ${playlistId} on ${source}: ${tracks.length} tracks (raw mode)`)
     return tracks
   } catch (err) {

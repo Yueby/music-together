@@ -5,6 +5,7 @@ import { listUserPlaylists } from '../services/authProvider.js'
 import { roomRepo } from '../repositories/roomRepository.js'
 import { logger } from '../utils/logger.js'
 import type { TypedServer, TypedSocket } from '../middleware/types.js'
+import { checkAuthRateLimit } from '../middleware/socketRateLimiter.js'
 
 export function registerPlaylistController(io: TypedServer, socket: TypedSocket) {
   socket.on(EVENTS.PLAYLIST_GET_MY, async (data) => {
@@ -27,6 +28,13 @@ export function registerPlaylistController(io: TypedServer, socket: TypedSocket)
 
       const cookie = authService.getUserCookie(mapping.userId, platform, mapping.roomId)
       if (!cookie) {
+        socket.emit(EVENTS.PLAYLIST_MY_LIST, { platform, playlists: [] })
+        return
+      }
+
+      // Every call below goes upstream with the user's cookie, so it shares the account-event budget.
+      // The client is still answered (with nothing) so a pending request never hangs.
+      if (!(await checkAuthRateLimit(socket))) {
         socket.emit(EVENTS.PLAYLIST_MY_LIST, { platform, playlists: [] })
         return
       }

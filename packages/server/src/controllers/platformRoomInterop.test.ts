@@ -22,7 +22,10 @@ vi.mock('../services/playerService.js', () => ({
 }))
 vi.mock('../middleware/socketRateLimiter.js', () => ({
   checkSocketRateLimit: vi.fn(async () => true),
-  cleanupSocketRateLimit: vi.fn(),
+  checkRoomEntryRateLimit: vi.fn(async () => true),
+  isJoinPasswordLocked: vi.fn(async () => false),
+  recordJoinPasswordFailure: vi.fn(async () => {}),
+  clearJoinPasswordFailures: vi.fn(async () => {}),
 }))
 vi.mock('../utils/logger.js', () => ({ logger: { info: vi.fn(), warn: vi.fn(), error: vi.fn() } }))
 

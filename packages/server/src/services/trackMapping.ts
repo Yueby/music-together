@@ -63,6 +63,17 @@ export function kugouSongToTrack(song: Record<string, unknown>): Track | null {
 }
 
 /**
+ * Like `rawToTrack`, but `null` for a song without the platform identifier (QQ `mid`, Kugou `hash`, NetEase `id`):
+ * `rawToTrack` would stringify the missing id to `'undefined'` and give a track that can never be played.
+ */
+export function rawToTrackOrNull(song: Record<string, unknown>, source: MusicSource): Track | null {
+  const s = song as Record<string, any>
+  const key = source === 'tencent' ? (s.musicData || s).mid : source === 'kugou' ? s.hash : s.id
+  if (key === undefined || key === null || key === '') return null
+  return rawToTrack(song, source)
+}
+
+/**
  * Convert raw platform-specific song data (search results, playlist pages) to our Track format.
  * Each platform returns different field names, so we need per-platform parsing.
  */
@@ -101,10 +112,14 @@ export function rawToTrack(song: Record<string, unknown>, source: MusicSource): 
     case 'tencent': {
       // Tencent sometimes wraps data in musicData
       const t = s.musicData || s
+      // An empty (or nameless) singer list is "nobody credited", like on the other platforms — not an empty array.
+      const tencentArtists = ((t.singer || []) as Array<Record<string, unknown>>)
+        .map((a) => a?.name)
+        .filter((name): name is string => typeof name === 'string' && name !== '')
       return {
         id: nanoid(),
         title: t.name || 'Unknown',
-        artist: (t.singer || []).map((a: Record<string, unknown>) => a.name),
+        artist: tencentArtists.length ? tencentArtists : [UNKNOWN_ARTIST],
         album: (t.album?.title || '').trim(),
         duration: t.interval || 0, // already in seconds
         cover: '', // resolved via pic()
