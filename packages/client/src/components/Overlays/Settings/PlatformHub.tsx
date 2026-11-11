@@ -1,6 +1,7 @@
 import type { AccountSession } from '@/hooks/useAccountSession'
 import { useAccountDiscover } from '@/hooks/useAccountDiscover'
 import { usePlaylist } from '@/hooks/usePlaylist'
+import { CLIPPING_PANE } from '@/lib/utils'
 import { openArtistPage } from '@/stores/artistPageStore'
 import type { Artist, Playlist } from '@music-together/shared'
 import { useCallback, useState } from 'react'
@@ -43,7 +44,7 @@ export function PlatformHub({ session }: { session: AccountSession }) {
     const { daily } = discover
     const isDaily = detail.kind === 'daily'
     return (
-      <div className="flex h-full min-h-0 min-w-0 flex-col overflow-hidden">
+      <div className={CLIPPING_PANE}>
         <PlaylistDetail
           playlist={
             isDaily

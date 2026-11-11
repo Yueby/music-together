@@ -1,4 +1,4 @@
-import { useEffect, useState } from 'react'
+import { useEffect, useRef, useState } from 'react'
 import { Lock, Music, Loader2 } from 'lucide-react'
 import { LIMITS } from '@music-together/shared'
 import {
@@ -10,6 +10,7 @@ import {
 } from '@/components/ui/responsive-dialog'
 import { Input } from '@/components/ui/input'
 import { Button } from '@/components/ui/button'
+import { Collapse } from '@/components/ui/collapse'
 import { Switch } from '@/components/ui/switch'
 import { Label } from '@/components/ui/label'
 
@@ -32,6 +33,7 @@ export function CreateRoomDialog({
   const [roomName, setRoomName] = useState('')
   const [passwordEnabled, setPasswordEnabled] = useState(false)
   const [password, setPassword] = useState('')
+  const passwordRef = useRef<HTMLInputElement>(null)
 
   // Sync nickname from defaultNickname when the dialog opens
   useEffect(() => {
@@ -39,6 +41,11 @@ export function CreateRoomDialog({
       setNickname(defaultNickname)
     }
   }, [open, defaultNickname])
+
+  // The field is in the page all along (hidden), so it is focused here once it is revealed rather than on mount.
+  useEffect(() => {
+    if (passwordEnabled) passwordRef.current?.focus({ preventScroll: true })
+  }, [passwordEnabled])
 
   const canSubmit = nickname.trim() && !(passwordEnabled && !password.trim())
 
@@ -85,7 +92,7 @@ export function CreateRoomDialog({
               />
             </div>
 
-            <div className="space-y-3">
+            <div>
               <div className="flex items-center gap-2">
                 <Switch id="password-toggle" checked={passwordEnabled} onCheckedChange={setPasswordEnabled} />
                 <Label
@@ -97,16 +104,18 @@ export function CreateRoomDialog({
                 </Label>
               </div>
 
-              {passwordEnabled && (
-                <Input
-                  type="password"
-                  placeholder="设置房间密码..."
-                  value={password}
-                  onChange={(e) => setPassword(e.target.value)}
-                  maxLength={LIMITS.ROOM_PASSWORD_MAX_LENGTH}
-                  autoFocus
-                />
-              )}
+              <Collapse open={passwordEnabled}>
+                <div className="pt-3">
+                  <Input
+                    ref={passwordRef}
+                    type="password"
+                    placeholder="设置房间密码..."
+                    value={password}
+                    onChange={(e) => setPassword(e.target.value)}
+                    maxLength={LIMITS.ROOM_PASSWORD_MAX_LENGTH}
+                  />
+                </div>
+              </Collapse>
             </div>
 
             <Button type="submit" className="w-full" size="lg" disabled={isLoading || !canSubmit}>

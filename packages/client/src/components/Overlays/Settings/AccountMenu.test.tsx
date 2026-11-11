@@ -4,7 +4,10 @@ import { createRoot } from 'react-dom/client'
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import { vipLabel } from '@/lib/platform'
 
-vi.mock('@/hooks/useArtworkUrl', () => ({ useArtworkUrl: (url?: string) => url }))
+vi.mock('@/hooks/useArtworkUrl', () => ({
+  useArtworkUrl: (url?: string) => url,
+  useArtwork: (url?: string) => ({ src: url, failed: false }),
+}))
 
 import { AccountMenu } from './AccountMenu'
 

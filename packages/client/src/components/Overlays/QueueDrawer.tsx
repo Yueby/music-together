@@ -1,10 +1,10 @@
 import { ArtistNames } from '@/components/ArtistNames'
+import { ArtworkImage } from '@/components/ArtworkImage'
 import { Badge } from '@/components/ui/badge'
 import { Button } from '@/components/ui/button'
 import { Drawer, DrawerContent, DrawerHeader, DrawerTitle } from '@/components/ui/drawer'
 import { Tooltip, TooltipContent, TooltipTrigger } from '@/components/ui/tooltip'
 import { cn } from '@/lib/utils'
-import { useArtworkUrl } from '@/hooks/useArtworkUrl'
 import { usePlayerStore } from '@/stores/playerStore'
 import { useRoomStore } from '@/stores/roomStore'
 import { useSocketContext } from '@/providers/SocketProvider'
@@ -30,16 +30,13 @@ const SOURCE_STYLE: Record<MusicSource, { label: string; className: string }> = 
 
 /** Cover thumbnail, with the music icon whenever there is no usable image. */
 export function QueueCover({ track }: { track: Track }) {
-  const src = useArtworkUrl(track.thumbnailCover ?? track.cover)
-  const [failedSrc, setFailedSrc] = useState<string>()
-
-  if (src && failedSrc !== src) {
-    return <img src={src} alt={track.title} className="h-9 w-9 rounded object-cover" onError={() => setFailedSrc(src)} />
-  }
   return (
-    <div className="flex h-9 w-9 items-center justify-center rounded bg-muted">
-      <Music className="h-4 w-4 text-muted-foreground" />
-    </div>
+    <ArtworkImage
+      cover={track.thumbnailCover ?? track.cover}
+      alt={track.title}
+      fallback={<Music className="h-4 w-4 text-muted-foreground" />}
+      className="h-9 w-9 rounded"
+    />
   )
 }
 

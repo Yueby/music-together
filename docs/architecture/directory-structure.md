@@ -53,6 +53,7 @@ src/
 │   ├── TrackListItem.tsx        #   共享曲目行渲染（序号+封面+标题VIP+歌手名（ArtistNames，点击开歌手页）+时长+isAdded 添加按钮，memo 优化）
 │   ├── ArtistNames.tsx          #   一首歌的歌手名 "A / B"，每个名字都可点击打开歌手页（有歌手 id 直达，否则按名字查找）；没有歌手页的平台为纯文本或由调用方指定点击行为。**凡是显示歌手名的地方都用它**：曲目行、播放队列、正在播放（桌面/移动/紧凑三种布局）
 │   ├── VirtualTrackList.tsx     #   共享虚拟滚动曲目列表（@tanstack/react-virtual + 无限加载 + skeleton + 空态，forwardRef 暴露 scrollToTop）
+│   ├── ArtworkImage.tsx         #   所有封面/头像的统一外框：图片在路上（已请求或宿主还在读取字节）时显示脉动骨架，到了再淡入；没有封面或读取失败（`useArtwork` 的 `failed`）才显示占位图标，因此占位图只代表"没有图"，不会是"可能还在加载"；`load=false`（列表行未进入视口）与 `pending`（所属对象还在获取）也显示为加载中
 │   ├── PlatformSelect.tsx       #   音乐平台下拉（网易云/QQ/酷狗 + 彩色圆点）；搜索弹窗与音乐账号共用，取代占满一行的按钮条/标签条
 │   ├── Overlays/
 │   │   ├── QueueDrawer.tsx     #     播放队列抽屉（vaul Drawer，移动端底部/桌面端右侧）
@@ -97,6 +98,7 @@ src/
 │       ├── badge.tsx
 │       ├── button.tsx
 │       ├── card.tsx
+│       ├── collapse.tsx        #   按高度展开/收起内容（grid-rows 过渡，内容保持挂载，收起时 inert）；用于弹窗里会出现的字段，避免高度突变
 │       ├── dialog.tsx
 │       ├── drawer.tsx
 │       ├── dropdown-menu.tsx
@@ -125,6 +127,7 @@ src/
 │   ├── useBackgroundAlbum.ts   #   流体背景的封面来源：需读字节的宿主把 Blob URL 转成已加载的 `<img>`（避免库内 fetch 被 CSP 拦截）
 │   ├── usePlayerSync.ts        #   播放同步（Scheduled Execution + conductor 上报 + 周期性漂移校正）
 │   ├── useClockSync.ts         #   NTP 时钟同步 hook（校准客户端时钟与服务器对齐）
+│   ├── useArtworkUrl.ts        #   封面地址：`useArtwork` 返回 `{ src, failed }`（网页端直接用 URL；需读字节的宿主加载并重试一次，仍失败则 `failed`），`useArtworkUrl` 只取地址
 │   ├── useMediaQuery.ts        #   订阅一条 CSS 媒体查询的匹配结果（需要按屏宽切换组件方向/结构而非仅样式时用）
 │   ├── useRoom.ts              #   房间组合 hook（编排 5 个子 hook，对外 API 不变）
 │   ├── room/                   #   useRoom 子 hook（按职责拆分）

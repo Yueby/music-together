@@ -1,6 +1,6 @@
 import { ArtistNames } from '@/components/ArtistNames'
+import { ArtworkImage } from '@/components/ArtworkImage'
 import { MarqueeText } from '@/components/ui/marquee-text'
-import { useArtworkUrl } from '@/hooks/useArtworkUrl'
 import { cn } from '@/lib/utils'
 import { usePlayerStore } from '@/stores/playerStore'
 import { Disc3 } from 'lucide-react'
@@ -17,7 +17,6 @@ interface NowPlayingProps {
 
 export function NowPlaying({ compact = false, onCoverClick }: NowPlayingProps) {
   const currentTrack = usePlayerStore((s) => s.currentTrack)
-  const [coverError, setCoverError] = useState(false)
 
   // Skip layoutId on first frame to prevent unwanted entry animation
   const [ready, setReady] = useState(false)
@@ -26,25 +25,13 @@ export function NowPlaying({ compact = false, onCoverClick }: NowPlayingProps) {
   }, [])
   const layoutId = ready ? 'cover-art' : undefined
 
-  // Reset error state when track changes
-  useEffect(() => {
-    setCoverError(false)
-  }, [currentTrack?.id])
-
-  const coverSrc = useArtworkUrl(currentTrack?.cover)
-  const showCover = Boolean(coverSrc && !coverError)
-
-  const coverContent = showCover && currentTrack ? (
-    <img
-      src={coverSrc}
-      alt={currentTrack.title}
-      className="h-full w-full object-cover"
-      onError={() => setCoverError(true)}
+  const coverContent = (
+    <ArtworkImage
+      cover={currentTrack?.cover}
+      alt={currentTrack?.title}
+      fallback={<Disc3 className={cn('text-white/20', compact ? 'h-6 w-6' : 'h-1/3 w-1/3')} />}
+      className="bg-secondary h-full w-full"
     />
-  ) : (
-    <div className="flex h-full w-full items-center justify-center bg-secondary">
-      <Disc3 className={cn('text-white/20', compact ? 'h-6 w-6' : 'h-1/3 w-1/3')} />
-    </div>
   )
 
   // ---------------------------------------------------------------------------

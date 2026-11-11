@@ -1,4 +1,5 @@
 import { Button } from '@/components/ui/button'
+import { CLIPPING_PANE } from '@/lib/utils'
 import type { Playlist, Track } from '@music-together/shared'
 import { ArrowLeft } from 'lucide-react'
 import { TrackCollection } from './TrackCollection'
@@ -31,7 +32,7 @@ export function PlaylistDetail({
   onLoadMore,
 }: PlaylistDetailProps) {
   return (
-    <div className="flex h-full min-h-0 min-w-0 flex-col overflow-hidden">
+    <div className={CLIPPING_PANE}>
       {/* Back + Title — pr-8 reserves space for dialog close button */}
       <div className="flex shrink-0 items-center gap-2 pr-8">
         <Button variant="ghost" size="icon" onClick={onBack} className="h-8 w-8 shrink-0" aria-label="返回">

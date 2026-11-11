@@ -4,12 +4,14 @@ import { artworkLoader } from '@/lib/artwork'
 const RETRY_DELAY_MS = 2_500
 
 /**
- * The address to show for a cover URL.
- * Web returns the URL itself on the first render. A host that must read the bytes returns `undefined`
- * until the image is ready (and after a failure), so callers keep showing their placeholder.
+ * The address to show for a cover URL, and whether getting it gave up.
+ * Web returns the URL itself on the first render. A host that must read the bytes returns `src: undefined` until the
+ * image is ready (and after a failure), so callers keep showing their placeholder; `failed` says that no more attempts
+ * will follow, so the placeholder can stop looking like "loading".
  */
-export function useArtworkUrl(url: string | undefined): string | undefined {
+export function useArtwork(url: string | undefined): { src: string | undefined; failed: boolean } {
   const [loaded, setLoaded] = useState<{ source: string; src: string }>()
+  const [failedUrl, setFailedUrl] = useState<string>()
 
   useEffect(() => {
     if (!url || artworkLoader.direct) return
@@ -23,7 +25,11 @@ export function useArtworkUrl(url: string | undefined): string | undefined {
           if (!controller.signal.aborted) setLoaded({ source: url, src })
         },
         () => {
-          if (controller.signal.aborted || retriesLeft === 0) return
+          if (controller.signal.aborted) return
+          if (retriesLeft === 0) {
+            setFailedUrl(url)
+            return
+          }
           retry = setTimeout(() => attempt(retriesLeft - 1), RETRY_DELAY_MS)
         },
       )
@@ -35,8 +41,13 @@ export function useArtworkUrl(url: string | undefined): string | undefined {
     }
   }, [url])
 
-  if (!url) return undefined
-  if (artworkLoader.direct) return url
+  if (!url) return { src: undefined, failed: false }
+  if (artworkLoader.direct) return { src: url, failed: false }
   // A result for a previous URL is never shown for the current one.
-  return loaded?.source === url ? loaded.src : undefined
+  return loaded?.source === url ? { src: loaded.src, failed: false } : { src: undefined, failed: failedUrl === url }
+}
+
+/** Just the address (see `useArtwork`). */
+export function useArtworkUrl(url: string | undefined): string | undefined {
+  return useArtwork(url).src
 }

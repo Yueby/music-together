@@ -75,15 +75,17 @@ export function SettingsDialog({
           className="h-[70vh] gap-0"
         >
           <div className="flex shrink-0 flex-col border-b md:w-48 md:border-r md:border-b-0 md:p-4">
-            <ResponsiveDialogTitle className="px-4 pt-4 pb-2 text-lg font-semibold md:mb-2 md:px-3 md:pt-0">
+            <ResponsiveDialogTitle className="px-4 pt-4 pb-2 text-lg font-semibold md:mb-4 md:px-3 md:pt-0">
               设置
             </ResponsiveDialogTitle>
+            {/* A row under the title on narrow screens, a column on the left on wide ones */}
             <TabsList
+              variant="nav"
               aria-label="设置分类"
-              className="scrollbar-hide mx-4 mb-2 w-auto justify-start overflow-x-auto md:mx-0 md:mb-0 md:w-full"
+              className="scrollbar-hide mx-4 mb-2 w-auto justify-start overflow-x-auto md:mx-0 md:mb-0 md:w-full md:overflow-visible"
             >
               {TABS.map(({ id, icon: Icon, label }) => (
-                <TabsTrigger key={id} value={id} className="flex-none md:flex-none">
+                <TabsTrigger key={id} value={id}>
                   <Icon />
                   {label}
                 </TabsTrigger>

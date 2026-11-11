@@ -3,6 +3,7 @@ import { Separator } from '@/components/ui/separator'
 import { VirtualTrackList } from '@/components/VirtualTrackList'
 import { useQueueMembership } from '@/hooks/useQueueMembership'
 import { batchAddMessage, planBatchAdd } from '@/lib/batchAdd'
+import { CLIPPING_PANE } from '@/lib/utils'
 import type { Track } from '@music-together/shared'
 import { ListPlus, Music } from 'lucide-react'
 import { useCallback, useMemo } from 'react'
@@ -82,7 +83,7 @@ export function TrackCollection({
   }
 
   return (
-    <div className="flex min-h-0 min-w-0 flex-1 flex-col overflow-hidden">
+    <div className={CLIPPING_PANE}>
       {/* Info + Action */}
       <div className="flex shrink-0 items-center justify-between gap-3 py-1">
         <p className="text-muted-foreground min-w-0 truncate text-xs">
