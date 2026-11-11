@@ -67,6 +67,16 @@ export const playerSyncSchema = z.object({
   trackId: z.string().min(1).max(200),
 })
 
+/**
+ * NTP_PING: the id is echoed back, and the RTT the client measured last time sets how far ahead the room schedules
+ * plays and pauses. Anything outside what a connection can really measure is not taken.
+ */
+export const ntpPingSchema = z.object({
+  clientPingId: z.number().finite().nonnegative().max(Number.MAX_SAFE_INTEGER),
+  // An implausible RTT is dropped on its own: the ping itself must still be answered with its id
+  lastRttMs: z.number().finite().positive().max(10_000).optional().catch(undefined),
+})
+
 export const playerSetModeSchema = z.object({
   mode: z.enum(['sequential', 'loop-all', 'loop-one', 'shuffle']),
 })

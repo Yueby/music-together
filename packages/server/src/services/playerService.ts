@@ -450,6 +450,9 @@ export function resumeTrack(io: TypedServer, roomId: string, _initiatorSocket?: 
   if (!room) return
   const latest = getLatestPlayback(room)
   if (!latest.track) return
+  // Already playing (a second admin pressing play, or a resume vote that passes after somebody else resumed): there
+  // is nothing to resume, and re-anchoring on the last reported position would send everybody back to it.
+  if (latest.playState.isPlaying) return
   const generation = beginControl(roomId)
   if (hasExpiredUrl(latest.track)) {
     void refreshPlayback(io, roomId, room, generation)

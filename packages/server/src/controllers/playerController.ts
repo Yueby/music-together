@@ -1,4 +1,4 @@
-import { EVENTS, ERROR_CODE, defineAbilityFor, playerPlaySchema, playerSeekSchema, playerSetModeSchema, playerSyncSchema } from '@music-together/shared'
+import { EVENTS, ERROR_CODE, defineAbilityFor, ntpPingSchema, playerPlaySchema, playerSeekSchema, playerSetModeSchema, playerSyncSchema } from '@music-together/shared'
 import type { TypedServer, TypedSocket } from '../middleware/types.js'
 import { createWithPermission } from '../middleware/withControl.js'
 import { createWithRoom } from '../middleware/withRoom.js'
@@ -102,10 +102,14 @@ export function registerPlayerController(io: TypedServer, socket: TypedSocket) {
   // ---------------------------------------------------------------------------
   // NTP clock synchronisation – reply instantly with server time
   // ---------------------------------------------------------------------------
-  socket.on(EVENTS.NTP_PING, (data) => {
+  socket.on(EVENTS.NTP_PING, (raw) => {
     try {
+      // A malformed ping still gets its answer (the clock sync must not stall), but nothing from it is kept.
+      const parsed = ntpPingSchema.safeParse(raw)
+      const data = parsed.success ? parsed.data : undefined
+
       // Store client-reported RTT for adaptive scheduling delay
-      if (data?.lastRttMs != null && data.lastRttMs > 0 && data.lastRttMs <= 10_000) {
+      if (data?.lastRttMs !== undefined) {
         roomRepo.setSocketRTT(socket.id, data.lastRttMs)
       }
 
