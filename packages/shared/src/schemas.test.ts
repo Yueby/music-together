@@ -2,9 +2,11 @@ import { describe, expect, it } from 'vitest'
 import { LIMITS } from './constants.js'
 import {
   coverQuerySchema,
+  playerPlaySchema,
   queueAddBatchSchema,
   roomCreateSchema,
   roomJoinSchema,
+  roomSettingsSchema,
   searchQuerySchema,
   urlQuerySchema,
   voteStartSchema,
@@ -43,11 +45,50 @@ describe('shared schemas', () => {
     ).toBe(false)
   })
 
+  it('does not accept a nickname of only blanks, and trims the rest', () => {
+    expect(roomCreateSchema.safeParse({ nickname: '   ' }).success).toBe(false)
+    expect(roomJoinSchema.safeParse({ roomId: 'ROOM01', nickname: '   ' }).success).toBe(false)
+    expect(roomJoinSchema.parse({ roomId: 'ROOM01', nickname: '  me  ' }).nickname).toBe('me')
+  })
+
+  it('keeps the thumbnail of a queued track', () => {
+    const parsed = queueAddBatchSchema.parse({ tracks: [{ ...track, thumbnailCover: 'https://x.test/t.jpg' }] })
+    expect(parsed.tracks[0].thumbnailCover).toBe('https://x.test/t.jpg')
+  })
+
+  it('refuses a queued track without an id', () => {
+    expect(queueAddBatchSchema.safeParse({ tracks: [{ ...track, id: '' }] }).success).toBe(false)
+  })
+
+  it('sets a room password only when there is one: null removes it, an empty string is refused', () => {
+    expect(roomSettingsSchema.safeParse({ password: 'secret' }).success).toBe(true)
+    expect(roomSettingsSchema.safeParse({ password: null }).success).toBe(true)
+    expect(roomSettingsSchema.safeParse({ password: '' }).success).toBe(false)
+    expect(roomSettingsSchema.safeParse({ name: '   ' }).success).toBe(false)
+  })
+
+  it('plays a requested track by its id alone', () => {
+    expect(playerPlaySchema.safeParse(undefined).success).toBe(true)
+    expect(playerPlaySchema.safeParse({}).success).toBe(true)
+    expect(playerPlaySchema.parse({ track: { id: 'a', streamUrl: 'https://evil.test/a.mp3' } })).toEqual({
+      track: { id: 'a' },
+    })
+    expect(playerPlaySchema.safeParse({ track: {} }).success).toBe(false)
+    expect(playerPlaySchema.safeParse({ track: { id: '' } }).success).toBe(false)
+  })
+
   it('validates vote payloads by action', () => {
     expect(voteStartSchema.safeParse({ action: 'pause' }).success).toBe(true)
     expect(voteStartSchema.safeParse({ action: 'set-mode', payload: {} }).success).toBe(false)
     expect(voteStartSchema.safeParse({ action: 'set-mode', payload: { mode: 'shuffle' } }).success).toBe(true)
     expect(voteStartSchema.safeParse({ action: 'play-track', payload: { trackId: '' } }).success).toBe(false)
+  })
+
+  it('keeps the title of the track a vote is about, for the vote banner', () => {
+    const play = voteStartSchema.parse({ action: 'play-track', payload: { trackId: 'a', trackTitle: 'Song' } })
+    expect(play.payload).toEqual({ trackId: 'a', trackTitle: 'Song' })
+    const remove = voteStartSchema.parse({ action: 'remove-track', payload: { trackId: 'a', trackTitle: 'Song' } })
+    expect(remove.payload).toEqual({ trackId: 'a', trackTitle: 'Song' })
   })
 
   it('bounds music resource IDs and numeric options', () => {

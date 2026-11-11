@@ -567,7 +567,6 @@ class MusicProvider {
   async fetchFullPlaylist(
     source: MusicSource,
     playlistId: string,
-    playlistTotal?: number,
     cookie?: string | null,
     type: 'playlist' | 'album' = 'playlist'
   ): Promise<{ ids: string[]; total: number }> {
@@ -585,14 +584,16 @@ class MusicProvider {
       logger.info(`Playlist index stale (registry eviction): ${source}/${playlistId}`)
     }
 
-    const tracks = await fetchPlaylistTracks(source, playlistId, type, playlistTotal, cookie)
+    const { tracks, complete } = await fetchPlaylistTracks(source, playlistId, type, cookie)
     if (tracks.length === 0) return { ids: [], total: 0 }
 
     // Register the tracks (keeping covers already known) and remember the id list.
     for (const t of tracks) this.enrichFromRegistry(t)
     this.registerTracks(tracks)
     const ids = tracks.map((t) => t.sourceId)
-    this.playlistIndex.set(cacheKey, { source, ids })
+    // A list that was cut short is shown as far as it went, but not remembered: the next request reads it again.
+    if (complete) this.playlistIndex.set(cacheKey, { source, ids })
+    else logger.warn(`Playlist ${source}/${playlistId} is incomplete (${ids.length} tracks), not cached`)
     return { ids, total: ids.length }
   }
 
@@ -606,11 +607,13 @@ class MusicProvider {
     playlistId: string,
     limit: number,
     offset: number,
-    playlistTotal?: number,
+    // The caller's idea of the size (the `total` query) is accepted for the sake of the request contract but not used:
+    // the list is read to its real end, and the result is shared between everybody who asks for it.
+    _playlistTotal?: number,
     cookie?: string | null,
     type: 'playlist' | 'album' = 'playlist'
   ): Promise<{ tracks: Track[]; total: number; hasMore: boolean }> {
-    const { ids, total } = await this.fetchFullPlaylist(source, playlistId, playlistTotal, cookie, type)
+    const { ids, total } = await this.fetchFullPlaylist(source, playlistId, cookie, type)
     if (total === 0) return { tracks: [], total: 0, hasMore: false }
 
     const pageIds = ids.slice(offset, offset + limit)
@@ -622,7 +625,7 @@ class MusicProvider {
       // Clear index and retry once.
       this.playlistIndex.delete(playlistCacheKey(source, playlistId, type, cookie))
       logger.warn(`Playlist page hydration failed, retrying: ${source}/${playlistId}`)
-      const retry = await this.fetchFullPlaylist(source, playlistId, playlistTotal, cookie, type)
+      const retry = await this.fetchFullPlaylist(source, playlistId, cookie, type)
       if (retry.total === 0) return { tracks: [], total: 0, hasMore: false }
       const retryPageIds = retry.ids.slice(offset, offset + limit)
       tracks = this.hydrateFromRegistry(source, retryPageIds)
