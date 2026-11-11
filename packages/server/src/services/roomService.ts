@@ -1,5 +1,5 @@
 import { timingSafeEqual } from 'node:crypto'
-import type { AudioQuality, RoomListItem, User, UserRole } from '@music-together/shared'
+import type { AudioQuality, QueueMode, RoomListItem, User, UserRole } from '@music-together/shared'
 import { nanoid } from 'nanoid'
 import type { RoomData } from '../repositories/types.js'
 import { roomRepo } from '../repositories/roomRepository.js'
@@ -173,6 +173,7 @@ export function createRoom(
       revision: 0,
     },
     playMode: 'loop-all',
+    queueMode: 'keep',
   }
 
   roomRepo.set(roomId, room)
@@ -298,7 +299,7 @@ export function listRooms(): RoomListItem[] {
 
 export function updateSettings(
   roomId: string,
-  settings: { name?: string; password?: string | null; audioQuality?: AudioQuality },
+  settings: { name?: string; password?: string | null; audioQuality?: AudioQuality; queueMode?: QueueMode },
 ): void {
   const room = roomRepo.get(roomId)
   if (!room) return
@@ -314,6 +315,11 @@ export function updateSettings(
 
   if (settings.audioQuality !== undefined) {
     room.audioQuality = settings.audioQuality
+  }
+
+  // Changing how the queue is walked changes which track is next (and whether it is known in advance).
+  if (settings.queueMode !== undefined) {
+    room.queueMode = settings.queueMode
   }
 }
 

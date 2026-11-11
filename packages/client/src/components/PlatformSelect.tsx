@@ -19,7 +19,7 @@ function PlatformMark({ platform }: { platform: MusicSource }) {
       aria-hidden
       className={cn(
         // CJK glyphs sit low in their line box; the bottom padding lifts the mark to the visual centre.
-        'flex size-5 shrink-0 items-center justify-center rounded-full pb-[4px] text-[11px] leading-none font-bold text-white',
+        'flex size-5 shrink-0 items-center justify-center rounded-full pb-[3px] text-[11px] leading-none font-bold text-white',
         PLATFORM_DOT[platform],
       )}
     >

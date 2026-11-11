@@ -1,5 +1,5 @@
 import type { PlayMode, Track } from '@music-together/shared'
-import { LIMITS } from '@music-together/shared'
+import { effectivePlayMode, LIMITS } from '@music-together/shared'
 import { roomRepo } from '../repositories/roomRepository.js'
 
 export function addTrack(roomId: string, track: Track): boolean {
@@ -58,7 +58,7 @@ export function getSuccessorAfterRemoval(roomId: string, trackId: string, playMo
   const remaining = room.queue.filter((track) => track.id !== trackId)
   if (remaining.length === 0) return null
 
-  switch (playMode) {
+  switch (effectivePlayMode(room.queueMode, playMode)) {
     case 'shuffle':
       return remaining[Math.floor(Math.random() * remaining.length)] ?? null
     case 'loop-all':
@@ -112,7 +112,8 @@ export function getNextTrack(roomId: string, playMode?: PlayMode, fromTrackId?: 
   const room = roomRepo.get(roomId)
   if (!room || room.queue.length === 0) return null
 
-  const mode = playMode ?? room.playMode ?? 'sequential'
+  // In a queue that is consumed as it plays, the looping modes mean nothing: it just goes forward.
+  const mode = effectivePlayMode(room.queueMode, playMode ?? room.playMode ?? 'sequential')
 
   // `fromTrackId` lets a caller look past a transition that has been scheduled but not committed yet.
   const fromId = fromTrackId ?? room.currentTrack?.id
@@ -139,7 +140,11 @@ export function getNextTrack(roomId: string, playMode?: PlayMode, fromTrackId?: 
     case 'sequential':
     default: {
       const nextIndex = currentIndex + 1
-      return nextIndex < room.queue.length ? room.queue[nextIndex] : null
+      if (nextIndex < room.queue.length) return room.queue[nextIndex]
+      // A consumed queue only holds what has not been heard yet: whatever sits before the current track was jumped
+      // over, so it comes next instead of being left behind for good.
+      if (room.queueMode === 'consume') return room.queue.find((t) => t.id !== fromId) ?? null
+      return null
     }
   }
 }
@@ -151,7 +156,7 @@ export function getPreviousTrack(roomId: string): Track | null {
   const currentIndex = room.currentTrack ? room.queue.findIndex((t) => t.id === room.currentTrack!.id) : -1
 
   // For loop-all, wrap to last track when at the beginning
-  if (room.playMode === 'loop-all' && currentIndex <= 0) {
+  if (effectivePlayMode(room.queueMode, room.playMode) === 'loop-all' && currentIndex <= 0) {
     return room.queue[room.queue.length - 1]
   }
 

@@ -7,7 +7,7 @@ import { useSocketContext } from '@/providers/SocketProvider'
 import { usePlayerStore } from '@/stores/playerStore'
 import { useRoomStore } from '@/stores/roomStore'
 import type { PlayMode, VoteAction } from '@music-together/shared'
-import { EVENTS, TIMING } from '@music-together/shared'
+import { EVENTS, TIMING, effectivePlayMode } from '@music-together/shared'
 import { ArrowRightToLine, ListMusic, Pause, Play, Repeat, Repeat1, Shuffle, SkipBack, SkipForward } from 'lucide-react'
 import { AnimatePresence, motion } from 'motion/react'
 import { memo, useEffect, useLayoutEffect, useRef, useState } from 'react'
@@ -16,6 +16,8 @@ import { memo, useEffect, useLayoutEffect, useRef, useState } from 'react'
 const DESIGN_WIDTH = 300
 
 const PLAY_MODE_CYCLE: PlayMode[] = ['sequential', 'loop-all', 'loop-one', 'shuffle']
+/** A queue that is consumed as it plays never comes round again, so looping modes are not offered. */
+const CONSUMING_PLAY_MODE_CYCLE: PlayMode[] = ['sequential', 'shuffle']
 
 const PLAY_MODE_CONFIG: Record<PlayMode, { icon: typeof Repeat; label: string }> = {
   sequential: { icon: ArrowRightToLine, label: '顺序播放' },
@@ -49,7 +51,9 @@ export const PlayerControls = memo(function PlayerControls({
   const duration = usePlayerStore((s) => s.duration)
   const currentTrack = usePlayerStore((s) => s.currentTrack)
   const queueLength = useRoomStore((s) => s.room?.queue?.length ?? 0)
-  const playMode = useRoomStore((s) => s.room?.playMode ?? 'sequential')
+  const queueMode = useRoomStore((s) => s.room?.queueMode ?? 'keep')
+  // What actually plays: the room may have a looping mode stored that its queue mode does not honour.
+  const playMode = useRoomStore((s) => effectivePlayMode(s.room?.queueMode, s.room?.playMode ?? 'sequential'))
   const ability = useAppAbility()
   const canSeek = ability.can('seek', 'Player')
   const canPlay = ability.can('play', 'Player')
@@ -114,8 +118,8 @@ export const PlayerControls = memo(function PlayerControls({
   }
 
   const handlePlayModeToggle = () => {
-    const currentIdx = PLAY_MODE_CYCLE.indexOf(playMode)
-    const nextMode = PLAY_MODE_CYCLE[(currentIdx + 1) % PLAY_MODE_CYCLE.length]
+    const cycle = queueMode === 'consume' ? CONSUMING_PLAY_MODE_CYCLE : PLAY_MODE_CYCLE
+    const nextMode = cycle[(cycle.indexOf(playMode) + 1) % cycle.length]
     if (canSetMode) {
       socket.emit(EVENTS.PLAYER_SET_MODE, { mode: nextMode })
     } else if (canVote) {

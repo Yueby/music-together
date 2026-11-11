@@ -5,10 +5,10 @@ import { Tabs, TabsList, TabsTrigger } from '@/components/ui/tabs'
 import type { ArtistLoadError } from '@/hooks/useArtist'
 import { CLIPPING_PANE } from '@/lib/utils'
 import type { Artist, Playlist, Track } from '@music-together/shared'
-import { ArrowLeft, Disc3, Loader2, User } from 'lucide-react'
+import { Disc3, Loader2, User } from 'lucide-react'
 import { useState } from 'react'
-import { CollectionRow } from './CollectionRow'
-import { TrackCollection } from './Settings/TrackCollection'
+import { CollectionRow } from '../Overlays/CollectionRow'
+import { TrackCollection } from './TrackCollection'
 
 const ERROR_MESSAGES: Record<ArtistLoadError, string> = {
   unsupported: '当前平台暂不支持歌手主页',
@@ -16,7 +16,7 @@ const ERROR_MESSAGES: Record<ArtistLoadError, string> = {
   failed: '加载失败，请稍后重试',
 }
 
-interface ArtistDetailProps {
+interface ArtistPageProps {
   artist: Artist | null
   loading: boolean
   error: ArtistLoadError | null
@@ -27,7 +27,6 @@ interface ArtistDetailProps {
   albums: Playlist[]
   albumsHasMore: boolean
   albumsLoadingMore: boolean
-  onBack: () => void
   onRetry: () => void
   onAddTrack: (track: Track) => void
   onInsertAfterCurrent?: (track: Track) => void
@@ -82,8 +81,11 @@ function ArtistHeader({ artist, loading }: { artist: Artist | null; loading: boo
   )
 }
 
-/** Artist home: profile, hottest songs and albums. Songs reuse the shared collection list; albums open their detail. */
-export function ArtistDetail({
+/**
+ * An artist's home: profile, hottest songs and albums. Songs reuse the shared collection list; albums open their own
+ * page. A page of its own: the dialog that holds it supplies the title (the artist's name) and any way back.
+ */
+export function ArtistPage({
   artist,
   loading,
   error,
@@ -94,7 +96,6 @@ export function ArtistDetail({
   albums,
   albumsHasMore,
   albumsLoadingMore,
-  onBack,
   onRetry,
   onAddTrack,
   onInsertAfterCurrent,
@@ -102,19 +103,11 @@ export function ArtistDetail({
   onLoadMoreSongs,
   onLoadMoreAlbums,
   onSelectAlbum,
-}: ArtistDetailProps) {
+}: ArtistPageProps) {
   const [tab, setTab] = useState<'songs' | 'albums'>('songs')
 
   return (
     <div className={CLIPPING_PANE}>
-      {/* Back + title — pr-8 reserves space for dialog close button */}
-      <div className="flex shrink-0 items-center gap-2 pr-8">
-        <Button variant="ghost" size="icon" onClick={onBack} className="h-8 w-8 shrink-0" aria-label="返回">
-          <ArrowLeft className="h-4 w-4" />
-        </Button>
-        <h4 className="text-muted-foreground min-w-0 flex-1 truncate text-sm font-medium">歌手主页</h4>
-      </div>
-
       {error ? (
         <div className="text-muted-foreground flex flex-1 flex-col items-center justify-center gap-3 py-8 text-sm">
           <span>{ERROR_MESSAGES[error]}</span>

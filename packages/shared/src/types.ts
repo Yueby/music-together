@@ -42,6 +42,30 @@ export type UserRole = 'owner' | 'admin' | 'member'
 
 export type PlayMode = 'sequential' | 'loop-all' | 'loop-one' | 'shuffle'
 
+/**
+ * 队列模式（房主在设置里切换）：
+ * - keep：播完的歌留在队列里，按播放模式（顺序/循环/随机）往下走——默认
+ * - consume：一首歌听完（或被切走）就从队列移除，队列只往前走、不会循环，后来点的歌都排在后面；适合多人点歌
+ */
+export type QueueMode = 'keep' | 'consume'
+
+/** 房主可以修改的房间设置（都是可选的，只发要改的） */
+export interface RoomSettingsUpdate {
+  name?: string
+  /** 字符串 = 设置密码；null = 移除密码 */
+  password?: string | null
+  audioQuality?: AudioQuality
+  queueMode?: QueueMode
+}
+
+/**
+ * 实际生效的播放模式：消耗队列时歌曲播完就没了，"列表循环"和"单曲循环"没有意义，按顺序播放；
+ * 顺序与随机不受影响。切回 keep 后原来选的模式依然有效（不改写已存的模式）。
+ */
+export function effectivePlayMode(queueMode: QueueMode | undefined, playMode: PlayMode): PlayMode {
+  return queueMode === 'consume' && (playMode === 'loop-all' || playMode === 'loop-one') ? 'sequential' : playMode
+}
+
 /** 音频质量档位 (kbps)：标准 / 较高 / HQ / 无损 */
 export type AudioQuality = 128 | 192 | 320 | 999
 
@@ -87,6 +111,7 @@ export interface RoomState {
   /** Present when playState describes a future pending playback action. */
   serverTimeToExecute?: number
   playMode: PlayMode
+  queueMode: QueueMode
 }
 
 export interface PlayState {

@@ -1,5 +1,5 @@
 import type { AudioQuality, MusicSource, PlayMode, PlayState, ScheduledPlayState, Track } from '@music-together/shared'
-import { EVENTS, ERROR_CODE, NTP } from '@music-together/shared'
+import { EVENTS, ERROR_CODE, NTP, effectivePlayMode } from '@music-together/shared'
 import { roomRepo } from '../repositories/roomRepository.js'
 import { nanoid } from 'nanoid'
 import { musicProvider } from './musicProvider.js'
@@ -419,7 +419,8 @@ export async function preloadUpcoming(io: TypedServer, roomId: string): Promise<
     return
   }
   const current = getLatestPlayback(room).track
-  if (!current || room.playMode === 'shuffle' || room.playMode === 'loop-one') return
+  const mode = effectivePlayMode(room.queueMode, room.playMode)
+  if (!current || mode === 'shuffle' || mode === 'loop-one') return
   const next = queueService.getNextTrack(roomId, room.playMode, current.id)
   if (!next || next.id === current.id) {
     announcedPreloads.delete(roomId)
@@ -618,7 +619,20 @@ export function playNextTrackInRoom(
   const valid = () => roomRepo.get(roomId) === room && controlGenerations.get(roomId) === generation
   return withPlayMutex(roomId, async () => {
     if (!valid()) return
-    const nextTrack = queueService.getNextTrack(roomId, playMode)
+    const consume = room.queueMode === 'consume'
+    // What is (about to be) playing is the track being left.
+    const leaving = getLatestPlayback(room).track
+    // Count on from the track being left, which is not `room.currentTrack` while a switch is still pending.
+    let nextTrack = queueService.getNextTrack(roomId, playMode, consume ? leaving?.id : undefined)
+    if (consume && nextTrack && nextTrack.id === leaving?.id) nextTrack = null // a lone track has no "next"
+
+    if (consume && leaving) {
+      // A queue that is consumed as it plays: the one just heard (or skipped) is done with and leaves it for good, so
+      // nothing comes round again and what others queued is next in line.
+      queueService.removeTrack(roomId, leaving.id)
+      io.to(roomId).emit(EVENTS.QUEUE_UPDATED, { queue: room.queue })
+    }
+
     if (!nextTrack) {
       stopPlayback(io, roomId)
       return
@@ -627,7 +641,8 @@ export function playNextTrackInRoom(
     const success = await _playTrackInRoom(io, roomId, nextTrack, generation)
     if (!valid()) return
     if (!success) {
-      const skipTrack = queueService.getNextTrack(roomId, playMode)
+      // Past the one that failed (the track left behind is no longer in a consumed queue to count from).
+      const skipTrack = queueService.getNextTrack(roomId, playMode, consume ? nextTrack.id : undefined)
       if (skipTrack) await _playTrackInRoom(io, roomId, skipTrack, generation)
     }
 

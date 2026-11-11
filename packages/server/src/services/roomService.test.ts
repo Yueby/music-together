@@ -1,6 +1,7 @@
 import { afterEach, describe, expect, it } from 'vitest'
 import { roomRepo } from '../repositories/roomRepository.js'
-import { createRoom, joinRoom, leaveRoom, setUserRole, validateJoinRequest } from './roomService.js'
+import { toPublicRoomState } from '../utils/roomUtils.js'
+import { createRoom, joinRoom, leaveRoom, setUserRole, updateSettings, validateJoinRequest } from './roomService.js'
 
 const ROOM_ID = 'ROOM01'
 
@@ -184,5 +185,34 @@ describe('roomService role and host reconciliation', () => {
     expect(room.hostId).toBe('admin')
     expect(room.playState.revision).toBe(5)
     expect(room.playState.currentTime).toBeCloseTo(32, 1)
+  })
+})
+
+describe('roomService queue mode', () => {
+  it('starts a room keeping its tracks, and shows the mode in the public state', () => {
+    const room = createTestRoom()
+    expect(room.queueMode).toBe('keep')
+    expect(toPublicRoomState(room).queueMode).toBe('keep')
+  })
+
+  it('switches the mode in both directions, and leaves it alone when a setting that is not about it changes', () => {
+    const room = createTestRoom()
+
+    updateSettings(ROOM_ID, { queueMode: 'consume' })
+    expect(room.queueMode).toBe('consume')
+    expect(toPublicRoomState(room).queueMode).toBe('consume')
+
+    updateSettings(ROOM_ID, { name: 'Renamed' })
+    expect(room.queueMode).toBe('consume')
+
+    updateSettings(ROOM_ID, { queueMode: 'keep' })
+    expect(room.queueMode).toBe('keep')
+  })
+
+  it('keeps the play mode that was chosen, so it is back when the queue is kept again', () => {
+    const room = createTestRoom()
+    room.playMode = 'loop-one'
+    updateSettings(ROOM_ID, { queueMode: 'consume' })
+    expect(room.playMode).toBe('loop-one')
   })
 })

@@ -22,6 +22,8 @@ vi.mock('@/lib/hostRuntime', () => ({
 }))
 
 vi.mock('@/components/ui/responsive-dialog', () => ({
+  DIALOG_BAR_CLASS: '',
+  ResponsiveDialogHeader: ({ children }: { children: React.ReactNode }) => <div>{children}</div>,
   ResponsiveDialog: ({ open, children }: { open: boolean; children: React.ReactNode }) =>
     open ? <div role="dialog">{children}</div> : null,
   ResponsiveDialogContent: ({ children, className }: { children: React.ReactNode; className?: string }) => (

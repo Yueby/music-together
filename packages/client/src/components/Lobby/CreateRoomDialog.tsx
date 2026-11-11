@@ -2,6 +2,8 @@ import { useEffect, useRef, useState } from 'react'
 import { Lock, Music, Loader2 } from 'lucide-react'
 import { LIMITS } from '@music-together/shared'
 import {
+  DIALOG_BAR_CLASS,
+  DIALOG_BODY_CLASS,
   ResponsiveDialog,
   ResponsiveDialogBody,
   ResponsiveDialogContent,
@@ -61,15 +63,15 @@ export function CreateRoomDialog({
 
   return (
     <ResponsiveDialog open={open} onOpenChange={onOpenChange}>
-      <ResponsiveDialogContent className="sm:max-w-md">
-        <ResponsiveDialogHeader>
-          <ResponsiveDialogTitle className="flex items-center gap-2 text-lg">
+      <ResponsiveDialogContent className="gap-0 p-0 sm:max-w-md">
+        <ResponsiveDialogHeader className={DIALOG_BAR_CLASS}>
+          <ResponsiveDialogTitle className="flex items-center gap-2">
             <Music className="h-5 w-5 text-primary" />
             创建房间
           </ResponsiveDialogTitle>
         </ResponsiveDialogHeader>
 
-        <ResponsiveDialogBody>
+        <ResponsiveDialogBody className={DIALOG_BODY_CLASS}>
           <form onSubmit={handleSubmit} className="space-y-4">
             <div className="space-y-2">
               <Label className="text-sm font-medium text-foreground/80">昵称</Label>

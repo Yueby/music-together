@@ -66,7 +66,8 @@ export function AppearanceSection() {
 
         <SettingRow
           label="流动速度"
-          description={`当前: ${s.bgFlowSpeed.toFixed(1)}`}
+          description="背景流体的流动快慢"
+          value={s.bgFlowSpeed.toFixed(1)}
           onReset={s.bgFlowSpeed !== s.bgFlowSpeedDefault ? s.resetBgFlowSpeed : undefined}
         >
           <Slider

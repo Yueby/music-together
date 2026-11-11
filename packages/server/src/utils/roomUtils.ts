@@ -24,6 +24,7 @@ export function toPublicRoomState(data: RoomData): RoomState {
       : data.playState,
     serverTimeToExecute: data.pendingPlayback?.playState.serverTimeToExecute,
     playMode: data.playMode,
+    queueMode: data.queueMode,
   }
 }
 

@@ -3,7 +3,7 @@ import { Separator } from '@/components/ui/separator'
 import { VirtualTrackList } from '@/components/VirtualTrackList'
 import { useQueueMembership } from '@/hooks/useQueueMembership'
 import { batchAddMessage, planBatchAdd } from '@/lib/batchAdd'
-import { CLIPPING_PANE } from '@/lib/utils'
+import { CLIPPING_PANE, cn } from '@/lib/utils'
 import type { Track } from '@music-together/shared'
 import { ListPlus, Music } from 'lucide-react'
 import { useCallback, useMemo } from 'react'
@@ -20,6 +20,11 @@ export interface TrackCollectionProps {
   /** Name recorded with a batch add ("Added N songs from …"). */
   collectionName?: string
   emptyMessage?: string
+  /**
+   * The count and "add all" row sit in the page's own padding by default. A page that lets the list run out to the
+   * dialog's edges (its rows pad themselves) gives this row the same side padding so it lines up with them.
+   */
+  infoClassName?: string
   onAddTrack: (track: Track) => void
   onInsertAfterCurrent?: (track: Track) => void
   onAddAll: (tracks: Track[], collectionName?: string) => void
@@ -40,6 +45,7 @@ export function TrackCollection({
   subtitle,
   collectionName,
   emptyMessage = '歌单为空',
+  infoClassName,
   onAddTrack,
   onInsertAfterCurrent,
   onAddAll,
@@ -85,7 +91,7 @@ export function TrackCollection({
   return (
     <div className={CLIPPING_PANE}>
       {/* Info + Action */}
-      <div className="flex shrink-0 items-center justify-between gap-3 py-1">
+      <div className={cn('flex shrink-0 items-center justify-between gap-3 py-1', infoClassName)}>
         <p className="text-muted-foreground min-w-0 truncate text-xs">
           {loading
             ? '加载中…'

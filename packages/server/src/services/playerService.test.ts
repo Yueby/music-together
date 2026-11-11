@@ -233,6 +233,95 @@ describe('playerService state transitions', () => {
     expect(playCalls).toHaveLength(2)
   })
 
+  describe('in a queue that is consumed as it plays', () => {
+    const named = (id: string) => ({ ...track, id, sourceId: id, urlId: id })
+    const consumingRoom = (...ids: string[]) => {
+      const data = room()
+      data.queueMode = 'consume'
+      data.queue = ids.map(named)
+      data.currentTrack = data.queue[0]
+      roomRepo.set('ROOM01', data)
+      return data
+    }
+
+    it('takes the track just heard out of the queue when moving on, and announces it', async () => {
+      vi.useFakeTimers()
+      vi.setSystemTime(new Date('2026-01-01T00:00:10Z'))
+      const data = consumingRoom('first', 'second', 'third')
+      const { io, emit } = ioMock()
+
+      await playNextTrackInRoom(io as never, 'ROOM01', 'loop-all')
+
+      expect(data.pendingPlayback?.track?.id).toBe('second')
+      expect(data.queue.map((t) => t.id)).toEqual(['second', 'third'])
+      expect(emit).toHaveBeenCalledWith('queue:updated', { queue: data.queue })
+    })
+
+    it('ends instead of coming round again after the last track', async () => {
+      vi.useFakeTimers()
+      vi.setSystemTime(new Date('2026-01-01T00:00:10Z'))
+      const data = consumingRoom('only')
+      const { io, emit } = ioMock()
+
+      await playNextTrackInRoom(io as never, 'ROOM01', 'loop-all')
+
+      expect(data.queue).toEqual([])
+      expect(data.pendingPlayback?.type).toBe('stop')
+      expect(emit.mock.calls.some(([event]) => event === 'player:play')).toBe(false)
+    })
+
+    it('plays what was queued behind it, in the order it was queued', async () => {
+      vi.useFakeTimers()
+      vi.setSystemTime(new Date('2026-01-01T00:00:10Z'))
+      const data = consumingRoom('a', 'b')
+      const { io } = ioMock()
+
+      await playNextTrackInRoom(io as never, 'ROOM01', 'loop-one')
+      expect(data.pendingPlayback?.track?.id).toBe('b')
+      expect(data.queue.map((t) => t.id)).toEqual(['b'])
+    })
+
+    it('moves on from a track that is still only scheduled, instead of dropping it unheard', async () => {
+      vi.useFakeTimers()
+      vi.setSystemTime(new Date('2026-01-01T00:00:10Z'))
+      const data = consumingRoom('a', 'b', 'c')
+      const { io } = ioMock()
+
+      await playNextTrackInRoom(io as never, 'ROOM01', 'loop-all')
+      expect(data.pendingPlayback?.track?.id).toBe('b')
+
+      // b has not started yet (still pending) when the next skip comes in: it is the one being left, so c is next
+      await playNextTrackInRoom(io as never, 'ROOM01', 'loop-all', { skipDebounce: true })
+      expect(data.pendingPlayback?.track?.id).toBe('c')
+      expect(data.queue.map((t) => t.id)).toEqual(['c'])
+    })
+
+    it('does not replay a lone track in shuffle mode', async () => {
+      vi.useFakeTimers()
+      vi.setSystemTime(new Date('2026-01-01T00:00:10Z'))
+      const data = consumingRoom('only')
+      data.playMode = 'shuffle'
+      const { io } = ioMock()
+
+      await playNextTrackInRoom(io as never, 'ROOM01', 'shuffle')
+
+      expect(data.queue).toEqual([])
+      expect(data.pendingPlayback?.type).toBe('stop')
+    })
+
+    it('keeps every track in a room that keeps its queue', async () => {
+      vi.useFakeTimers()
+      vi.setSystemTime(new Date('2026-01-01T00:00:10Z'))
+      const data = consumingRoom('first', 'second')
+      data.queueMode = 'keep'
+      const { io } = ioMock()
+
+      await playNextTrackInRoom(io as never, 'ROOM01', 'loop-all')
+
+      expect(data.queue.map((t) => t.id)).toEqual(['first', 'second'])
+    })
+  })
+
   it('assigns a unique revision to every replacement action', () => {
     const data = room()
     roomRepo.set('ROOM01', data)
@@ -721,7 +810,9 @@ describe('preloading the next track', () => {
     await preloadUpcoming(io as never, 'ROOM01')
 
     expect(stream).toHaveBeenCalledExactlyOnceWith('netease', 'track-2', 320, undefined)
-    expect(preloads(emit)).toEqual([['player:preload', { track: expect.objectContaining({ id: 'track-2', streamUrl: nextUrl }) }]])
+    expect(preloads(emit)).toEqual([
+      ['player:preload', { track: expect.objectContaining({ id: 'track-2', streamUrl: nextUrl }) }],
+    ])
     expect(data.queue[1].streamUrl).toBe(nextUrl)
     expect(data.queue[2].streamUrl).toBeUndefined()
   })
@@ -751,7 +842,13 @@ describe('preloading the next track', () => {
     data.pendingPlayback = {
       type: 'play',
       track: second,
-      playState: { isPlaying: true, currentTime: 0, serverTimestamp: Date.now() + 500, revision: 1, serverTimeToExecute: Date.now() + 500 },
+      playState: {
+        isPlaying: true,
+        currentTime: 0,
+        serverTimestamp: Date.now() + 500,
+        revision: 1,
+        serverTimeToExecute: Date.now() + 500,
+      },
       timer: undefined as never,
     }
     vi.spyOn(musicProvider, 'getStreamUrl').mockResolvedValue(nextUrl)
@@ -760,14 +857,17 @@ describe('preloading the next track', () => {
     expect(preloads(emit)[0][1].track.id).toBe('track-3')
   })
 
-  it.each(['shuffle', 'loop-one'] as const)('does not preload in %s mode, where the next track is not known in advance', async (mode) => {
-    playing(mode)
-    const stream = vi.spyOn(musicProvider, 'getStreamUrl').mockResolvedValue(nextUrl)
-    const { io, emit } = ioMock()
-    await preloadUpcoming(io as never, 'ROOM01')
-    expect(stream).not.toHaveBeenCalled()
-    expect(emit).not.toHaveBeenCalled()
-  })
+  it.each(['shuffle', 'loop-one'] as const)(
+    'does not preload in %s mode, where the next track is not known in advance',
+    async (mode) => {
+      playing(mode)
+      const stream = vi.spyOn(musicProvider, 'getStreamUrl').mockResolvedValue(nextUrl)
+      const { io, emit } = ioMock()
+      await preloadUpcoming(io as never, 'ROOM01')
+      expect(stream).not.toHaveBeenCalled()
+      expect(emit).not.toHaveBeenCalled()
+    },
+  )
 
   it('announces nothing at the end of a sequential queue or when the queue would replay the same track', async () => {
     const data = playing()
@@ -812,7 +912,9 @@ describe('preloading the next track', () => {
     const socket = { id: 'socket', emit: vi.fn() }
     roomRepo.setSocketMapping('socket', 'ROOM01', 'member')
     await syncPlaybackToSocket(io as never, socket as never, 'ROOM01', data)
-    expect(socket.emit).toHaveBeenCalledWith('player:preload', { track: expect.objectContaining({ id: 'track-2', streamUrl: nextUrl }) })
+    expect(socket.emit).toHaveBeenCalledWith('player:preload', {
+      track: expect.objectContaining({ id: 'track-2', streamUrl: nextUrl }),
+    })
 
     const gone = { id: 'gone', emit: vi.fn() }
     await syncPlaybackToSocket(io as never, gone as never, 'ROOM01', data)

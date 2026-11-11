@@ -74,6 +74,7 @@ function room(id = 'room-a'): RoomState {
     currentTrack: null,
     playState: { isPlaying: true, currentTime: 42, serverTimestamp: 100, revision: 3 },
     playMode: 'sequential',
+    queueMode: 'keep',
   }
 }
 function ticket(roomId = 'room-a', expiresAt = Date.now() + 60_000) {

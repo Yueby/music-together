@@ -7,8 +7,10 @@ import {
   DialogHeader,
   DialogTitle,
 } from '@/components/ui/dialog'
+import { DIALOG_BAR_CLASS, DIALOG_BODY_CLASS } from '@/components/ui/responsive-dialog'
 import { Textarea } from '@/components/ui/textarea'
 import { PLATFORM_LABELS } from '@/lib/platform'
+import { cn } from '@/lib/utils'
 import type { MusicSource } from '@music-together/shared'
 import { useState } from 'react'
 
@@ -37,13 +39,13 @@ export function ManualCookieDialog({ open, onOpenChange, platform, onSubmit }: M
         if (!v) setCookie('')
       }}
     >
-      <DialogContent className="sm:max-w-md">
-        <DialogHeader>
-          <DialogTitle>手动输入 Cookie — {PLATFORM_LABELS[platform]}</DialogTitle>
-          <DialogDescription>从浏览器中复制 Cookie 并粘贴到下方。</DialogDescription>
+      <DialogContent className="gap-0 p-0 sm:max-w-md">
+        <DialogHeader className={DIALOG_BAR_CLASS}>
+          <DialogTitle className="truncate">手动输入 Cookie — {PLATFORM_LABELS[platform]}</DialogTitle>
         </DialogHeader>
 
-        <div className="space-y-3 py-2">
+        <div className={cn(DIALOG_BODY_CLASS, 'space-y-3')}>
+          <DialogDescription>从浏览器中复制 Cookie 并粘贴到下方。</DialogDescription>
           <Textarea
             className="h-32 resize-none"
             placeholder="粘贴 Cookie 字符串..."
@@ -69,7 +71,7 @@ export function ManualCookieDialog({ open, onOpenChange, platform, onSubmit }: M
           </div>
         </div>
 
-        <DialogFooter>
+        <DialogFooter className="px-4 pb-4 sm:px-6 sm:pb-6">
           <Button variant="outline" onClick={() => onOpenChange(false)}>
             取消
           </Button>

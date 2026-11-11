@@ -1,12 +1,15 @@
 import {
+  DIALOG_BAR_CLASS,
   ResponsiveDialog,
   ResponsiveDialogContent,
   ResponsiveDialogDescription,
+  ResponsiveDialogHeader,
   ResponsiveDialogTitle,
 } from '@/components/ui/responsive-dialog'
 import { ScrollArea } from '@/components/ui/scroll-area'
 import { Tabs, TabsContent, TabsList, TabsTrigger } from '@/components/ui/tabs'
 import { useMediaQuery } from '@/hooks/useMediaQuery'
+import type { RoomSettingsUpdate } from '@music-together/shared'
 import { Palette, Settings2, Type, Users, type LucideIcon } from 'lucide-react'
 import { useEffect, useState } from 'react'
 import { RoomSettingsSection } from './Settings/RoomSettingsSection'
@@ -24,11 +27,7 @@ export type SettingsTab = 'room' | 'members' | 'appearance' | 'lyrics'
 interface SettingsDialogProps {
   open: boolean
   onOpenChange: (open: boolean) => void
-  onUpdateSettings: (settings: {
-    name?: string
-    password?: string | null
-    audioQuality?: import('@music-together/shared').AudioQuality
-  }) => void
+  onUpdateSettings: (settings: RoomSettingsUpdate) => void
   onSetUserRole?: (userId: string, role: 'admin' | 'member') => void
   initialTab?: SettingsTab
 }
@@ -67,22 +66,23 @@ export function SettingsDialog({
   return (
     <ResponsiveDialog open={open} onOpenChange={onOpenChange}>
       <ResponsiveDialogContent className="gap-0 p-0 md:max-w-[75vw] lg:max-w-[60vw]">
-        <ResponsiveDialogDescription className="sr-only">调整房间、歌词和其他设置</ResponsiveDialogDescription>
+        <ResponsiveDialogHeader className={DIALOG_BAR_CLASS}>
+          <ResponsiveDialogTitle>设置</ResponsiveDialogTitle>
+          <ResponsiveDialogDescription className="sr-only">调整房间、歌词和其他设置</ResponsiveDialogDescription>
+        </ResponsiveDialogHeader>
         <Tabs
           value={tab}
           onValueChange={(value) => setTab(value as SettingsTab)}
           orientation={wide ? 'vertical' : 'horizontal'}
-          className="h-[70vh] gap-0"
+          className="h-[calc(70vh-3.5rem)] gap-0"
         >
-          <div className="flex shrink-0 flex-col border-b md:w-48 md:border-r md:border-b-0 md:p-4">
-            <ResponsiveDialogTitle className="px-4 pt-4 pb-2 text-lg font-semibold md:mb-4 md:px-3 md:pt-0">
-              设置
-            </ResponsiveDialogTitle>
+          {/* md:px-3 + the item's own px-3 puts the category names on the title's left edge (24px) */}
+          <div className="flex shrink-0 flex-col border-b md:w-48 md:border-r md:border-b-0 md:px-3 md:py-4">
             {/* A row under the title on narrow screens, a column on the left on wide ones */}
             <TabsList
               variant="nav"
               aria-label="设置分类"
-              className="scrollbar-hide mx-4 mb-2 w-auto justify-start overflow-x-auto md:mx-0 md:mb-0 md:w-full md:overflow-visible"
+              className="scrollbar-hide mx-4 my-2 w-auto justify-start overflow-x-auto md:mx-0 md:my-0 md:w-full md:overflow-visible"
             >
               {TABS.map(({ id, icon: Icon, label }) => (
                 <TabsTrigger key={id} value={id}>

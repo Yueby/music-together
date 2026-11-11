@@ -1,18 +1,19 @@
+import { DialogNavBar, DialogPageTransition } from '@/components/DialogNav'
+import { ArtistPage } from '@/components/Pages/ArtistPage'
+import { PlaylistPage } from '@/components/Pages/PlaylistPage'
 import {
+  DIALOG_BODY_CLASS,
   ResponsiveDialog,
   ResponsiveDialogBody,
   ResponsiveDialogContent,
-  ResponsiveDialogDescription,
-  ResponsiveDialogHeader,
-  ResponsiveDialogTitle,
 } from '@/components/ui/responsive-dialog'
 import { useArtist } from '@/hooks/useArtist'
+import { useDialogPages } from '@/hooks/useDialogPages'
 import { usePlaylist } from '@/hooks/usePlaylist'
+import { cn } from '@/lib/utils'
 import { useArtistPageStore, type ArtistTarget } from '@/stores/artistPageStore'
 import type { Playlist } from '@music-together/shared'
-import { useCallback, useEffect, useState } from 'react'
-import { ArtistDetail } from './ArtistDetail'
-import { PlaylistDetail } from './Settings/PlaylistDetail'
+import { useCallback, useEffect } from 'react'
 
 /**
  * The artist page, one for the whole app: whatever shows an artist name (a song, the queue, the player, a search result)
@@ -23,22 +24,27 @@ export function ArtistDialog() {
   const close = useArtistPageStore((state) => state.close)
   return (
     <ResponsiveDialog open={target !== null} onOpenChange={(open) => !open && close()}>
-      <ResponsiveDialogContent className="flex h-[70vh] flex-col gap-0 overflow-hidden sm:max-w-2xl">
+      <ResponsiveDialogContent className="flex h-[70vh] flex-col gap-0 overflow-hidden p-0 sm:max-w-2xl">
         {/* Only while open: the page's data and socket handlers exist for as long as someone looks at it. A different
             artist (say, a collaborator clicked inside this page) is a new page: it starts over at its songs. */}
-        {target ? (
-          <ArtistPage key={`${target.source}:${target.id ?? target.name}`} target={target} onClose={close} />
-        ) : null}
+        {target ? <ArtistDialogBody key={`${target.source}:${target.id ?? target.name}`} target={target} /> : null}
       </ResponsiveDialogContent>
     </ResponsiveDialog>
   )
 }
 
-function ArtistPage({ target, onClose }: { target: ArtistTarget; onClose: () => void }) {
+/** An album opened from the artist's page: one level in, named in the title bar. */
+interface AlbumPage {
+  title: string
+  album: Playlist
+}
+
+function ArtistDialogBody({ target }: { target: ArtistTarget }) {
   const artistState = useArtist()
   const playlist = usePlaylist()
-  const [album, setAlbum] = useState<Playlist | null>(null)
+  const pages = useDialogPages<AlbumPage>()
   const { load, loadByName } = artistState
+  const { reset: backToArtist } = pages
 
   const { source, id, name } = target
   const open = useCallback(() => {
@@ -53,59 +59,60 @@ function ArtistPage({ target, onClose }: { target: ArtistTarget; onClose: () => 
 
   // ...but it does bring the songs back from an album (say, a name tapped on a track inside one of its albums).
   useEffect(() => {
-    setAlbum(null)
-  }, [target])
+    backToArtist()
+  }, [target, backToArtist])
 
   const openAlbum = (selected: Playlist) => {
-    setAlbum(selected)
+    pages.open({ title: selected.name, album: selected })
     playlist.fetchPlaylistTracks(target.source, selected.id, selected.trackCount, 'album')
   }
 
+  const page = pages.current
   return (
     <>
-      <ResponsiveDialogHeader className="shrink-0 border-b px-4 py-3 pr-12 sm:px-6">
-        <ResponsiveDialogTitle className="truncate text-lg font-semibold">
-          {album ? album.name : (artistState.artist?.name ?? target.name)}
-        </ResponsiveDialogTitle>
-        <ResponsiveDialogDescription className="sr-only">歌手的热门歌曲和专辑</ResponsiveDialogDescription>
-      </ResponsiveDialogHeader>
-      <ResponsiveDialogBody className="-mt-1 flex min-h-0 flex-1 flex-col pt-1">
-        {album ? (
-          <PlaylistDetail
-            playlist={album}
-            tracks={playlist.playlistTracks}
-            loading={playlist.tracksLoading}
-            loadingMore={playlist.loadingMore}
-            hasMore={playlist.hasMoreTracks}
-            total={playlist.playlistTotal}
-            onBack={() => setAlbum(null)}
-            onAddTrack={playlist.addTrackToQueue}
-            onInsertAfterCurrent={playlist.insertTrackAfterCurrent}
-            onAddAll={playlist.addBatchToQueue}
-            onLoadMore={playlist.loadMoreTracks}
-          />
-        ) : (
-          <ArtistDetail
-            artist={artistState.artist}
-            loading={artistState.loading}
-            error={artistState.error}
-            songs={artistState.songs}
-            songsTotal={artistState.songsTotal}
-            songsHasMore={artistState.songsHasMore}
-            songsLoadingMore={artistState.songsLoadingMore}
-            albums={artistState.albums}
-            albumsHasMore={artistState.albumsHasMore}
-            albumsLoadingMore={artistState.albumsLoadingMore}
-            onBack={onClose}
-            onRetry={open}
-            onAddTrack={playlist.addTrackToQueue}
-            onInsertAfterCurrent={playlist.insertTrackAfterCurrent}
-            onAddAll={playlist.addBatchToQueue}
-            onLoadMoreSongs={() => void artistState.loadMoreSongs()}
-            onLoadMoreAlbums={() => void artistState.loadMoreAlbums()}
-            onSelectAlbum={openAlbum}
-          />
-        )}
+      {/* The artist's own page has no way back (the dialog's close button returns to where it was opened from) */}
+      <DialogNavBar
+        title={page?.title ?? artistState.artist?.name ?? target.name}
+        description="歌手的热门歌曲和专辑"
+        onBack={page ? pages.back : undefined}
+      />
+      <ResponsiveDialogBody className={cn(DIALOG_BODY_CLASS, 'flex min-h-0 flex-1 flex-col')}>
+        <DialogPageTransition pageKey={page ? `album:${page.album.id}` : 'artist'}>
+          {page ? (
+            <PlaylistPage
+              playlist={page.album}
+              tracks={playlist.playlistTracks}
+              loading={playlist.tracksLoading}
+              loadingMore={playlist.loadingMore}
+              hasMore={playlist.hasMoreTracks}
+              total={playlist.playlistTotal}
+              onAddTrack={playlist.addTrackToQueue}
+              onInsertAfterCurrent={playlist.insertTrackAfterCurrent}
+              onAddAll={playlist.addBatchToQueue}
+              onLoadMore={playlist.loadMoreTracks}
+            />
+          ) : (
+            <ArtistPage
+              artist={artistState.artist}
+              loading={artistState.loading}
+              error={artistState.error}
+              songs={artistState.songs}
+              songsTotal={artistState.songsTotal}
+              songsHasMore={artistState.songsHasMore}
+              songsLoadingMore={artistState.songsLoadingMore}
+              albums={artistState.albums}
+              albumsHasMore={artistState.albumsHasMore}
+              albumsLoadingMore={artistState.albumsLoadingMore}
+              onRetry={open}
+              onAddTrack={playlist.addTrackToQueue}
+              onInsertAfterCurrent={playlist.insertTrackAfterCurrent}
+              onAddAll={playlist.addBatchToQueue}
+              onLoadMoreSongs={() => void artistState.loadMoreSongs()}
+              onLoadMoreAlbums={() => void artistState.loadMoreAlbums()}
+              onSelectAlbum={openAlbum}
+            />
+          )}
+        </DialogPageTransition>
       </ResponsiveDialogBody>
     </>
   )

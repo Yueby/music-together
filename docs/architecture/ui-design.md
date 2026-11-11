@@ -92,6 +92,10 @@ import { Play, Pause, SkipForward, Volume2 } from 'lucide-react'
 
 自定义 WebKit 滚动条：6px 宽/高，透明轨道，半透明滑块。Firefox 使用 `scrollbar-width: thin`。`.scrollbar-hide` 工具类隐藏滚动条但保持滚动功能（用于移动端设置导航栏等）。
 
+## 设置项（SettingRow）
+
+设置页每一行统一用 `Overlays/Settings/SettingRow`：标签 + 控件，**每行都应带 `description`**。说明不占版面，以标签旁的 `Info` 图标 + Tooltip 呈现（图标是 32px 的点按目标，桌面悬停/聚焦、触屏点按都能打开；图标的 `aria-label` 即说明文字）。滑块等需要显示当前取值的行用 `value` 属性（显示在控件左侧），不要再把读数塞进说明里。
+
 ## 歌词渲染
 
 - **AMLL** (`@applemusic-like-lyrics/react`)：Apple Music 风格逐行歌词动画
