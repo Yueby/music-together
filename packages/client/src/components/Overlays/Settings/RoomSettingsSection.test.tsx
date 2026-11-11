@@ -52,9 +52,8 @@ function show(role: UserRole, queueMode: QueueMode) {
 }
 
 const queueModeControl = () => container.querySelector('[role="combobox"][aria-label="队列模式"]')
-/** 说明收在标签旁的提示图标里，aria-label 即说明文字 */
-const hints = () =>
-  Array.from(container.querySelectorAll('button[aria-label]')).map((b) => b.getAttribute('aria-label'))
+/** 每个设置项标签下方的说明文字 */
+const hints = () => Array.from(container.querySelectorAll('label + p')).map((p) => p.textContent)
 
 describe('RoomSettingsSection queue mode', () => {
   it('lets the room owner see and change it, with what it does spelled out', () => {
@@ -86,8 +85,8 @@ describe('RoomSettingsSection queue mode', () => {
   it('explains every row of the room page, whoever is looking', () => {
     show('member', 'keep')
     const labels = Array.from(container.querySelectorAll('label')).map((l) => l.textContent)
-    // 房间名 / 房间号 / 同步偏移 / 音质 / 队列模式 / 密码保护 / 昵称，每行都带一个说明图标
+    // 房间名 / 房间号 / 同步偏移 / 音质 / 队列模式 / 密码保护 / 昵称，每行标签下都有一行说明
     expect(labels.length).toBeGreaterThanOrEqual(7)
-    expect(container.querySelectorAll('button[aria-label]:has(svg.lucide-info)').length).toBe(labels.length)
+    expect(hints()).toHaveLength(labels.length)
   })
 })
