@@ -14,3 +14,4 @@ Thumbs.db
 .pi-subagents/
 *.tsbuildinfo
 /.pi-subagents
+/.pi/
