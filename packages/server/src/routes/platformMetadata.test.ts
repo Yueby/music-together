@@ -5,6 +5,7 @@ import { MAPP_METADATA_MAX_BYTES } from '@music-together/shared'
 import { createPlatformMetadataRouter } from './platformMetadata.js'
 import { PlaylistAccessError } from '../controllers/musicMetadataController.js'
 import { ArtistError } from '../services/artistService.js'
+import { SearchError } from '../services/catalogUtils.js'
 import { DiscoverError } from '../services/discoverService.js'
 import { musicProvider } from '../services/musicProvider.js'
 
@@ -285,6 +286,14 @@ describe('platform catalog targets (artist pages and public playlists)', () => {
     expect(await f.run()).toBe('answered')
     expect(f.res.statusCode).toBe(status)
     expect(f.res.body).toEqual({ code: expected })
+  })
+
+  it('answers a search that could not run as a failure, not as an empty result', async () => {
+    const f = fixture({ raw: '/api/music/search?source=netease&keyword=a&limit=20&page=1&type=song' })
+    f.search.mockRejectedValue(new SearchError())
+    expect(await f.run()).toBe('answered')
+    expect(f.res.statusCode).toBe(503)
+    expect(f.res.body).toEqual({ code: 'METADATA_FAILED' })
   })
 
   it('hides unexpected catalog failures behind the generic code', async () => {

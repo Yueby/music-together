@@ -115,7 +115,8 @@ export async function findBestAlternativeTrack(
   const primaryArtist = artists[0] ?? ''
   const keyword = `${original.title} ${primaryArtist}`.trim()
 
-  const candidates = await musicProvider.search(toSource, keyword, 8, 1)
+  // A failed search just means no alternative this time.
+  const candidates = await musicProvider.search(toSource, keyword, 8, 1).catch(() => [])
   if (!candidates.length) return null
 
   const scored: FallbackCandidate[] = []

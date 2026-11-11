@@ -24,7 +24,18 @@ export class CatalogError extends Error {
   }
 }
 
-export const isRecord = (value: unknown): value is Raw =>
+/**
+ * A search that could not be answered (request failed, timed out, unreadable answer): not the same as "no results", so
+ * the caller can say so instead of showing an empty list. A search that ran and found nothing is an empty list.
+ */
+export class SearchError extends CatalogError {
+  constructor() {
+    super('upstream', 'SEARCH_UPSTREAM', 503)
+    this.name = 'SearchError'
+  }
+}
+
+export const isRecord =(value: unknown): value is Raw =>
   typeof value === 'object' && value !== null && !Array.isArray(value)
 export const text = (value: unknown): string => (typeof value === 'string' ? value.trim() : '')
 export const count = (value: unknown): number | undefined =>
