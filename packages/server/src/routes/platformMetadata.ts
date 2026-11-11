@@ -9,14 +9,17 @@ import {
   getArtistAlbumsMetadata,
   getArtistMetadata,
   getArtistSongsMetadata,
+  getDailyMetadata,
+  getHomeMetadata,
   getMusicLyricMetadata,
   getMusicTtmlMetadata,
   getMyPlaylistPageMetadata,
   getPlaylistPageMetadata,
+  getRadarMetadata,
   PlaylistAccessError,
   searchMusicMetadata,
 } from '../controllers/musicMetadataController.js'
-import { ArtistError } from '../services/artistService.js'
+import { CatalogError } from '../services/catalogUtils.js'
 import { coverProxyRateLimit, musicApiRateLimit } from '../middleware/httpRateLimiter.js'
 import { fetchPlatformCover, type CoverFailure, type CoverResult } from '../services/coverProxy.js'
 import { withTimeout } from '../utils/withTimeout.js'
@@ -42,6 +45,9 @@ interface Options {
   artistAlbums?: typeof getArtistAlbumsMetadata
   playlist?: typeof getPlaylistPageMetadata
   myPlaylist?: typeof getMyPlaylistPageMetadata
+  daily?: typeof getDailyMetadata
+  home?: typeof getHomeMetadata
+  radar?: typeof getRadarMetadata
   cover?: (url: string) => Promise<CoverResult>
 }
 type ParsedRequest = MappMetadataRequest
@@ -102,10 +108,17 @@ function catalogError(error: unknown): unknown {
   if (error instanceof PlaylistAccessError) {
     return new MetadataError(error.status, error.status === 401 ? 'METADATA_UNAUTHORIZED' : 'METADATA_FORBIDDEN')
   }
-  if (!(error instanceof ArtistError)) return error
-  if (error.code === 'ARTIST_UNSUPPORTED') return new MetadataError(400, 'METADATA_UNSUPPORTED')
-  if (error.code === 'ARTIST_NOT_FOUND') return new MetadataError(404, 'METADATA_NOT_FOUND')
-  return new MetadataError(502, 'METADATA_FAILED')
+  if (!(error instanceof CatalogError)) return error
+  switch (error.kind) {
+    case 'unsupported':
+      return new MetadataError(400, 'METADATA_UNSUPPORTED')
+    case 'login-required':
+      return new MetadataError(401, 'METADATA_LOGIN_REQUIRED')
+    case 'not-found':
+      return new MetadataError(404, 'METADATA_NOT_FOUND')
+    case 'upstream':
+      return new MetadataError(502, 'METADATA_FAILED')
+  }
 }
 
 /** Fixed codes only; the upstream status and body never reach the platform client. */
@@ -135,6 +148,9 @@ export function createPlatformMetadataRouter(options: Options): RouterType {
   const artistAlbums = options.artistAlbums ?? getArtistAlbumsMetadata
   const playlist = options.playlist ?? getPlaylistPageMetadata
   const myPlaylist = options.myPlaylist ?? getMyPlaylistPageMetadata
+  const daily = options.daily ?? getDailyMetadata
+  const home = options.home ?? getHomeMetadata
+  const radar = options.radar ?? getRadarMetadata
   const cover = options.cover ?? ((url: string) => fetchPlatformCover(url))
   /** One entry per JSON target; the type forces every new target in the shared table to get a handler. */
   const handlers: JsonHandlers = {
@@ -150,8 +166,11 @@ export function createPlatformMetadataRouter(options: Options): RouterType {
     artistAlbums: (query) => artistAlbums(query),
     // Anonymous on purpose: personal playlists need an account and never use this public target.
     playlist: (query) => playlist(query, null),
-    // The only target whose answer depends on who asks: the account is looked up from the verified identity.
+    // These two answers depend on who asks: the account is looked up from the verified identity.
     myPlaylist: async (query, caller) => myPlaylist(query, caller.userId),
+    daily: async (query, caller) => daily(query, caller.userId),
+    home: async (query, caller) => home(query, caller.userId),
+    radar: (query) => radar(query),
   }
   const searchLimit = options.rateLimit ?? musicApiRateLimit
   const coverLimit = options.coverRateLimit ?? coverProxyRateLimit

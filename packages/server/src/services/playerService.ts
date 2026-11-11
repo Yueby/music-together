@@ -13,6 +13,7 @@ import { broadcastRoomList } from './roomLifecycleService.js'
 import { toPublicRoomState } from '../utils/roomUtils.js'
 import { config } from '../config.js'
 import { logger } from '../utils/logger.js'
+import { fallbackCooldown } from './fallbackCooldown.js'
 import type { RoomData } from '../repositories/types.js'
 import type { TypedServer, TypedSocket } from '../middleware/types.js'
 
@@ -93,28 +94,6 @@ async function refreshPlayback(
   } catch {
     if (valid()) emitStreamError(io.to(roomId).emit.bind(io.to(roomId)))
   }
-}
-
-// ---------------------------------------------------------------------------
-// Auto fallback cooldown (prevents repeated attempts / ping-pong)
-// ---------------------------------------------------------------------------
-
-const autoFallbackCooldown = new Map<string, number>()
-
-function canAutoFallback(roomId: string, trackId: string): boolean {
-  const key = `${roomId}:${trackId}`
-  const until = autoFallbackCooldown.get(key)
-  if (!until) return true
-  if (Date.now() >= until) {
-    autoFallbackCooldown.delete(key)
-    return true
-  }
-  return false
-}
-
-function markAutoFallback(roomId: string, trackId: string, ms: number): void {
-  const key = `${roomId}:${trackId}`
-  autoFallbackCooldown.set(key, Date.now() + ms)
 }
 
 function withPlayMutex<T>(roomId: string, fn: () => Promise<T>): Promise<T> {
@@ -252,10 +231,10 @@ async function _playTrackInRoom(io: TypedServer, roomId: string, track: Track, g
         if (
           config.autoFallback.enabled &&
           (resolved.source === 'netease' || resolved.source === 'tencent') &&
-          canAutoFallback(roomId, resolved.id)
+          fallbackCooldown.canTry(roomId, resolved.id)
         ) {
           // Prevent repeated fallback attempts for this queue item
-          markAutoFallback(roomId, resolved.id, 60_000)
+          fallbackCooldown.mark(roomId, resolved.id, 60_000)
           const fromSource = resolved.source
           const trackTitle = resolved.title
           const toSource = trackFallbackService.getFallbackTargetSource(fromSource)
@@ -807,6 +786,7 @@ export function cleanupRoom(roomId: string): void {
   playMutexes.delete(roomId)
   controlGenerations.delete(roomId)
   announcedPreloads.delete(roomId)
+  fallbackCooldown.clearRoom(roomId)
   const room = roomRepo.get(roomId)
   if (room) cancelPendingPlayback(room)
 }

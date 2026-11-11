@@ -8,6 +8,9 @@ import {
   myPlaylistQuerySchema,
   artistQuerySchema,
   artistPageQuerySchema,
+  discoverQuerySchema,
+  dailyQuerySchema,
+  homeQuerySchema,
 } from '@music-together/shared'
 import { Router, type Router as RouterType, type Request, type Response } from 'express'
 import type { ZodSchema } from 'zod'
@@ -15,11 +18,14 @@ import { musicProvider } from '../services/musicProvider.js'
 import { fetchCoverImage } from '../services/coverProxy.js'
 import { logger } from '../utils/logger.js'
 import { coverProxyRateLimit } from '../middleware/httpRateLimiter.js'
-import { ArtistError } from '../services/artistService.js'
+import { CatalogError } from '../services/catalogUtils.js'
 import {
   getArtistAlbumsMetadata,
   getArtistMetadata,
   getArtistSongsMetadata,
+  getDailyMetadata,
+  getHomeMetadata,
+  getRadarMetadata,
   getMusicLyricMetadata,
   getMusicTtmlMetadata,
   getMyPlaylistPageMetadata,
@@ -91,27 +97,52 @@ router.get(
   }),
 )
 
-/** Artist endpoints answer with a sanitized status instead of the generic 500. */
-function artistRoute<T>(
+/** Cache policies of the catalog endpoints. Whatever depends on the caller's account is never shared or cached. */
+const PUBLIC_CACHE = (seconds: number) => `private, max-age=${seconds}`
+const ACCOUNT_CACHE = 'private, no-store'
+
+/**
+ * Catalog endpoints (artists, discovery, own playlists) answer with a sanitized status and a fixed error code instead of
+ * the generic 500. The cache header is only set on success, so a failure is never cached.
+ */
+function catalogRoute<T>(
   schema: ZodSchema<T>,
   label: string,
-  load: (data: T) => Promise<unknown>,
+  cacheControl: string,
+  load: (data: T, userId: string | undefined) => Promise<unknown>,
 ) {
-  return validated(schema, label, async (data, _req, res) => {
+  return validated(schema, label, async (data, req, res) => {
     try {
-      const body = await load(data)
-      res.setHeader('Cache-Control', 'private, max-age=300')
+      const body = await load(data, req.identityUserId)
+      res.setHeader('Cache-Control', cacheControl)
       res.json(body)
     } catch (error) {
-      if (!(error instanceof ArtistError)) throw error
+      res.setHeader('Cache-Control', 'no-store')
+      if (error instanceof PlaylistAccessError) {
+        res.status(error.status).json({ error: error.status === 401 ? 'Unauthorized' : 'Forbidden' })
+        return
+      }
+      if (!(error instanceof CatalogError)) throw error
       res.status(error.status).json({ error: error.code })
     }
   })
 }
 
-router.get('/artist', artistRoute(artistQuerySchema, 'Get artist', getArtistMetadata))
-router.get('/artist/songs', artistRoute(artistPageQuerySchema, 'Get artist songs', getArtistSongsMetadata))
-router.get('/artist/albums', artistRoute(artistPageQuerySchema, 'Get artist albums', getArtistAlbumsMetadata))
+router.get('/artist', catalogRoute(artistQuerySchema, 'Get artist', PUBLIC_CACHE(300), getArtistMetadata))
+router.get(
+  '/artist/songs',
+  catalogRoute(artistPageQuerySchema, 'Get artist songs', PUBLIC_CACHE(300), getArtistSongsMetadata),
+)
+router.get(
+  '/artist/albums',
+  catalogRoute(artistPageQuerySchema, 'Get artist albums', PUBLIC_CACHE(300), getArtistAlbumsMetadata),
+)
+router.get(
+  '/discover/radar',
+  catalogRoute(discoverQuerySchema, 'Get radar playlists', PUBLIC_CACHE(600), getRadarMetadata),
+)
+router.get('/discover/daily', catalogRoute(dailyQuerySchema, 'Get daily songs', ACCOUNT_CACHE, getDailyMetadata))
+router.get('/discover/home', catalogRoute(homeQuerySchema, 'Get discover home', ACCOUNT_CACHE, getHomeMetadata))
 
 router.get(
   '/cover',
@@ -130,18 +161,10 @@ router.get(
   }),
 )
 
+// Private tracks must not be shared or cached beyond the caller.
 router.get(
   '/playlist/mine',
-  validated(myPlaylistQuerySchema, 'Get own playlist', async (data, req, res) => {
-    try {
-      // Private tracks must not be shared or cached beyond the caller.
-      res.setHeader('Cache-Control', 'private, no-store')
-      res.json(await getMyPlaylistPageMetadata(data, req.identityUserId))
-    } catch (error) {
-      if (!(error instanceof PlaylistAccessError)) throw error
-      res.status(error.status).json({ error: error.status === 401 ? 'Unauthorized' : 'Forbidden' })
-    }
-  }),
+  catalogRoute(myPlaylistQuerySchema, 'Get own playlist', ACCOUNT_CACHE, getMyPlaylistPageMetadata),
 )
 
 // ---------------------------------------------------------------------------

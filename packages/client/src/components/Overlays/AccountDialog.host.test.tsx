@@ -30,9 +30,23 @@ vi.mock('@/components/ui/responsive-dialog', () => ({
   ResponsiveDialogTitle: ({ children }: { children: React.ReactNode }) => <h2>{children}</h2>,
 }))
 
+vi.mock('@/hooks/useAccountSession', () => ({
+  useAccountSession: () => ({
+    auth: { qrPlatform: 'netease', qrData: null, qrStatus: null, isQrLoading: false },
+    platform: 'netease',
+    qrOpen: false,
+    cookieOpen: false,
+  }),
+}))
+
 vi.mock('./Settings/PlatformHub', () => ({
   PlatformHub: () => <div data-testid="platform-hub">PlatformHubContent</div>,
 }))
+vi.mock('./Settings/AccountMenu', () => ({
+  AccountMenu: () => <div data-testid="account-menu">AccountMenuContent</div>,
+}))
+vi.mock('./Settings/QrLoginDialog', () => ({ QrLoginDialog: () => null }))
+vi.mock('./Settings/ManualCookieDialog', () => ({ ManualCookieDialog: () => null }))
 
 import { AccountDialog } from './AccountDialog'
 
@@ -60,6 +74,8 @@ describe('AccountDialog', () => {
     act(() => root.render(<AccountDialog open onOpenChange={vi.fn()} />))
     expect(container.querySelector('h2')?.textContent).toBe('音乐账号')
     expect(container.querySelector('[data-testid="platform-hub"]')).not.toBeNull()
+    // Platform switcher and avatar live in the header, not in the body.
+    expect(container.querySelector('[data-testid="account-menu"]')).not.toBeNull()
   })
 
   it('renders nothing for a host without platform accounts (Mapp)', () => {

@@ -1,3 +1,4 @@
+import { MUSIC_SOURCES } from '@music-together/shared'
 import type { MusicSource, PlatformAuthStatus, MyPlatformAuth } from '@music-together/shared'
 import { logger } from '../utils/logger.js'
 
@@ -14,6 +15,7 @@ interface CookieEntry {
   nickname: string
   /** 0 = no VIP, 1 = VIP, 11 = 黑胶 (Netease specific) */
   vipType: number
+  avatarUrl?: string
 }
 
 /** roomId -> (platform -> list of cookie entries) */
@@ -53,12 +55,15 @@ export function addCookie(
   cookie: string,
   nickname: string,
   vipType: number,
+  avatarUrl?: string,
 ): void {
   const entries = getPlatformEntries(roomId, platform)
-  // Dedup by cookie value (same account) or by userId (same socket)
-  const idx = entries.findIndex((e) => e.cookie === cookie || e.userId === userId)
-  if (idx !== -1) entries.splice(idx, 1)
-  entries.push({ cookie, userId, nickname, vipType })
+  // Dedup by cookie value (same account) or by userId (same socket). The two can match different entries (a user who
+  // signs in to an account another member already added), and every one of them is replaced.
+  for (let i = entries.length - 1; i >= 0; i--) {
+    if (entries[i].cookie === cookie || entries[i].userId === userId) entries.splice(i, 1)
+  }
+  entries.push({ cookie, userId, nickname, vipType, avatarUrl })
   logger.info(`Auth: ${nickname} added cookie for ${platform} in room ${roomId} (vipType=${vipType})`)
 }
 
@@ -138,9 +143,8 @@ export function getUserCookie(userId: string, platform: MusicSource, roomId: str
  * Get aggregated auth status for all platforms in a specific room.
  */
 export function getAllPlatformStatus(roomId: string): PlatformAuthStatus[] {
-  const platforms: MusicSource[] = ['netease', 'tencent', 'kugou']
   const pool = roomCookiePool.get(roomId)
-  return platforms.map((platform) => {
+  return MUSIC_SOURCES.map((platform) => {
     const entries = pool?.get(platform) ?? []
     const maxVipType = entries.reduce((max, e) => Math.max(max, e.vipType), 0)
     return {
@@ -156,9 +160,8 @@ export function getAllPlatformStatus(roomId: string): PlatformAuthStatus[] {
  * Get a specific user's auth status across all platforms in a specific room.
  */
 export function getUserAuthStatus(userId: string, roomId: string): MyPlatformAuth[] {
-  const platforms: MusicSource[] = ['netease', 'tencent', 'kugou']
   const pool = roomCookiePool.get(roomId)
-  return platforms.map((platform) => {
+  return MUSIC_SOURCES.map((platform) => {
     const entries = pool?.get(platform) ?? []
     const entry = entries.find((e) => e.userId === userId)
     return {
@@ -166,6 +169,7 @@ export function getUserAuthStatus(userId: string, roomId: string): MyPlatformAut
       loggedIn: !!entry,
       nickname: entry?.nickname,
       vipType: entry?.vipType,
+      avatarUrl: entry?.avatarUrl,
     }
   })
 }

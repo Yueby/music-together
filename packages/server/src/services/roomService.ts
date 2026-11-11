@@ -292,10 +292,6 @@ export function leaveRoom(
 // Public API — Read / Settings / Roles
 // ---------------------------------------------------------------------------
 
-export function getRoom(roomId: string): RoomData | undefined {
-  return roomRepo.get(roomId)
-}
-
 export function listRooms(): RoomListItem[] {
   return roomRepo.getAllAsList()
 }
@@ -351,22 +347,6 @@ export function setUserRole(
   // Re-elect conductor (admin promotion/demotion may change priority)
   const hostChanged = electConductor(room)
   return { success: true, roleChanged: directRoleChanged || reconciledRoleChanged, hostChanged }
-}
-
-export function getUserBySocket(socketId: string): User | null {
-  const mapping = roomRepo.getSocketMapping(socketId)
-  if (!mapping) return null
-  const room = roomRepo.get(mapping.roomId)
-  if (!room) return null
-  return room.users.find((u) => u.id === mapping.userId) ?? null
-}
-
-export function getRoomBySocket(socketId: string): { roomId: string; room: RoomData } | null {
-  const mapping = roomRepo.getSocketMapping(socketId)
-  if (!mapping) return null
-  const room = roomRepo.get(mapping.roomId)
-  if (!room) return null
-  return { roomId: mapping.roomId, room }
 }
 
 // ---------------------------------------------------------------------------

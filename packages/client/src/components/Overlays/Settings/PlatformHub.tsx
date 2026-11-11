@@ -1,174 +1,78 @@
-import { Separator } from '@/components/ui/separator'
-import { Tabs, TabsContent, TabsList, TabsTrigger } from '@/components/ui/tabs'
-import { useAuth } from '@/hooks/useAuth'
+import type { AccountSession } from '@/hooks/useAccountSession'
+import { useAccountDiscover } from '@/hooks/useAccountDiscover'
 import { usePlaylist } from '@/hooks/usePlaylist'
-import { PLATFORM_SHORT_LABELS, PLATFORM_COLORS, getPlatformStatus, getMyPlatformStatus } from '@/lib/platform'
-import { storage } from '@/lib/storage'
-import type { MusicSource, Playlist } from '@music-together/shared'
-import { useState, useCallback, useMemo } from 'react'
-import { LoginSection } from './LoginSection'
-import { ManualCookieDialog } from './ManualCookieDialog'
-import { QrLoginDialog } from './QrLoginDialog'
+import { openArtistPage } from '@/stores/artistPageStore'
+import type { Artist, Playlist } from '@music-together/shared'
+import { useCallback, useState } from 'react'
+import { AccountHome } from './AccountHome'
 import { PlaylistDetail } from './PlaylistDetail'
-import { PlaylistSection } from './PlaylistSection'
 
-type ViewState = { type: 'list' } | { type: 'detail'; playlist: Playlist; source: MusicSource }
+/** A list of tracks opened from the page: a playlist or album (read with the account for personal lists), or today's songs. */
+type Detail = { kind: 'collection'; playlist: Playlist } | { kind: 'daily' }
 
-export function PlatformHub() {
-  const auth = useAuth()
+/**
+ * Body of the account dialog: the home page (`AccountHome`) and the list opened from it — a playlist, an album or
+ * today's songs — shown in place with a way back. An artist opens the app's artist page on top. Which platform and who
+ * is signed in comes from the dialog's session (its header owns the platform switcher and the account).
+ */
+export function PlatformHub({ session }: { session: AccountSession }) {
+  const { platform, loggedIn, verifying } = session
   const playlist = usePlaylist()
+  const discover = useAccountDiscover(platform, loggedIn, verifying)
 
-  const [activePlatform, setActivePlatform] = useState<MusicSource>('netease')
-  const [qrDialogOpen, setQrDialogOpen] = useState(false)
-  const [cookieDialogOpen, setCookieDialogOpen] = useState(false)
-  const [cookieDialogPlatform, setCookieDialogPlatform] = useState<MusicSource>('netease')
-  const [viewState, setViewState] = useState<ViewState>({ type: 'list' })
+  const [detail, setDetail] = useState<Detail | null>(null)
 
-  const platforms: MusicSource[] = ['netease', 'tencent', 'kugou']
+  // Switching platform leaves whatever was open: it belongs to the previous one.
+  const [shownPlatform, setShownPlatform] = useState(platform)
+  if (shownPlatform !== platform) {
+    setShownPlatform(platform)
+    setDetail(null)
+  }
 
-  // Show "verifying…" only while waiting for the first AUTH_MY_STATUS response.
-  // Once the server responds, use the actual status — no more guessing from localStorage.
-  const verifyingPlatforms = useMemo(() => {
-    if (auth.statusLoaded) return {} // Server has responded — use actual myStatus
-    const result: Partial<Record<MusicSource, boolean>> = {}
-    for (const p of platforms) {
-      result[p] = storage.hasAuthCookie(p)
-    }
-    return result
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [auth.statusLoaded, auth.myStatus])
-
-  const handleQrLogin = useCallback(() => {
-    auth.requestQrCode(activePlatform)
-    setQrDialogOpen(true)
-  }, [auth, activePlatform])
-
-  const handleCookieLogin = useCallback((platform: MusicSource) => {
-    setCookieDialogPlatform(platform)
-    setCookieDialogOpen(true)
-  }, [])
-
-  const handleCookieSubmit = useCallback(
-    (cookie: string) => {
-      auth.setCookie(cookieDialogPlatform, cookie)
-      setCookieDialogOpen(false)
+  const openCollection = useCallback(
+    (pl: Playlist, type: 'playlist' | 'album', personal: boolean) => {
+      setDetail({ kind: 'collection', playlist: pl })
+      // Personal: read with the user's login (private tracks, personalised radar content). Otherwise anonymously.
+      playlist.fetchPlaylistTracks(platform, pl.id, pl.trackCount, type, personal)
     },
-    [auth, cookieDialogPlatform],
+    [platform, playlist],
   )
 
-  const handleSelectPlaylist = useCallback(
-    (pl: Playlist) => {
-      setViewState({ type: 'detail', playlist: pl, source: activePlatform })
-      // These are the user's own lists: read with their login, which can include private tracks.
-      playlist.fetchPlaylistTracks(activePlatform, pl.id, pl.trackCount, 'playlist', true)
-    },
-    [activePlatform, playlist],
-  )
-
-  const handleBack = useCallback(() => {
-    setViewState({ type: 'list' })
-  }, [])
-
-  // Detail view — flex-1 min-h-0 so PlaylistDetail gets proper height for virtual scroll
-  if (viewState.type === 'detail') {
+  // Detail view — flex-1 min-h-0 so the list gets proper height for virtual scrolling
+  if (detail) {
+    const { daily } = discover
+    const isDaily = detail.kind === 'daily'
     return (
       <div className="flex h-full min-h-0 min-w-0 flex-col overflow-hidden">
-        <div className="flex min-h-0 min-w-0 flex-1 flex-col overflow-hidden">
-          <PlaylistDetail
-            playlist={viewState.playlist}
-            tracks={playlist.playlistTracks}
-            loading={playlist.tracksLoading}
-            loadingMore={playlist.loadingMore}
-            hasMore={playlist.hasMoreTracks}
-            total={playlist.playlistTotal}
-            onBack={handleBack}
-            onAddTrack={playlist.addTrackToQueue}
-            onInsertAfterCurrent={playlist.insertTrackAfterCurrent}
-            onAddAll={playlist.addBatchToQueue}
-            onLoadMore={playlist.loadMoreTracks}
-          />
-        </div>
+        <PlaylistDetail
+          playlist={
+            isDaily
+              ? { id: 'daily', name: '每日推荐', cover: '', trackCount: daily.items.length, source: platform }
+              : detail.playlist
+          }
+          tracks={isDaily ? daily.items : playlist.playlistTracks}
+          loading={isDaily ? daily.loading : playlist.tracksLoading}
+          loadingMore={isDaily ? false : playlist.loadingMore}
+          hasMore={isDaily ? false : playlist.hasMoreTracks}
+          total={isDaily ? daily.items.length : playlist.playlistTotal}
+          onBack={() => setDetail(null)}
+          onAddTrack={playlist.addTrackToQueue}
+          onInsertAfterCurrent={playlist.insertTrackAfterCurrent}
+          onAddAll={playlist.addBatchToQueue}
+          onLoadMore={isDaily ? () => {} : playlist.loadMoreTracks}
+        />
       </div>
     )
   }
 
-  // List view — wrapped in ScrollArea since login + playlists may overflow
   return (
-    <div className="flex h-full min-h-0 min-w-0 flex-col overflow-hidden">
-      <div className="shrink-0">
-        <h3 className="pr-8 text-base font-semibold">平台账号 & 歌单</h3>
-        <p className="text-muted-foreground mb-3 text-xs">登录后可浏览和管理您的所有平台个人歌单。</p>
-      </div>
-
-      <div className="min-h-0 min-w-0 flex-1 overflow-y-auto overflow-x-hidden">
-        <Tabs
-          value={activePlatform}
-          onValueChange={(v) => setActivePlatform(v as MusicSource)}
-          className="overflow-hidden"
-        >
-          <TabsList className="grid w-full grid-cols-3">
-            {platforms.map((p) => (
-              <TabsTrigger
-                key={p}
-                value={p}
-                className={PLATFORM_COLORS[p]}
-              >
-                {PLATFORM_SHORT_LABELS[p]}
-              </TabsTrigger>
-            ))}
-          </TabsList>
-
-          {platforms.map((p) => (
-            <TabsContent key={p} value={p} className="mt-4 space-y-4">
-              {/* Login section */}
-              <LoginSection
-                platform={p}
-                status={getPlatformStatus(p, auth.platformStatus)}
-                myStatus={getMyPlatformStatus(p, auth.myStatus)}
-                isVerifying={verifyingPlatforms[p]}
-                onQrLogin={handleQrLogin}
-                onCookieLogin={() => handleCookieLogin(p)}
-                onLogout={() => auth.logout(p)}
-              />
-
-              <Separator />
-
-              {/* Playlist section */}
-              <PlaylistSection
-                platform={p}
-                myStatus={getMyPlatformStatus(p, auth.myStatus)}
-                playlists={playlist.myPlaylists[p]}
-                loading={playlist.playlistsLoading[p]}
-                onFetchMyPlaylists={() => playlist.fetchMyPlaylists(p)}
-                onSelectPlaylist={handleSelectPlaylist}
-              />
-            </TabsContent>
-          ))}
-        </Tabs>
-      </div>
-
-      {/* QR Dialog */}
-      <QrLoginDialog
-        open={qrDialogOpen}
-        onOpenChange={(open: boolean) => {
-          setQrDialogOpen(open)
-          if (!open) auth.resetQr()
-        }}
-        platform={auth.qrPlatform}
-        qrData={auth.qrData}
-        qrStatus={auth.qrStatus}
-        isLoading={auth.isQrLoading}
-        onRefresh={() => auth.requestQrCode(auth.qrPlatform)}
-        onCheckStatus={(key: string) => auth.checkQrStatus(key)}
-      />
-
-      {/* Manual Cookie Dialog */}
-      <ManualCookieDialog
-        open={cookieDialogOpen}
-        onOpenChange={setCookieDialogOpen}
-        platform={cookieDialogPlatform}
-        onSubmit={handleCookieSubmit}
-      />
-    </div>
+    <AccountHome
+      session={session}
+      discover={discover}
+      playlists={playlist}
+      onOpenPlaylist={openCollection}
+      onOpenDaily={() => setDetail({ kind: 'daily' })}
+      onOpenArtist={(artist: Artist) => openArtistPage({ source: platform, id: artist.id, name: artist.name })}
+    />
   )
 }

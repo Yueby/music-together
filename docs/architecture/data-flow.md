@@ -62,6 +62,7 @@ interface Track {
   id: string
   title: string
   artist: string[]
+  artistIds?: string[] // 与 artist 逐项对应的平台歌手 id（目前网易云提供），点歌手名可直达歌手页；缺失时按名字搜索
   album: string
   duration: number
   cover: string
@@ -282,6 +283,9 @@ Conductor（当前 `hostId` 对应用户）**自适应频率**上报当前播放
 | `/api/music/ttml`          | GET  | TTML 逐词歌词：query `source`（netease/tencent）+ `id`，返回 `{ lines }`（服务端已解析成 AMLL 歌词行；库里没有这首歌时 `lines: null`，仍是 200），上游故障 502。服务端从 `TTML_DB_BASE_URL` 取文件（≤ 512KiB，缓存；库自己会 302 到 API 子域，只允许跟随同站点 https 重定向，最多 3 跳）。网页端与微应用共用 |
 | `/api/music/cover`         | GET  | 获取封面图                                                                                              |
 | `/api/music/playlist`      | GET  | 获取公开歌单/专辑曲目（`source` + `id` + `type` + `limit` + `offset`），匿名读取，分页返回 `{ tracks, total, offset, hasMore }` |
+| `/api/music/discover/radar` | GET  | 雷达歌单列表（仅网易云）：`source`，返回 `{ items: Playlist[] }`；对所有人相同，匿名读取；曲目内容个性化，点开后用登录身份走 `/api/music/playlist/mine` 读取 |
+| `/api/music/discover/daily` | GET  | 每日推荐歌曲（仅网易云）：`source` + `roomId`，用验证过的身份从该房间账号池取自己的登录，返回 `{ items: Track[] }`；未登录 401，非房间成员 403，其他平台 400，上游失败 503；响应 `private, no-store` |
+| `/api/music/discover/home` | GET  | 账号页首页区块（仅网易云）：`source` + `roomId`，返回 `{ playlists, artists, albums, failed }`（推荐歌单、热门歌手、新碟，封面为 256px 缩略图）；已登录取自己的推荐歌单，未登录或登录失效取通用推荐；区块各自失败时该区块为空数组并列入 `failed`（客户端据此显示"加载失败，重试"而非"暂无内容"），全部失败 503，其他平台 400；响应 `private, no-store`。目录类接口（歌手、发现、自己的歌单）的错误响应一律 `no-store`，成功才带各自的缓存头 |
 | `/api/music/playlist/mine` | GET  | 获取**自己的**歌单曲目（同上参数，另需 `roomId`）：服务端用验证过的身份（网页 Cookie 或平台令牌）加该房间账号池里自己的登录读取，可含私有曲目；非房间成员 403、未认证 401，响应 `private, no-store` |
 | `/api/rooms/:roomId/check` | GET  | 房间预检（存在性 + 是否需要密码），用于分享链接直接访问时的前置校验                                     |
 | `/api/health`              | GET  | 健康检查                                                                                                |

@@ -57,6 +57,18 @@ const endpoints = {
     url: 'https://rooms.example.com/api/music/playlist',
     method: 'GET', query: ['source', 'id', 'type', 'limit', 'offset', 'total'], auth: 'platform',
   },
+  musicRadar: {
+    url: 'https://rooms.example.com/api/music/discover/radar',
+    method: 'GET', query: ['source'], auth: 'platform',
+  },
+  musicDaily: {
+    url: 'https://rooms.example.com/api/music/discover/daily',
+    method: 'GET', query: ['source', 'roomId'], auth: 'platform',
+  },
+  musicHome: {
+    url: 'https://rooms.example.com/api/music/discover/home',
+    method: 'GET', query: ['source', 'roomId'], auth: 'platform',
+  },
   musicMyPlaylist: {
     url: 'https://rooms.example.com/api/music/playlist/mine',
     method: 'GET', query: ['source', 'id', 'type', 'limit', 'offset', 'total', 'roomId'], auth: 'platform',

@@ -1,15 +1,12 @@
 import { Button } from '@/components/ui/button'
 import { Separator } from '@/components/ui/separator'
 import { VirtualTrackList } from '@/components/VirtualTrackList'
-import { trackKey } from '@/lib/utils'
-import { useRoomStore } from '@/stores/roomStore'
+import { useQueueMembership } from '@/hooks/useQueueMembership'
+import { batchAddMessage, planBatchAdd } from '@/lib/batchAdd'
 import type { Track } from '@music-together/shared'
-import { LIMITS } from '@music-together/shared'
 import { ListPlus, Music } from 'lucide-react'
-import { useCallback, useMemo, useState } from 'react'
+import { useCallback, useMemo } from 'react'
 import { toast } from 'sonner'
-
-const EMPTY_QUEUE: Track[] = []
 
 export interface TrackCollectionProps {
   tracks: Track[]
@@ -26,7 +23,7 @@ export interface TrackCollectionProps {
   onInsertAfterCurrent?: (track: Track) => void
   onAddAll: (tracks: Track[], collectionName?: string) => void
   onLoadMore: () => void
-  onArtistClick?: (artist: string) => void
+  onUnsupportedArtistClick?: (artist: string) => void
 }
 
 /**
@@ -46,67 +43,27 @@ export function TrackCollection({
   onInsertAfterCurrent,
   onAddAll,
   onLoadMore,
-  onArtistClick,
+  onUnsupportedArtistClick,
 }: TrackCollectionProps) {
-  const queue = useRoomStore((s) => s.room?.queue ?? EMPTY_QUEUE)
-  const [addedIds, setAddedIds] = useState<Set<string>>(new Set())
-  const queueKeys = useMemo(() => new Set(queue.map(trackKey)), [queue])
+  const { queue, isAdded: isTrackAdded, markPending, addOnce } = useQueueMembership()
 
-  const isTrackAdded = useCallback(
-    (track: Track) => {
-      const key = trackKey(track)
-      return addedIds.has(key) || queueKeys.has(key)
-    },
-    [addedIds, queueKeys],
-  )
-
-  const handleAddTrack = useCallback(
-    (track: Track) => {
-      const key = trackKey(track)
-      if (queueKeys.has(key) || addedIds.has(key)) {
-        toast.info(`「${track.title}」已在队列中`)
-        return
-      }
-      onAddTrack(track)
-      setAddedIds((prev) => new Set(prev).add(key))
-    },
-    [onAddTrack, queueKeys, addedIds],
-  )
+  const handleAddTrack = useCallback((track: Track) => addOnce(track, onAddTrack), [addOnce, onAddTrack])
 
   const handleInsertAfterCurrent = useCallback(
-    (track: Track) => {
-      const key = trackKey(track)
-      if (queueKeys.has(key) || addedIds.has(key)) {
-        toast.info(`「${track.title}」已在队列中`)
-        return
-      }
-      onInsertAfterCurrent?.(track)
-      setAddedIds((prev) => new Set(prev).add(key))
-    },
-    [onInsertAfterCurrent, queueKeys, addedIds],
+    (track: Track) => addOnce(track, (added) => onInsertAfterCurrent?.(added)),
+    [addOnce, onInsertAfterCurrent],
   )
 
-  // Dynamic "add all" logic — filter duplicates
-  const availableSlots = LIMITS.QUEUE_MAX_SIZE - queue.length
-  const uniqueTracks = useMemo(() => tracks.filter((t) => !isTrackAdded(t)), [tracks, isTrackAdded])
-  const addCount = Math.min(availableSlots, uniqueTracks.length)
-  const isQueueFull = availableSlots <= 0
+  // "Add all": skip what is queued already and respect the queue limit
+  const plan = useMemo(() => planBatchAdd(tracks, isTrackAdded, queue.length), [tracks, isTrackAdded, queue.length])
+  const { unique: uniqueTracks, count: addCount, queueFull: isQueueFull } = plan
 
   const handleAddAll = useCallback(() => {
-    if (addCount <= 0) return
-    const toAdd = uniqueTracks.slice(0, addCount)
-    onAddAll(toAdd, collectionName)
-    setAddedIds((prev) => {
-      const next = new Set(prev)
-      for (const t of toAdd) next.add(trackKey(t))
-      return next
-    })
-    if (addCount < uniqueTracks.length) {
-      toast.success(`已添加 ${addCount} 首到队列（队列已满，还有 ${uniqueTracks.length - addCount} 首未添加）`)
-    } else {
-      toast.success(`已添加全部 ${addCount} 首到队列`)
-    }
-  }, [addCount, uniqueTracks, onAddAll, collectionName])
+    if (plan.count <= 0) return
+    onAddAll(plan.toAdd, collectionName)
+    markPending(plan.toAdd)
+    toast.success(batchAddMessage(plan))
+  }, [plan, onAddAll, markPending, collectionName])
 
   // Button label
   let addAllLabel: string
@@ -157,7 +114,7 @@ export function TrackCollection({
         isTrackAdded={isTrackAdded}
         onAddTrack={handleAddTrack}
         onInsertAfterCurrent={onInsertAfterCurrent ? handleInsertAfterCurrent : undefined}
-        onArtistClick={onArtistClick}
+        onUnsupportedArtistClick={onUnsupportedArtistClick}
         emptyIcon={<Music className="h-8 w-8" />}
         emptyMessage={emptyMessage}
         className="rounded-none border-0"

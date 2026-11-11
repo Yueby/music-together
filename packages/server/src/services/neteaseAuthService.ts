@@ -1,23 +1,21 @@
 import ncmApi from '@neteasecloudmusicapienhanced/api'
 import type { Playlist } from '@music-together/shared'
 import type { GetUserInfoResult } from './authProvider.js'
+import { httpsCoverUrl } from '../utils/httpsCoverUrl.js'
 import { logger } from '../utils/logger.js'
+import { withTimeoutOrNull } from '../utils/withTimeout.js'
 
 const NETEASE_TIMEOUT_MS = 15_000
 
-async function withTimeout<T>(promise: Promise<T>): Promise<T | null> {
-  let timer: ReturnType<typeof setTimeout> | undefined
-  try {
-    return await Promise.race([
-      promise,
-      new Promise<null>((resolve) => {
-        timer = setTimeout(() => resolve(null), NETEASE_TIMEOUT_MS)
-      }),
-    ])
-  } finally {
-    if (timer) clearTimeout(timer)
-  }
+/** The account picture as a small https image (the full-size avatar is hundreds of KB). */
+function avatarOf(profile: { avatarUrl?: unknown }): string | undefined {
+  const raw = typeof profile.avatarUrl === 'string' ? profile.avatarUrl.trim() : ''
+  if (!raw) return undefined
+  const url = httpsCoverUrl(raw)
+  return url.startsWith('https://') && !url.includes('?') ? `${url}?param=96y96` : url
 }
+
+const withTimeout = <T>(promise: Promise<T>) => withTimeoutOrNull(promise, NETEASE_TIMEOUT_MS)
 
 /**
  * 网易云音乐认证服务
@@ -102,7 +100,7 @@ export async function getUserInfo(cookie: string): Promise<GetUserInfoResult> {
     const profile = res?.body?.data?.profile
 
     if (!profile) {
-      logger.warn('Netease cookie validation: no profile in response', { responseData: res?.body?.data })
+      logger.warn('Netease cookie validation: no profile in response', { code: res?.body?.code })
       return { ok: false, reason: 'expired' }
     }
 
@@ -115,6 +113,7 @@ export async function getUserInfo(cookie: string): Promise<GetUserInfoResult> {
         nickname: profile.nickname || 'Unknown',
         vipType,
         userId: profile.userId ?? 0,
+        avatarUrl: avatarOf(profile as { avatarUrl?: unknown }),
       },
     }
   } catch (err) {

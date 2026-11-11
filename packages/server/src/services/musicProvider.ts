@@ -1,63 +1,21 @@
 import { createHash } from 'node:crypto'
 import Meting from '@meting/core'
-import type { MusicSource, Track } from '@music-together/shared'
+import { UNKNOWN_ARTIST } from '@music-together/shared'
+import type { MusicSource, Playlist, Track } from '@music-together/shared'
 import { LRUCache } from 'lru-cache'
 import { nanoid } from 'nanoid'
 import pLimit from 'p-limit'
 import ncmApi from '@neteasecloudmusicapienhanced/api'
 import * as kugouAuth from './kugouAuthService.js'
-import { getKrcByHash, type KrcInfo } from './kugouLyricService.js'
+import { fetchLyric, type LyricResult } from './lyricFetch.js'
 import * as tencentAuth from './tencentAuthService.js'
 import { logger } from '../utils/logger.js'
+import { withTimeoutOrNull } from '../utils/withTimeout.js'
+import { searchAlbums, searchPlaylists } from './catalogSearch.js'
+import { kugouSongToTrack, navigatePath, rawToTrack } from './trackMapping.js'
+import { deriveThumbnailCoverUrl, normalizeKugouTemplateCoverUrl, normalizeNeteaseCoverUrl } from './coverUrls.js'
 import { getStreamUrlCacheTtl, isStreamUrlExpired } from './streamUrlLifetime.js'
 import { getNeteasePlaybackUrl } from './neteasePlayback.js'
-
-/** AMLL LyricLine 格式（与 @applemusic-like-lyrics/core 一致，避免引入 client 依赖） */
-interface AmllLyricLine {
-  words: Array<{ word: string; startTime: number; endTime: number; romanWord: string; obscene: boolean }>
-  translatedLyric: string
-  romanLyric: string
-  startTime: number
-  endTime: number
-  isBG: boolean
-  isDuet: boolean
-}
-
-/** 将 KRC 解析结果转为 AMLL LyricLine 格式 */
-function krcToAmllLines(krcInfo: KrcInfo): AmllLyricLine[] {
-  if (!krcInfo.items?.length) return []
-  return krcInfo.items.map((line) => {
-    if (!line.length) {
-      return {
-        words: [],
-        translatedLyric: '',
-        romanLyric: '',
-        startTime: 0,
-        endTime: 0,
-        isBG: false,
-        isDuet: false,
-      }
-    }
-    const words = line.map((w) => ({
-      word: w.word,
-      startTime: Math.round(w.offset * 1000),
-      endTime: Math.round((w.offset + w.duration) * 1000),
-      romanWord: '',
-      obscene: false,
-    }))
-    const first = words[0]!
-    const last = words[words.length - 1]!
-    return {
-      words,
-      translatedLyric: '',
-      romanLyric: '',
-      startTime: first.startTime,
-      endTime: last.endTime,
-      isBG: false,
-      isDuet: false,
-    }
-  })
-}
 
 // ---------------------------------------------------------------------------
 // Meting instance type (library has no TS declarations)
@@ -143,29 +101,9 @@ export function playlistCacheKey(
   return `${source}:${type}:${scope}:${playlistId}`
 }
 
-/** Run fetch factories with an abort signal; legacy SDK promises still use a bounded wait. */
-async function withTimeout<T>(work: Promise<T> | ((signal: AbortSignal) => Promise<T>), ms = API_TIMEOUT_MS): Promise<T | null> {
-  if (typeof work === 'function') {
-    try {
-      return await work(AbortSignal.timeout(ms))
-    } catch (error) {
-      if (error instanceof DOMException && error.name === 'TimeoutError') return null
-      throw error
-    }
-  }
-
-  let timer: ReturnType<typeof setTimeout> | undefined
-  try {
-    return await Promise.race([
-      work,
-      new Promise<null>((resolve) => {
-        timer = setTimeout(() => resolve(null), ms)
-      }),
-    ])
-  } finally {
-    if (timer) clearTimeout(timer)
-  }
-}
+/** Run fetch factories with an abort signal; legacy SDK promises still use a bounded wait. A timeout answers `null`. */
+const withTimeout = <T>(work: Promise<T> | ((signal: AbortSignal) => Promise<T>), ms = API_TIMEOUT_MS) =>
+  withTimeoutOrNull(work, ms)
 
 // Path to song list in raw (non-formatted) API response per platform
 const SEARCH_PATHS: Record<MusicSource, string> = {
@@ -187,67 +125,7 @@ const PLAYLIST_PATHS: Record<MusicSource, string> = {
 const HOUR = 60 * 60 * 1000
 const MINUTE = 60 * 1000
 
-/** Remove NetEase's size restriction without disturbing other URL parameters. */
-export function normalizeNeteaseCoverUrl(url: string): string {
-  if (!url) return url
-  try {
-    const parsed = new URL(url)
-    parsed.searchParams.delete('param')
-    return parsed.toString()
-  } catch {
-    return url
-  }
-}
-
-/** Kugou only documents the `{size}` artwork template; leave other forms alone. */
-export function normalizeKugouTemplateCoverUrl(url: string): string {
-  return url.replace('{size}', '5000')
-}
-
-/**
- * Derive a separately cacheable 120px artwork URL without changing the
- * maximum-quality URL used for playback/detail views.
- */
-export function deriveThumbnailCoverUrl(source: MusicSource, url: string): string {
-  if (!url) return url
-
-  if (source === 'netease') {
-    try {
-      const parsed = new URL(url)
-      parsed.searchParams.delete('param')
-      parsed.searchParams.set('param', '120y120')
-      return parsed.toString()
-    } catch {
-      return url
-    }
-  }
-
-  if (source === 'tencent') {
-    return url.replace(/T002R\d+x\d+M000/i, 'T002R120x120M000')
-  }
-
-  // Kugou documents {size} templates. Numeric size segments are only
-  // rewritten on the known artwork CDN path; arbitrary direct URLs are left
-  // untouched rather than guessing what a path segment means.
-  if (source === 'kugou') {
-    if (url.includes('{size}')) return url.replaceAll('{size}', '120')
-    try {
-      const parsed = new URL(url)
-      if (!/(^|\.)kugou\.com$/i.test(parsed.hostname)) return url
-      const knownSizes = new Set(['100', '120', '150', '200', '240', '300', '320', '400', '480', '500', '600', '800', '1000', '1200', '2000', '3000', '5000'])
-      const segments = parsed.pathname.split('/')
-      const sizeIndex = segments.findIndex((segment) => knownSizes.has(segment))
-      if (sizeIndex < 0) return url
-      segments[sizeIndex] = '120'
-      parsed.pathname = segments.join('/')
-      return parsed.toString()
-    } catch {
-      return url
-    }
-  }
-
-  return url
-}
+const EMPTY_LYRIC: LyricResult = { lyric: '', tlyric: '', romalrc: '', yrc: '' }
 
 /** Meting's providers do not share a useful maximum artwork request size. */
 const COVER_REQUEST_SIZES: Record<MusicSource, number> = {
@@ -296,10 +174,7 @@ class MusicProvider {
   // Layer 3: Resource Caches — scalar values for stream URLs, covers, lyrics.
   private streamUrlCache = new LRUCache<string, string>({ max: 500, ttl: 1 * HOUR })
   private coverCache = new LRUCache<string, string>({ max: 1000, ttl: 24 * HOUR })
-  private lyricCache = new LRUCache<
-    string,
-    { lyric: string; tlyric: string; romalrc: string; yrc: string; wordByWord?: AmllLyricLine[] }
-  >({
+  private lyricCache = new LRUCache<string, LyricResult>({
     max: 500,
     ttl: 24 * HOUR,
   })
@@ -391,7 +266,7 @@ class MusicProvider {
       if (typeof song !== 'object' || song === null) continue
       const raw = song as Record<string, any>
       if (raw.id === undefined || raw.id === null) continue
-      const track = this.rawToTrack(raw, 'netease')
+      const track = rawToTrack(raw, 'netease')
       const picUrl = raw.al?.picUrl
       if (typeof picUrl === 'string' && picUrl) {
         track.cover = normalizeNeteaseCoverUrl(picUrl)
@@ -478,208 +353,14 @@ class MusicProvider {
     }
   }
 
-  /**
-   * Search for tracks. Uses format(false) to get raw API data including duration,
-   * then batch-resolves cover URLs.
-   */
-  
-  /**
-   * Search for albums. Returns a list of Playlist objects.
-   */
-  async searchAlbum(source: MusicSource, keyword: string, limit = 20, page = 1): Promise<import('@music-together/shared').Playlist[]> {
-    if (!keyword.trim()) return []
-
-    try {
-      if (source === 'tencent') {
-        const url = 'https://u.y.qq.com/cgi-bin/musicu.fcg'
-        const payload = {
-          comm: { ct: '6', cv: '80600', tmeAppID: 'qqmusic' },
-          'music.search.SearchCgiService.DoSearchForQQMusicDesktop': {
-            module: 'music.search.SearchCgiService',
-            method: 'DoSearchForQQMusicDesktop',
-            param: { num_per_page: limit, page_num: page, search_type: 2, query: keyword, grp: 1 },
-          },
-        }
-
-        const response = await withTimeout((signal) =>
-          fetch(url, {
-            method: 'POST',
-            headers: {
-              'Content-Type': 'application/json',
-              Referer: 'https://y.qq.com',
-              'User-Agent': 'QQ%E9%9F%B3%E4%B9%90/73222',
-            },
-            body: JSON.stringify(payload),
-            signal,
-          }).then((res) => res.json()),
-        )
-
-        if (!response) return []
-
-        const result = response['music.search.SearchCgiService.DoSearchForQQMusicDesktop']
-        if (result?.code !== 0 || !result?.data?.body?.album?.list) return []
-
-        return result.data.body.album.list.map((album: any) => ({
-          id: String(album.albumMID || album.albumID),
-          name: album.albumName || 'Unknown Album',
-           cover: album.albumPic || '',
-           thumbnailCover: deriveThumbnailCoverUrl('tencent', album.albumPic || ''),
-          trackCount: album.song_count || 0,
-          source: 'tencent',
-          creator: album.singerName || '',
-        }))
-      }
-
-      if (source === 'kugou') {
-        const url = `http://mobilecdn.kugou.com/api/v3/search/album?api_ver=1&area_code=1&correct=1&pagesize=${limit}&plat=2&tag=1&sver=5&showtype=10&page=${page}&keyword=${encodeURIComponent(keyword)}&version=8990`
-        const response = await withTimeout((signal) => fetch(url, { signal }).then(res => res.json()))
-        
-        if (!response || response.errcode !== 0 || !response.data?.info) return []
-        
-        return response.data.info.map((album: any) => ({
-          id: String(album.albumid),
-          name: album.albumname || 'Unknown Album',
-           cover: normalizeKugouTemplateCoverUrl(album.imgurl || ''),
-           thumbnailCover: deriveThumbnailCoverUrl('kugou', album.imgurl || ''),
-          trackCount: album.songcount || 0,
-          source: 'kugou',
-          creator: album.singername || '',
-        }))
-      }
-
-      if (source === 'netease') {
-        const meting = new Meting('netease')
-        meting.format(false) // Important: don't format because format expects songs
-        const raw = await withTimeout(meting.search(keyword, { limit, page, type: 10 } as any))
-        if (!raw) return []
-
-        let data: any
-        try {
-          data = JSON.parse(raw as string)
-        } catch {
-          return []
-        }
-
-        const albums = data?.result?.albums
-        if (!Array.isArray(albums)) return []
-
-        return albums.map((album: any) => ({
-          id: String(album.id),
-          name: album.name || 'Unknown Album',
-           cover: normalizeNeteaseCoverUrl(album.picUrl || album.blurPicUrl || ''),
-           thumbnailCover: deriveThumbnailCoverUrl('netease', album.picUrl || album.blurPicUrl || ''),
-          trackCount: album.size || 0,
-          source: 'netease',
-          creator: album.artist?.name || '',
-        }))
-      }
-
-      return []
-    } catch (err) {
-      logger.error(`Search album failed for ${source}:`, err)
-      return []
-    }
+  /** Search for albums (playlist-shaped entries). The searching itself lives in `catalogSearch`. */
+  searchAlbum(source: MusicSource, keyword: string, limit = 20, page = 1): Promise<Playlist[]> {
+    return searchAlbums(source, keyword, limit, page)
   }
 
-  /**
-   * Search for playlists. Returns a list of Playlist objects.
-   */
-  async searchPlaylist(source: MusicSource, keyword: string, limit = 20, page = 1): Promise<import('@music-together/shared').Playlist[]> {
-    if (!keyword.trim()) return []
-
-    try {
-      if (source === 'tencent') {
-        const url = 'https://u.y.qq.com/cgi-bin/musicu.fcg'
-        const payload = {
-          comm: { ct: '6', cv: '80600', tmeAppID: 'qqmusic' },
-          'music.search.SearchCgiService.DoSearchForQQMusicDesktop': {
-            module: 'music.search.SearchCgiService',
-            method: 'DoSearchForQQMusicDesktop',
-            param: { num_per_page: limit, page_num: page, search_type: 3, query: keyword, grp: 1 },
-          },
-        }
-
-        const response = await withTimeout((signal) =>
-          fetch(url, {
-            method: 'POST',
-            headers: {
-              'Content-Type': 'application/json',
-              Referer: 'https://y.qq.com',
-              'User-Agent': 'QQ%E9%9F%B3%E4%B9%90/73222',
-            },
-            body: JSON.stringify(payload),
-            signal,
-          }).then((res) => res.json()),
-        )
-
-        if (!response) return []
-
-        const result = response['music.search.SearchCgiService.DoSearchForQQMusicDesktop']
-        if (result?.code !== 0 || !result?.data?.body?.songlist?.list) return []
-
-        return result.data.body.songlist.list.map((playlist: any) => ({
-          id: String(playlist.dissid),
-          name: playlist.dissname || 'Unknown Playlist',
-           cover: playlist.imgurl || '',
-           thumbnailCover: deriveThumbnailCoverUrl('tencent', playlist.imgurl || ''),
-          trackCount: playlist.song_count || 0,
-          source: 'tencent',
-          creator: playlist.creator?.name || '',
-          description: playlist.introduction || '',
-        }))
-      }
-
-      if (source === 'kugou') {
-        const url = `http://mobilecdn.kugou.com/api/v3/search/special?api_ver=1&area_code=1&correct=1&pagesize=${limit}&plat=2&tag=1&sver=5&showtype=10&page=${page}&keyword=${encodeURIComponent(keyword)}&version=8990`
-        const response = await withTimeout((signal) => fetch(url, { signal }).then(res => res.json()))
-        
-        if (!response || response.errcode !== 0 || !response.data?.info) return []
-        
-        return response.data.info.map((playlist: any) => ({
-          id: String(playlist.specialid),
-          name: playlist.specialname || 'Unknown Playlist',
-           cover: normalizeKugouTemplateCoverUrl(playlist.imgurl || ''),
-           thumbnailCover: deriveThumbnailCoverUrl('kugou', playlist.imgurl || ''),
-          trackCount: playlist.songcount || 0,
-          source: 'kugou',
-          creator: playlist.nickname || '',
-          description: playlist.intro || '',
-        }))
-      }
-
-      if (source === 'netease') {
-        const meting = new Meting('netease')
-        meting.format(false) // Important: don't format because format expects songs
-        const raw = await withTimeout(meting.search(keyword, { limit, page, type: 1000 } as any))
-        if (!raw) return []
-
-        let data: any
-        try {
-          data = JSON.parse(raw as string)
-        } catch {
-          return []
-        }
-
-        const playlists = data?.result?.playlists
-        if (!Array.isArray(playlists)) return []
-
-        return playlists.map((playlist: any) => ({
-          id: String(playlist.id),
-          name: playlist.name || 'Unknown Playlist',
-           cover: normalizeNeteaseCoverUrl(playlist.coverImgUrl || playlist.picUrl || ''),
-           thumbnailCover: deriveThumbnailCoverUrl('netease', playlist.coverImgUrl || playlist.picUrl || ''),
-          trackCount: playlist.trackCount || 0,
-          source: 'netease',
-          creator: playlist.creator?.nickname || '',
-          description: playlist.description || '',
-        }))
-      }
-
-      return []
-    } catch (err) {
-      logger.error(`Search playlist failed for ${source}:`, err)
-      return []
-    }
+  /** Search for playlists. The searching itself lives in `catalogSearch`. */
+  searchPlaylist(source: MusicSource, keyword: string, limit = 20, page = 1): Promise<Playlist[]> {
+    return searchPlaylists(source, keyword, limit, page)
   }
 
   async search(source: MusicSource, keyword: string, limit = 20, page = 1): Promise<Track[]> {
@@ -730,10 +411,10 @@ class MusicProvider {
         return []
       }
 
-      const songs = this.navigatePath(rawData, SEARCH_PATHS[source])
+      const songs = navigatePath(rawData, SEARCH_PATHS[source])
       if (!Array.isArray(songs) || songs.length === 0) return []
 
-      const tracks = songs.map((song: MetingJson) => this.rawToTrack(song, source))
+      const tracks = songs.map((song: MetingJson) => rawToTrack(song, source))
 
       // Batch resolve cover URLs for tracks that don't already have one
       await this.batchResolveCover(tracks, source)
@@ -821,10 +502,8 @@ class MusicProvider {
     }
   }
 
-  async getLyric(
-    source: MusicSource,
-    lyricId: string,
-  ): Promise<{ lyric: string; tlyric: string; romalrc: string; yrc: string; wordByWord?: AmllLyricLine[] }> {
+  /** A song's lyric (empty when the platform has none or does not answer). Reading it lives in `lyricFetch`. */
+  async getLyric(source: MusicSource, lyricId: string): Promise<LyricResult> {
     const cacheKey = `${source}:${lyricId}`
     const cached = this.lyricCache.get(cacheKey)
     if (cached) {
@@ -832,85 +511,15 @@ class MusicProvider {
       return cached
     }
 
-    const empty = { lyric: '', tlyric: '', romalrc: '', yrc: '' as string }
-
     try {
-      let result: { lyric: string; tlyric: string; romalrc: string; yrc: string; wordByWord?: AmllLyricLine[] } = {
-        ...empty,
-      }
-
-      if (source === 'netease') {
-        // 使用 ncmApi.lyric_new 获取包含逐词歌词 (YRC) 的完整响应
-        const res = await withTimeout(ncmApi.lyric_new({ id: lyricId }))
-        if (!res?.body) {
-          logger.warn(`Lyric fetch timeout for ${source}: ${lyricId}`)
-          return empty
-        }
-        const body = res.body
-        result = {
-          lyric: (body.lrc?.lyric as string) || '',
-          tlyric: (body.tlyric?.lyric as string) || '',
-          romalrc: ((body.romalrc as Record<string, unknown> | undefined)?.lyric as string) || '',
-          yrc: (body.yrc?.lyric as string) || '',
-        }
-        if (result.yrc) {
-          logger.info(`YRC lyric found for netease:${lyricId}`)
-        }
-      } else if (source === 'kugou') {
-        // 酷狗：Meting 获取 LRC + kugou-lrc 获取 KRC 逐字歌词
-        const meting = this.getInstance(source)
-        const raw = await withTimeout(meting.lyric(lyricId))
-        if (raw === null || raw === undefined) {
-          logger.warn(`Lyric fetch timeout for ${source}: ${lyricId}`)
-          return empty
-        }
-        try {
-          const data = JSON.parse(raw as string) as MetingJson
-          result = {
-            lyric: (data.lyric as string) || '',
-            tlyric: (data.tlyric as string) || '',
-            romalrc: '',
-            yrc: '',
-          }
-        } catch {
-          return empty
-        }
-        // 尝试获取 KRC 逐字歌词
-        try {
-          const krcInfo = await withTimeout(getKrcByHash(lyricId))
-          if (krcInfo?.items?.length) {
-            result.wordByWord = krcToAmllLines(krcInfo)
-            logger.info(`KRC lyric found for kugou:${lyricId}`)
-          }
-        } catch {
-          /* 静默回退到 LRC */
-        }
-      } else {
-        // QQ 音乐：使用 Meting 默认流程
-        const meting = this.getInstance(source)
-        const raw = await withTimeout(meting.lyric(lyricId))
-        if (raw === null || raw === undefined) {
-          logger.warn(`Lyric fetch timeout for ${source}: ${lyricId}`)
-          return empty
-        }
-        try {
-          const data = JSON.parse(raw as string) as MetingJson
-          result = {
-            lyric: (data.lyric as string) || '',
-            tlyric: (data.tlyric as string) || '',
-            romalrc: '',
-            yrc: '',
-          }
-        } catch {
-          return empty
-        }
-      }
-
+      const result = await fetchLyric(source, lyricId, () => this.getInstance(source))
+      // Only a lyric that was really read is remembered: an empty one may just be a bad moment upstream.
+      if (!result) return { ...EMPTY_LYRIC }
       this.lyricCache.set(cacheKey, result)
       return result
     } catch (err) {
       logger.error(`Get lyric failed for ${source}:`, err)
-      return empty
+      return { ...EMPTY_LYRIC }
     }
   }
 
@@ -1036,7 +645,7 @@ class MusicProvider {
         return { ids: [], total: 0 }
       }
 
-      const allTracks = songs.map((song: any) => this.rawToTrack(song, 'netease'))
+      const allTracks = songs.map((song: any) => rawToTrack(song, 'netease'))
       
       for (const t of allTracks) this.enrichFromRegistry(t)
       this.registerTracks(allTracks)
@@ -1085,7 +694,7 @@ class MusicProvider {
           break
         }
 
-        const chunk = songs.map((song: Record<string, unknown>) => this.rawToTrack(song, 'netease'))
+        const chunk = songs.map((song: Record<string, unknown>) => rawToTrack(song, 'netease'))
         allTracks.push(...chunk)
 
         // If we got fewer than CHUNK_SIZE, we've reached the end
@@ -1134,7 +743,7 @@ class MusicProvider {
         if (songs.length === 0) break
 
         for (const song of songs) {
-          const track = this.kugouSongToTrack(song)
+          const track = kugouSongToTrack(song)
           if (track) allTracks.push(track)
         }
 
@@ -1180,7 +789,7 @@ class MusicProvider {
         if (songs.length === 0) break
 
         for (const song of songs) {
-          const track = this.rawToTrack(song, 'tencent')
+          const track = rawToTrack(song, 'tencent')
           if (track) allTracks.push(track)
         }
 
@@ -1201,52 +810,6 @@ class MusicProvider {
     } catch (err) {
       logger.error(`Tencent playlist fetch failed: ${playlistId}`, err)
       return { ids: [], total: 0 }
-    }
-  }
-
-  /** Convert a kugou song object from getPlaylistTracks to a Track. */
-  // eslint-disable-next-line @typescript-eslint/no-explicit-any -- external Kugou API response shape
-  private kugouSongToTrack(song: Record<string, unknown>): Track | null {
-    // Cast for convenient dynamic property access
-    const song_ = song as Record<string, any>
-    const hash = song_.hash || song_.audio_info?.hash || ''
-    if (!hash) return null
-
-    // filename is typically "Artist - Title" or "Artist1、Artist2 - Title"
-    const filename = String(song_.filename || song_.name || '')
-    const parts = filename.split(' - ')
-    const artistStr = parts.length > 1 ? parts[0].trim() : ''
-    const artists = artistStr
-      ? artistStr
-          .split(/[、,，&]/)
-          .map((a: string) => a.trim())
-          .filter(Boolean)
-      : []
-    const title = parts.length > 1 ? parts.slice(1).join(' - ').trim() : filename
-
-    // Duration: Kugou's native API returns seconds (e.g. 240), but some endpoints
-    // return milliseconds (e.g. 240000). Threshold 100000 (~27 hours in seconds)
-    // safely distinguishes the two — any value above it is assumed to be milliseconds.
-    let duration = Number(song_.duration ?? song_.timelen ?? 0)
-    if (duration > 100000) duration = Math.floor(duration / 1000)
-
-    // VIP / privilege
-    const privilege = song_.privilege ?? song_.pay_type ?? 0
-    const isVip = privilege > 0
-
-    return {
-      id: nanoid(),
-      source: 'kugou',
-      sourceId: hash,
-      title,
-      artist: artists,
-      album: String(song_.album_name || song_.remark || ''),
-      duration,
-      cover: '',
-      lyricId: hash,
-      urlId: hash,
-      picId: hash,
-      vip: isVip,
     }
   }
 
@@ -1282,10 +845,10 @@ class MusicProvider {
         if (source === 'tencent') path = 'data.getSongInfo'
         if (source === 'kugou') path = 'data.info'
       }
-      const songs = this.navigatePath(rawData, path)
+      const songs = navigatePath(rawData, path)
       if (!Array.isArray(songs) || songs.length === 0) return { ids: [], total: 0 }
 
-      const tracks = songs.map((song: MetingJson) => this.rawToTrack(song, source))
+      const tracks = songs.map((song: MetingJson) => rawToTrack(song, source))
       for (const t of tracks) this.enrichFromRegistry(t)
       this.registerTracks(tracks)
 
@@ -1352,101 +915,6 @@ class MusicProvider {
   // ---------------------------------------------------------------------------
   // Internal helpers
   // ---------------------------------------------------------------------------
-
-  /** Navigate a dot-separated path in an object */
-  private navigatePath(data: MetingJson, path: string): unknown {
-    let result: unknown = data
-    for (const key of path.split('.')) {
-      result = (result as Record<string, unknown>)?.[key]
-    }
-    return result
-  }
-
-  /**
-   * Convert raw platform-specific song data to our Track format.
-   * Each platform returns different field names, so we need per-platform parsing.
-   */
-  // eslint-disable-next-line @typescript-eslint/no-explicit-any -- platform API shapes are too dynamic for strict typing
-  private rawToTrack(song: Record<string, unknown>, source: MusicSource): Track {
-    // Cast to any for convenient dynamic property access on external API responses
-    const s = song as Record<string, any>
-    switch (source) {
-      case 'netease': {
-        const neteaseArtists = s.ar?.map((a: Record<string, unknown>) => a.name).filter(Boolean)
-        return {
-          id: nanoid(),
-          title: s.name || 'Unknown',
-          artist: neteaseArtists?.length ? neteaseArtists : ['Unknown'],
-          album: s.al?.name || '',
-          duration: Math.round((s.dt || 0) / 1000), // ms -> seconds
-          cover: '', // resolved via pic()
-          source,
-          sourceId: String(s.id),
-          urlId: String(s.id),
-          lyricId: String(s.id),
-          picId: String(s.al?.pic_str || s.al?.pic || ''),
-          // fee: 0=免费, 1=VIP, 4=付费专辑, 8=低音质免费
-          vip: s.fee === 1 || s.fee === 4 || s.privilege?.fee === 1 || s.privilege?.fee === 4,
-        }
-      }
-
-      case 'tencent': {
-        // Tencent sometimes wraps data in musicData
-        const t = s.musicData || s
-        return {
-          id: nanoid(),
-          title: t.name || 'Unknown',
-          artist: (t.singer || []).map((a: Record<string, unknown>) => a.name),
-          album: (t.album?.title || '').trim(),
-          duration: t.interval || 0, // already in seconds
-          cover: '', // resolved via pic()
-          source,
-          sourceId: String(t.mid),
-          urlId: String(t.mid),
-          lyricId: String(t.mid),
-          picId: String(t.album?.mid || ''),
-          // pay.pay_play=1 表示需要 VIP, pay.pay_month=1 表示月度VIP, pay.price_track>0 表示付费单曲
-          vip: t.pay?.pay_play === 1 || t.pay?.pay_month === 1 || (t.pay?.price_track ?? 0) > 0,
-        }
-      }
-
-      case 'kugou': {
-        // Kugou encodes artist/title in filename: "Artist - Title"
-        const filename = s.filename || s.fileName || ''
-        const parts = filename.split(' - ')
-        let trackName = filename
-        let artists: string[] = []
-        if (parts.length >= 2) {
-          artists = parts[0]
-            .split(/[、,，&]/)
-            .map((a: string) => a.trim())
-            .filter(Boolean)
-          trackName = parts.slice(1).join(' - ')
-        }
-        return {
-          id: nanoid(),
-          title: trackName || 'Unknown',
-          artist: artists.length > 0 ? artists : ['Unknown'],
-          album: s.album_name || '',
-          duration: s.duration || 0, // seconds
-          cover: '', // resolved via pic() (requires API call)
-          source,
-          sourceId: String(s.hash),
-          urlId: String(s.hash),
-          lyricId: String(s.hash),
-          picId: String(s.hash),
-          // privilege 位掩码: & 8 表示 VIP; pay_type > 0 也表示付费
-          vip: ((s.privilege ?? 0) & 8) !== 0 || (s.pay_type ?? 0) > 0,
-        }
-      }
-
-      default: {
-        // Exhaustive check — if a new MusicSource is added, TypeScript will error here
-        const _exhaustive: never = source
-        throw new Error(`Unsupported music source: ${_exhaustive}`)
-      }
-    }
-  }
 
   /**
    * Batch-resolve cover URLs for tracks that don't have one.

@@ -5,6 +5,9 @@ import {
   ttmlQuerySchema,
   artistQuerySchema,
   artistPageQuerySchema,
+  dailyQuerySchema,
+  discoverQuerySchema,
+  homeQuerySchema,
   myPlaylistQuerySchema,
   playlistQuerySchema,
 } from './schemas.js'
@@ -72,6 +75,9 @@ export const MAPP_METADATA_SCHEMAS = {
   artistAlbums: mappMetadataArtistPageQuerySchema,
   playlist: mappMetadataPlaylistQuerySchema,
   myPlaylist: mappMetadataMyPlaylistQuerySchema,
+  radar: discoverQuerySchema.strict(),
+  daily: dailyQuerySchema.strict(),
+  home: homeQuerySchema.strict(),
 } as const satisfies Record<keyof typeof MAPP_METADATA_TARGETS, z.ZodType>
 
 export type MappMetadataKind = keyof typeof MAPP_METADATA_TARGETS

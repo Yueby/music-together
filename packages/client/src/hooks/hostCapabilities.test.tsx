@@ -218,9 +218,10 @@ describe('host capability guards on shared hooks', () => {
     await act(async () => {
       await playlists.fetchPlaylistTracks('netease', 'fixture-public-list')
     })
-    expect(fixture.metadata).toHaveBeenCalledWith(expect.stringContaining('/api/music/playlist?'), {
-      credentials: 'include',
-    })
+    expect(fixture.metadata).toHaveBeenCalledWith(
+      expect.stringContaining('/api/music/playlist?'),
+      expect.objectContaining({ credentials: 'include', signal: expect.any(AbortSignal) }),
+    )
     // The caller's own list is a different, identity-checked endpoint that carries the room.
     await act(async () => {
       await playlists.fetchPlaylistTracks('netease', 'fixture-own-list', 5, 'playlist', true)

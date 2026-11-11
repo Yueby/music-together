@@ -1,5 +1,5 @@
-import { SERVER_URL } from '@/lib/config'
-import { metadataFetch } from '@/lib/metadataFetch'
+import { findArtistByName } from '@/lib/artistLookup'
+import { getMusicJson as getJson, statusOf } from '@/lib/musicApi'
 import type { Artist, MusicSource, Playlist, Track } from '@music-together/shared'
 import { useCallback, useEffect, useRef, useState } from 'react'
 
@@ -24,17 +24,6 @@ export type ArtistLoadError = 'unsupported' | 'not-found' | 'failed'
 function appendUnique<T>(current: T[], next: T[], key: (item: T) => string): T[] {
   const seen = new Set(current.map(key))
   return [...current, ...next.filter((item) => !seen.has(key(item)))]
-}
-
-async function getJson<T>(path: string, params: Record<string, string | number>, signal: AbortSignal): Promise<T> {
-  const query = new URLSearchParams(Object.entries(params).map(([key, value]) => [key, String(value)]))
-  const res = await metadataFetch(`${SERVER_URL}/api/music/${path}?${query}`, { signal, credentials: 'include' })
-  if (!res.ok) {
-    const error = new Error(String(res.status))
-    ;(error as Error & { status?: number }).status = res.status
-    throw error
-  }
-  return (await res.json()) as T
 }
 
 /**
@@ -108,13 +97,43 @@ export function useArtist() {
       } catch (err) {
         if (generationRef.current !== generation) return
         if (err instanceof DOMException && err.name === 'AbortError') return
-        const status = (err as { status?: number }).status
+        const status = statusOf(err)
         setError(status === 400 ? 'unsupported' : status === 404 ? 'not-found' : 'failed')
       } finally {
         if (generationRef.current === generation) setLoading(false)
       }
     },
     [reset],
+  )
+
+  /** Open an artist known only by name: find who it is, then load the page like `load`. */
+  const loadByName = useCallback(
+    async (source: MusicSource, name: string) => {
+      reset()
+      const controller = new AbortController()
+      abortRef.current = controller
+      const generation = generationRef.current
+      // Show the name straight away while the lookup runs.
+      setArtist({ id: '', name, cover: '', source })
+      setLoading(true)
+      let found: Artist | null
+      try {
+        found = await findArtistByName(source, name, controller.signal)
+      } catch (err) {
+        if (generationRef.current !== generation || (err instanceof DOMException && err.name === 'AbortError')) return
+        setError('failed')
+        setLoading(false)
+        return
+      }
+      if (generationRef.current !== generation) return
+      if (!found) {
+        setError('not-found')
+        setLoading(false)
+        return
+      }
+      await load(source, found.id, found)
+    },
+    [load, reset],
   )
 
   const loadMoreSongs = useCallback(async () => {
@@ -183,6 +202,7 @@ export function useArtist() {
     loading,
     error,
     load,
+    loadByName,
     loadMoreSongs,
     loadMoreAlbums,
     reset,

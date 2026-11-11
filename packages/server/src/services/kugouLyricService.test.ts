@@ -1,6 +1,6 @@
 import { gzipSync } from 'node:zlib'
 import { afterEach, describe, expect, it, vi } from 'vitest'
-import { decodeKrc, getKrcByHash, parseKrc } from './kugouLyricService.js'
+import { decodeKrc, getKrcByHash, krcToAmllLines, parseKrc } from './kugouLyricService.js'
 
 const KRC_ENCODE_KEY = Buffer.from([64, 71, 97, 119, 94, 50, 116, 71, 81, 54, 49, 45, 206, 210, 110, 105])
 
@@ -16,6 +16,31 @@ function encodeKrc(plainText: string): Buffer {
 
 afterEach(() => {
   vi.unstubAllGlobals()
+})
+
+describe('krcToAmllLines', () => {
+  it('turns word timing in seconds into the line format the lyric player reads, in milliseconds', () => {
+    const [line] = krcToAmllLines({
+      items: [
+        [
+          { word: 'a', offset: 1.2, duration: 0.3 },
+          { word: 'b', offset: 1.5, duration: 0.5 },
+        ],
+      ],
+    })
+    expect(line.words.map((w) => [w.word, w.startTime, w.endTime])).toEqual([
+      ['a', 1200, 1500],
+      ['b', 1500, 2000],
+    ])
+    expect(line).toMatchObject({ startTime: 1200, endTime: 2000, isBG: false, isDuet: false })
+  })
+
+  it('keeps an empty line as an empty line, and an empty lyric as no lines', () => {
+    expect(krcToAmllLines({ items: [[]] })).toEqual([
+      { words: [], translatedLyric: '', romanLyric: '', startTime: 0, endTime: 0, isBG: false, isDuet: false },
+    ])
+    expect(krcToAmllLines({ items: [] })).toEqual([])
+  })
 })
 
 describe('Kugou KRC service', () => {

@@ -5,6 +5,7 @@ import { MAPP_METADATA_MAX_BYTES } from '@music-together/shared'
 import { createPlatformMetadataRouter } from './platformMetadata.js'
 import { PlaylistAccessError } from '../controllers/musicMetadataController.js'
 import { ArtistError } from '../services/artistService.js'
+import { DiscoverError } from '../services/discoverService.js'
 import { musicProvider } from '../services/musicProvider.js'
 
 vi.mock('../services/musicProvider.js', () => ({
@@ -97,11 +98,16 @@ function fixture(
   const lyric = vi.fn().mockResolvedValue({ lyric: '[00:01]fixture', tlyric: '', romalrc: '', yrc: '' })
   const ttml = vi.fn().mockResolvedValue({ ok: true, lines: [{ words: [{ word: 'Hello' }] }] })
   const cover = vi.fn().mockResolvedValue({ ok: true, contentType: 'image/jpeg', body: Buffer.from([1, 2, 3]) })
-  const artist = vi.fn().mockResolvedValue({ artist: { id: '1', name: 'A' }, songs: { items: [] }, albums: { items: [] } })
+  const artist = vi
+    .fn()
+    .mockResolvedValue({ artist: { id: '1', name: 'A' }, songs: { items: [] }, albums: { items: [] } })
   const artistSongs = vi.fn().mockResolvedValue({ items: [], hasMore: false })
   const artistAlbums = vi.fn().mockResolvedValue({ items: [], hasMore: false })
   const playlist = vi.fn().mockResolvedValue({ tracks: [], total: 0, offset: 0, hasMore: false })
   const myPlaylist = vi.fn().mockResolvedValue({ tracks: [], total: 0, offset: 0, hasMore: false })
+  const daily = vi.fn().mockResolvedValue({ items: [] })
+  const home = vi.fn().mockResolvedValue({ playlists: [], artists: [], albums: [] })
+  const radar = vi.fn().mockResolvedValue({ items: [] })
   const rateLimit = vi.fn<RequestHandler>((_req, _res, next) => next())
   const coverRateLimit = vi.fn<RequestHandler>((_req, _res, next) => next())
   const router = createPlatformMetadataRouter({
@@ -111,7 +117,7 @@ function fixture(
     coverRateLimit,
     ...(changes.defaults
       ? {}
-      : { search, lyric, ttml, cover, artist, artistSongs, artistAlbums, playlist, myPlaylist }),
+      : { search, lyric, ttml, cover, artist, artistSongs, artistAlbums, playlist, myPlaylist, daily, home, radar }),
   })
   /** Resolves when the router either answers or hands the request back to the original chain. */
   const run = () =>
@@ -134,6 +140,9 @@ function fixture(
     artistAlbums,
     playlist,
     myPlaylist,
+    daily,
+    home,
+    radar,
     rateLimit,
     coverRateLimit,
     run,
@@ -173,6 +182,57 @@ describe('platform catalog targets (artist pages and public playlists)', () => {
       null,
     )
     expect(f.res.statusCode).toBe(200)
+  })
+
+  describe('discovery targets', () => {
+    it('serves the radar list without an identity-dependent query', async () => {
+      const f = fixture({ raw: '/api/music/discover/radar?source=netease' })
+      expect(await f.run()).toBe('answered')
+      expect(f.radar).toHaveBeenCalledExactlyOnceWith({ source: 'netease' })
+      expect(f.res.statusCode).toBe(200)
+    })
+
+    it("reads today's songs for the verified platform identity only", async () => {
+      const userId = 'mapp_' + 'b'.repeat(32)
+      const f = fixture({ raw: '/api/music/discover/daily?source=netease&roomId=ROOM01', userId })
+      expect(await f.run()).toBe('answered')
+      expect(f.daily).toHaveBeenCalledExactlyOnceWith({ source: 'netease', roomId: 'ROOM01' }, userId)
+    })
+
+    it('reads the home blocks for the verified platform identity only', async () => {
+      const userId = 'mapp_' + 'c'.repeat(32)
+      const f = fixture({ raw: '/api/music/discover/home?source=netease&roomId=ROOM01', userId })
+      expect(await f.run()).toBe('answered')
+      expect(f.home).toHaveBeenCalledExactlyOnceWith({ source: 'netease', roomId: 'ROOM01' }, userId)
+      expect(f.res.body).toEqual({ playlists: [], artists: [], albums: [] })
+    })
+
+    it.each([
+      [new DiscoverError('DISCOVER_LOGIN_REQUIRED', 401), 401, 'METADATA_LOGIN_REQUIRED'],
+      [new DiscoverError('DISCOVER_UNSUPPORTED', 400), 400, 'METADATA_UNSUPPORTED'],
+      [new DiscoverError('DISCOVER_UPSTREAM', 503), 503, 'METADATA_FAILED'],
+      [new PlaylistAccessError(403), 403, 'METADATA_FORBIDDEN'],
+    ])('maps %# to a fixed code and status', async (error, status, code) => {
+      const f = fixture({ raw: '/api/music/discover/daily?source=netease&roomId=ROOM01' })
+      f.daily.mockImplementation(() => {
+        throw error
+      })
+      expect(await f.run()).toBe('answered')
+      expect(f.res.statusCode).toBe(status)
+      expect(f.res.body).toEqual({ code })
+    })
+
+    it('refuses a caller-chosen identity or a missing room before any handler runs', async () => {
+      for (const path of [
+        '/api/music/discover/daily?source=netease',
+        '/api/music/discover/daily?source=netease&roomId=ROOM01&userId=mapp_other',
+      ]) {
+        const f = fixture({ raw: path })
+        expect(await f.run()).toBe('answered')
+        expect(f.res.statusCode).toBe(400)
+        expect(f.daily).not.toHaveBeenCalled()
+      }
+    })
   })
 
   describe('own playlist target', () => {

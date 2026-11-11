@@ -390,24 +390,18 @@ export async function checkQrStatus(qrsig: string): Promise<{
       .map(([k, v]) => `${k}=${v}`)
       .join('; ')
 
-    // 当登录成功（code=0）时输出原始响应方便调试
-    if (text.startsWith("ptuiCB('0'")) {
-      logger.info(`QQ QR: raw ptqrlogin response: ${text.slice(0, 500)}`)
-    }
-
     // ptuiCB 格式不固定，可能 6~8 个参数，用宽松正则匹配
+    // 注意：响应里含一次性登录令牌（check_sig 链接里的 ptsigx），任何情况下都不写入日志。
     const match = text.match(/ptuiCB\('(\d+)','([^']*)','([^']*)','([^']*)','([^']*)'(?:,'([^']*)')?/)
     if (!match) {
-      logger.warn('QQ QR: unexpected ptqrlogin response format', { text: text.slice(0, 300) })
+      logger.warn('QQ QR: unexpected ptqrlogin response format', { length: text.length })
       return { status: 800, message: '检查状态失败（响应格式异常）' }
     }
 
     const [, code, , checkSigUrl, , msg, nickname] = match
     const mapped = STATUS_MESSAGES[code] ?? { status: 800, message: `未知状态 (${code})` }
 
-    logger.info(
-      `QQ QR poll: code=${code}, checkSigUrl=${checkSigUrl?.slice(0, 80) || '(empty)'}, nickname=${nickname || '(none)'}`,
-    )
+    logger.info(`QQ QR poll: code=${code}`)
 
     // 登录成功 — 通过 check_sig 获取 p_skey/skey 并换取 OAuth musickey
     if (code === '0') {
@@ -543,7 +537,6 @@ export async function getUserInfo(cookie: string): Promise<GetUserInfoResult> {
         cookie,
         param: {},
       })
-      logger.info(`QQ VIP Data (vip_login_base): ${JSON.stringify(vipData)}`)
       // vip_login_base 返回的格式中含有 identity.vip 及 identity.svip
       const isVip = vipData?.identity?.svip ? 2 : vipData?.identity?.vip ? 1 : 0
       vipType = isVip
@@ -741,8 +734,6 @@ export async function getUserPlaylists(cookie: string): Promise<Playlist[]> {
 
       const vPlaylist = createdData?.v_playlist || []
 
-      logger.info('QQ Debug Created Playlist Item [0]: \n' + JSON.stringify(vPlaylist[0], null, 2))
-
       for (const p of vPlaylist) {
         playlists.push({
           id: String(p.tid || p.dissid || p.dirid || p.dirId),
@@ -772,8 +763,6 @@ export async function getUserPlaylists(cookie: string): Promise<Playlist[]> {
         })
 
         const vFavList = favData?.v_playlist || []
-
-        logger.info('QQ Debug Fav Playlist favData parent: \n' + JSON.stringify(favData, null, 2))
 
         for (const p of vFavList) {
           playlists.push({

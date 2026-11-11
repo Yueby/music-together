@@ -1,12 +1,11 @@
 import type { MappHost } from '../../../mapp/src/compat/MappHost'
+import { ROOM_ID_PATTERN } from '@music-together/shared'
 import { useCallback } from 'react'
 import { MemoryRouter, useNavigate } from 'react-router'
 import { hostRuntime } from '@/lib/hostRuntime'
 import { resetAllRoomState } from '@/lib/resetStores'
 import { MappSocketProvider } from '@/providers/MappSocketProvider'
 import { AppSurface } from '@/App'
-
-export const ROOM_ID_PATTERN = /^[A-Za-z0-9_-]{1,20}$/
 
 export interface MappAppProps {
   host: MappHost

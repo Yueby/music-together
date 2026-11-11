@@ -11,6 +11,7 @@ import { RoomHeader } from '@/components/Room/RoomHeader'
 import { SearchDialog } from '@/components/Overlays/SearchDialog'
 import { QueueDrawer } from '@/components/Overlays/QueueDrawer'
 import { AccountDialog } from '@/components/Overlays/AccountDialog'
+import { ArtistDialog } from '@/components/Overlays/ArtistDialog'
 import { SettingsDialog, type SettingsTab } from '@/components/Overlays/SettingsDialog'
 import { PasswordDialog } from '@/components/Lobby/PasswordDialog'
 import { Drawer, DrawerContent, DrawerHeader, DrawerTitle } from '@/components/ui/drawer'
@@ -381,6 +382,7 @@ export default function RoomPage() {
             initialTab={settingsInitialTab}
           />
           <AccountDialog open={accountOpen} onOpenChange={setAccountOpen} />
+          <ArtistDialog />
         </div>
 
         {/* Fallback password dialog for edge cases (password changed after pre-check) */}

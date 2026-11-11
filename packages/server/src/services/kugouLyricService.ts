@@ -21,6 +21,53 @@ export interface KrcInfo {
   items: KrcWord[][]
 }
 
+/** AMLL LyricLine 格式（与 @applemusic-like-lyrics/core 一致，避免引入 client 依赖） */
+export interface AmllLyricLine {
+  words: Array<{ word: string; startTime: number; endTime: number; romanWord: string; obscene: boolean }>
+  translatedLyric: string
+  romanLyric: string
+  startTime: number
+  endTime: number
+  isBG: boolean
+  isDuet: boolean
+}
+
+/** 将 KRC 解析结果转为 AMLL LyricLine 格式 */
+export function krcToAmllLines(krcInfo: KrcInfo): AmllLyricLine[] {
+  if (!krcInfo.items?.length) return []
+  return krcInfo.items.map((line) => {
+    if (!line.length) {
+      return {
+        words: [],
+        translatedLyric: '',
+        romanLyric: '',
+        startTime: 0,
+        endTime: 0,
+        isBG: false,
+        isDuet: false,
+      }
+    }
+    const words = line.map((w) => ({
+      word: w.word,
+      startTime: Math.round(w.offset * 1000),
+      endTime: Math.round((w.offset + w.duration) * 1000),
+      romanWord: '',
+      obscene: false,
+    }))
+    const first = words[0]!
+    const last = words[words.length - 1]!
+    return {
+      words,
+      translatedLyric: '',
+      romanLyric: '',
+      startTime: first.startTime,
+      endTime: last.endTime,
+      isBG: false,
+      isDuet: false,
+    }
+  })
+}
+
 interface KugouLyricCandidate {
   id?: string
   accesskey?: string
