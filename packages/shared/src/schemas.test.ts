@@ -2,6 +2,7 @@ import { describe, expect, it } from 'vitest'
 import { LIMITS } from './constants.js'
 import {
   coverQuerySchema,
+  ntpPingSchema,
   playerPlaySchema,
   queueAddBatchSchema,
   roomCreateSchema,
@@ -65,6 +66,19 @@ describe('shared schemas', () => {
     expect(roomSettingsSchema.safeParse({ password: null }).success).toBe(true)
     expect(roomSettingsSchema.safeParse({ password: '' }).success).toBe(false)
     expect(roomSettingsSchema.safeParse({ name: '   ' }).success).toBe(false)
+  })
+
+  it('takes the RTT of a ping only when a connection could really have measured it', () => {
+    expect(ntpPingSchema.parse({ clientPingId: 3, lastRttMs: 85.5 })).toEqual({ clientPingId: 3, lastRttMs: 85.5 })
+    expect(ntpPingSchema.parse({ clientPingId: 3 }).lastRttMs).toBeUndefined()
+    // an absurd or malformed RTT is dropped, the ping (and its id, which is echoed) stays
+    for (const lastRttMs of [-1, 0, 10_001, Number.NaN, '50', null]) {
+      const parsed = ntpPingSchema.safeParse({ clientPingId: 3, lastRttMs })
+      expect(parsed.success).toBe(true)
+      expect(parsed.success && parsed.data.lastRttMs).toBeUndefined()
+    }
+    expect(ntpPingSchema.safeParse({ clientPingId: 'x' }).success).toBe(false)
+    expect(ntpPingSchema.safeParse(undefined).success).toBe(false)
   })
 
   it('plays a requested track by its id alone', () => {

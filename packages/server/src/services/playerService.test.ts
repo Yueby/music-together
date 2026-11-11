@@ -117,6 +117,20 @@ describe('playerService state transitions', () => {
     expect(data.pendingPlayback?.playState.currentTime).toBe(track.duration)
   })
 
+  it('does nothing when asked to resume what is already playing, instead of rewinding everybody', () => {
+    const data = room()
+    data.playState.isPlaying = true
+    data.playState.currentTime = 42
+    roomRepo.set('ROOM01', data)
+    const { io, emit } = ioMock()
+
+    resumeTrack(io as never, 'ROOM01')
+
+    expect(data.pendingPlayback).toBeNull()
+    expect(data.playState.currentTime).toBe(42)
+    expect(emit.mock.calls.some(([event]) => event === 'player:resume')).toBe(false)
+  })
+
   it('schedules room-wide stop playback at one authoritative time', () => {
     vi.useFakeTimers()
     vi.setSystemTime(new Date('2026-01-01T00:00:10Z'))
@@ -463,6 +477,7 @@ describe('playerService expired stream URLs', () => {
   it('keeps a valid supplied URL and the synchronous resume/seek paths', async () => {
     const { data, io, emit, stream } = setup()
     setCurrentTrack('ROOM01', track)
+    data.playState.isPlaying = false // only something paused can be resumed
     expect(resumeTrack(io as never, 'ROOM01')).toBeUndefined()
     expect(seekTrack(io as never, 'ROOM01', 60)).toBeUndefined()
     expect(emit.mock.calls.map(([event]) => event)).toEqual(['player:resume', 'player:seek'])
@@ -501,7 +516,7 @@ describe('playerService expired stream URLs', () => {
   })
 
   it('uses the latest conductor position after refresh without invalidating it', async () => {
-    const { data, io, stream } = setup(false)
+    const { data, io, stream } = setup()
     const request = deferred<string | null>()
     stream.mockReturnValueOnce(request.promise)
     resumeTrack(io as never, 'ROOM01')
@@ -509,7 +524,8 @@ describe('playerService expired stream URLs', () => {
     updatePlayState('ROOM01', { currentTime: 70 })
     request.resolve(freshUrl)
     await settle()
-    expect(data.pendingPlayback?.playState.currentTime).toBeCloseTo(70.3)
+    // Resuming a paused room starts from where it stood: nothing runs in between
+    expect(data.pendingPlayback?.playState.currentTime).toBeCloseTo(70)
   })
 
   it.each([true, false])('refreshes a seek while preserving paused=%s', async (paused) => {

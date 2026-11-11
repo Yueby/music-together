@@ -173,6 +173,15 @@ describe('Meting song search (NetEase, Kugou)', () => {
       expect(search).toHaveBeenCalledTimes(2)
     },
   )
+
+  it('fails the Kugou search for a non-zero errcode, and answers [] for errcode 0 without hits', async () => {
+    const search = vi.spyOn(Meting.prototype, 'search').mockResolvedValue(JSON.stringify({ status: 0, errcode: 20010 }))
+    await expect(musicProvider.search('kugou', 'kugou refused fixture', 20, 1)).rejects.toBeInstanceOf(SearchError)
+    expect(search).toHaveBeenCalledTimes(1)
+
+    search.mockResolvedValue(JSON.stringify({ status: 1, errcode: 0, data: { info: [] } }))
+    await expect(musicProvider.search('kugou', 'kugou nothing fixture', 20, 1)).resolves.toEqual([])
+  })
 })
 
 describe('stream URL lifetime caching', () => {

@@ -431,6 +431,12 @@ class MusicProvider {
         throw new SearchError()
       }
 
+      // Kugou says the same with a non-zero `errcode` (album and playlist search already check it).
+      if (source === 'kugou' && rawData.errcode !== undefined && rawData.errcode !== 0) {
+        logger.warn(`Search for ${source} returned business code`, { errcode: rawData.errcode })
+        throw new SearchError()
+      }
+
       const songs = navigatePath(rawData, SEARCH_PATHS[source])
       if (!Array.isArray(songs) || songs.length === 0) return []
 
