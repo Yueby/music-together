@@ -1,11 +1,11 @@
+import { ArtworkImage } from '@/components/ArtworkImage'
 import { PlatformSelect } from '@/components/PlatformSelect'
 import { VipBadge } from '@/components/VipBadge'
-import { Avatar, AvatarFallback, AvatarImage } from '@/components/ui/avatar'
+import { Avatar } from '@/components/ui/avatar'
 import { Button } from '@/components/ui/button'
 import { Popover, PopoverContent, PopoverTrigger } from '@/components/ui/popover'
 import { Separator } from '@/components/ui/separator'
 import type { AccountSession } from '@/hooks/useAccountSession'
-import { useArtworkUrl } from '@/hooks/useArtworkUrl'
 import { PLATFORM_LABELS, vipLabel } from '@/lib/platform'
 import { Crown, Loader2, LogOut, UserRound } from 'lucide-react'
 import { useState } from 'react'
@@ -31,7 +31,6 @@ export function AccountMenu({
   logout,
 }: AccountMenuProps) {
   const [open, setOpen] = useState(false)
-  const avatar = useArtworkUrl(myStatus?.avatarUrl)
   const loggedIn = myStatus?.loggedIn ?? false
   const hasVip = loggedIn && vipLabel(platform, myStatus?.vipType) !== ''
   const platformName = PLATFORM_LABELS[platform]
@@ -54,10 +53,13 @@ export function AccountMenu({
             {/* The crown sits on this wrapper: the avatar itself clips its overflow */}
             <span className="relative flex">
               <Avatar>
-                <AvatarImage src={avatar} alt="" referrerPolicy="no-referrer" />
-                <AvatarFallback>
-                  <UserRound className="h-4 w-4" />
-                </AvatarFallback>
+                <ArtworkImage
+                  cover={myStatus?.avatarUrl}
+                  pending={verifying}
+                  referrerPolicy="no-referrer"
+                  fallback={<UserRound className="text-muted-foreground h-4 w-4" />}
+                  className="size-full rounded-full"
+                />
               </Avatar>
               {hasVip ? (
                 <span
@@ -73,10 +75,13 @@ export function AccountMenu({
         <PopoverContent align="end" className="w-72 space-y-3">
           <div className="flex items-center gap-3">
             <Avatar size="lg">
-              <AvatarImage src={avatar} alt="" referrerPolicy="no-referrer" />
-              <AvatarFallback>
-                <UserRound className="h-5 w-5" />
-              </AvatarFallback>
+              <ArtworkImage
+                cover={myStatus?.avatarUrl}
+                pending={verifying}
+                referrerPolicy="no-referrer"
+                fallback={<UserRound className="text-muted-foreground h-5 w-5" />}
+                className="size-full rounded-full"
+              />
             </Avatar>
             <div className="min-w-0 flex-1 space-y-1">
               {loggedIn ? (

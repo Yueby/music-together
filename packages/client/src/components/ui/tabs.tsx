@@ -23,6 +23,8 @@ const tabsListVariants = cva(
       variant: {
         default: 'bg-muted',
         line: 'gap-1 bg-transparent',
+        // Plain navigation: no box around it, the selected item is a soft highlight (settings, search types).
+        nav: 'h-auto! gap-1 rounded-none bg-transparent p-0',
       },
     },
     defaultVariants: {
@@ -54,6 +56,10 @@ function TabsTrigger({ className, ...props }: React.ComponentProps<typeof TabsPr
         "focus-visible:border-ring focus-visible:ring-ring/50 focus-visible:outline-ring text-muted-foreground hover:text-foreground relative inline-flex h-[calc(100%-1px)] flex-1 items-center justify-center gap-1.5 rounded-md border border-transparent px-2 py-1 text-sm font-medium whitespace-nowrap transition-all group-data-[orientation=vertical]/tabs:w-full group-data-[orientation=vertical]/tabs:justify-start focus-visible:ring-[3px] focus-visible:outline-1 disabled:pointer-events-none disabled:opacity-50 group-data-[variant=default]/tabs-list:data-[state=active]:shadow-sm group-data-[variant=line]/tabs-list:data-[state=active]:shadow-none [&_svg]:pointer-events-none [&_svg]:shrink-0 [&_svg:not([class*='size-'])]:size-4",
         'group-data-[variant=line]/tabs-list:bg-transparent group-data-[variant=line]/tabs-list:data-[state=active]:bg-transparent group-data-[variant=line]/tabs-list:data-[state=active]:border-transparent',
         'data-[state=active]:text-foreground data-[state=active]:border-input data-[state=active]:bg-input/30',
+        // A percentage height has no definite parent to resolve against in a column list that sizes to its content.
+        'group-data-[orientation=vertical]/tabs:h-9 group-data-[orientation=vertical]/tabs:flex-none',
+        'group-data-[variant=nav]/tabs-list:h-auto! group-data-[variant=nav]/tabs-list:flex-none group-data-[variant=nav]/tabs-list:px-3 group-data-[variant=nav]/tabs-list:py-1.5',
+        'group-data-[variant=nav]/tabs-list:hover:bg-accent/50 group-data-[variant=nav]/tabs-list:data-[state=active]:bg-accent group-data-[variant=nav]/tabs-list:data-[state=active]:text-accent-foreground group-data-[variant=nav]/tabs-list:data-[state=active]:border-transparent group-data-[variant=nav]/tabs-list:data-[state=active]:shadow-none',
         'after:bg-foreground after:absolute after:opacity-0 after:transition-opacity group-data-[orientation=horizontal]/tabs:after:inset-x-0 group-data-[orientation=horizontal]/tabs:after:bottom-[-5px] group-data-[orientation=horizontal]/tabs:after:h-0.5 group-data-[orientation=vertical]/tabs:after:inset-y-0 group-data-[orientation=vertical]/tabs:after:-right-1 group-data-[orientation=vertical]/tabs:after:w-0.5 group-data-[variant=line]/tabs-list:data-[state=active]:after:opacity-100',
         className,
       )}

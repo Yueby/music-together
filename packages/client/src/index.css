@@ -1,6 +1,9 @@
 @import 'tailwindcss';
 @import 'tw-animate-css';
 @import 'shadcn/tailwind.css';
+/* sonner otherwise injects these rules through a runtime <style> element, which the mini-app sandbox's CSP blocks
+   (toasts then render unstyled in the bottom-left corner). Shipping them in the stylesheet works everywhere. */
+@import 'sonner/dist/styles.css';
 
 /* Fonts are loaded via <link> in index.html */
 

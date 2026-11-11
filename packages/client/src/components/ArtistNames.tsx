@@ -37,6 +37,8 @@ export function ArtistNames({ track, onUnsupportedClick, className }: ArtistName
                 className={cn(
                   'relative inline h-auto p-0 align-baseline text-[length:inherit] font-[inherit] text-inherit',
                   'hover:text-foreground pointer-coarse:after:absolute pointer-coarse:after:-inset-x-1 pointer-coarse:after:-inset-y-2.5',
+                  // The line truncates (clips), which would cut a focus ring off: show focus as an underline instead.
+                  'focus-visible:text-foreground focus-visible:underline focus-visible:ring-0',
                   className,
                 )}
                 onClick={(event) => {

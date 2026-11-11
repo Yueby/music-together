@@ -9,7 +9,7 @@ const loader = vi.hoisted(() => ({
 }))
 vi.mock('@/lib/artwork', () => ({ artworkLoader: loader }))
 
-import { useArtworkUrl } from './useArtworkUrl'
+import { useArtwork, useArtworkUrl } from './useArtworkUrl'
 
 const deferred = <T,>() => {
   let resolve!: (value: T) => void
@@ -161,5 +161,50 @@ describe('useArtworkUrl (host that reads the bytes)', () => {
     loader.load.mockClear()
     render(undefined)
     expect(loader.load).not.toHaveBeenCalled()
+  })
+})
+
+describe('useArtwork (whether it gave up)', () => {
+  function FailedProbe({ url }: { url?: string }) {
+    const { src, failed } = useArtwork(url)
+    return <span>{`${src ?? 'none'}|${failed ? 'failed' : 'ok'}`}</span>
+  }
+  const renderFailed = (url?: string) => act(() => root.render(<FailedProbe url={url} />))
+
+  beforeEach(() => {
+    loader.direct = false
+  })
+
+  it('is not failed while loading or retrying, and becomes failed after the last attempt', async () => {
+    vi.useFakeTimers()
+    try {
+      loader.load.mockRejectedValue(new Error('ARTWORK_REQUEST_FAILED'))
+      renderFailed('https://example.com/a.jpg')
+      expect(text()).toBe('none|ok')
+      await act(async () => {})
+      expect(text()).toBe('none|ok') // the retry is still to come
+      await act(async () => vi.advanceTimersByTimeAsync(2_500))
+      expect(text()).toBe('none|failed')
+    } finally {
+      vi.useRealTimers()
+    }
+  })
+
+  it('does not carry a failure over to the next URL, and is never failed on the web', async () => {
+    vi.useFakeTimers()
+    try {
+      loader.load.mockRejectedValueOnce(new Error('x')).mockRejectedValueOnce(new Error('x'))
+      renderFailed('https://example.com/a.jpg')
+      await act(async () => vi.advanceTimersByTimeAsync(2_500))
+      expect(text()).toBe('none|failed')
+      loader.load.mockReturnValue(new Promise(() => {}))
+      renderFailed('https://example.com/b.jpg')
+      expect(text()).toBe('none|ok')
+      loader.direct = true
+      renderFailed('https://example.com/c.jpg')
+      expect(text()).toBe('https://example.com/c.jpg|ok')
+    } finally {
+      vi.useRealTimers()
+    }
   })
 })

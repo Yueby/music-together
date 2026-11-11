@@ -15,4 +15,11 @@ describe('client stylesheet workspace source contract', () => {
     const webCss = await readFile(new URL('../../client/src/index.css', cssUrl), 'utf8')
     expect(webCss).not.toContain("@source '../../client/src'")
   })
+
+  // The sandbox's CSP only allows stylesheets that ship with the package. sonner injects its rules at runtime through a
+  // <style> element, which that CSP blocks: toasts then appear unstyled in the bottom-left corner of the page.
+  it('ships the toast styles in the stylesheet instead of relying on sonner injecting them', async () => {
+    const webCss = await readFile(new URL('../../client/src/index.css', import.meta.url), 'utf8')
+    expect(webCss).toMatch(/@import\s+['"]sonner\/dist\/styles\.css['"]/)
+  })
 })

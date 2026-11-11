@@ -1,5 +1,5 @@
+import { ArtworkImage } from '@/components/ArtworkImage'
 import { Button } from '@/components/ui/button'
-import { useArtworkUrl } from '@/hooks/useArtworkUrl'
 import { useInView } from '@/hooks/useInView'
 import { cn } from '@/lib/utils'
 import type { ReactNode } from 'react'
@@ -7,7 +7,7 @@ import type { ReactNode } from 'react'
 interface CollectionRowProps {
   title: string
   subtitle?: string
-  /** Artwork URL. Hosts that cannot show remote images read the bytes through their own loader (`useArtworkUrl`). */
+  /** Artwork URL. Hosts that cannot show remote images read the bytes through their own loader (`ArtworkImage` handles both). */
   cover?: string
   /** Placeholder shown until (or without) artwork. */
   fallback: ReactNode
@@ -21,7 +21,6 @@ interface CollectionRowProps {
 export function CollectionRow({ title, subtitle, cover, fallback, round, onClick, disabled }: CollectionRowProps) {
   // A long result list must not fetch every cover at once: only the rows about to be scrolled to do.
   const [inViewRef, visible] = useInView<HTMLButtonElement>()
-  const src = useArtworkUrl(visible ? cover : undefined)
   const shape = round ? 'rounded-full' : 'rounded-md'
   return (
     <Button
@@ -31,11 +30,7 @@ export function CollectionRow({ title, subtitle, cover, fallback, round, onClick
       onClick={onClick}
       disabled={disabled}
     >
-      {src ? (
-        <img src={src} alt={title} className={cn('size-12 shrink-0 object-cover', shape)} decoding="async" />
-      ) : (
-        <div className={cn('bg-muted flex size-12 shrink-0 items-center justify-center', shape)}>{fallback}</div>
-      )}
+      <ArtworkImage cover={cover} load={visible} alt={title} fallback={fallback} className={cn('size-12', shape)} />
       <div className="min-w-0 flex-1">
         <p className="truncate text-sm font-medium">{title}</p>
         {subtitle ? <p className="text-muted-foreground truncate text-xs">{subtitle}</p> : null}

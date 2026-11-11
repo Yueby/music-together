@@ -1,9 +1,9 @@
-import { Avatar, AvatarFallback, AvatarImage } from '@/components/ui/avatar'
+import { ArtworkImage } from '@/components/ArtworkImage'
 import { Button } from '@/components/ui/button'
 import { Skeleton } from '@/components/ui/skeleton'
 import { Tabs, TabsList, TabsTrigger } from '@/components/ui/tabs'
-import { useArtworkUrl } from '@/hooks/useArtworkUrl'
 import type { ArtistLoadError } from '@/hooks/useArtist'
+import { CLIPPING_PANE } from '@/lib/utils'
 import type { Artist, Playlist, Track } from '@music-together/shared'
 import { ArrowLeft, Disc3, Loader2, User } from 'lucide-react'
 import { useState } from 'react'
@@ -39,7 +39,6 @@ interface ArtistDetailProps {
 
 function ArtistHeader({ artist, loading }: { artist: Artist | null; loading: boolean }) {
   const [expanded, setExpanded] = useState(false)
-  const avatar = useArtworkUrl(artist?.thumbnailCover ?? artist?.cover)
   const description = artist?.description
   const counts = [
     artist?.songCount != null ? `${artist.songCount} 首歌曲` : null,
@@ -47,12 +46,13 @@ function ArtistHeader({ artist, loading }: { artist: Artist | null; loading: boo
   ].filter(Boolean)
   return (
     <div className="flex shrink-0 gap-3 py-2">
-      <Avatar className="size-14 sm:size-16">
-        {avatar ? <AvatarImage src={avatar} alt={artist?.name} /> : null}
-        <AvatarFallback>
-          <User className="h-6 w-6" />
-        </AvatarFallback>
-      </Avatar>
+      <ArtworkImage
+        cover={artist?.thumbnailCover ?? artist?.cover}
+        pending={loading && !artist}
+        alt={artist?.name}
+        fallback={<User className="text-muted-foreground h-6 w-6" />}
+        className="size-14 rounded-full sm:size-16"
+      />
       <div className="min-w-0 flex-1 space-y-1">
         {artist ? (
           <>
@@ -106,7 +106,7 @@ export function ArtistDetail({
   const [tab, setTab] = useState<'songs' | 'albums'>('songs')
 
   return (
-    <div className="flex min-h-0 min-w-0 flex-1 flex-col overflow-hidden">
+    <div className={CLIPPING_PANE}>
       {/* Back + title — pr-8 reserves space for dialog close button */}
       <div className="flex shrink-0 items-center gap-2 pr-8">
         <Button variant="ghost" size="icon" onClick={onBack} className="h-8 w-8 shrink-0" aria-label="返回">

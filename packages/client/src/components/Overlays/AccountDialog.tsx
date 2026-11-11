@@ -54,9 +54,7 @@ function AccountDialogBody() {
             logout={session.logout}
           />
         </div>
-        <ResponsiveDialogDescription className="sr-only sm:not-sr-only">
-          登录音乐平台账号，用于 VIP 歌曲播放和导入自己的歌单
-        </ResponsiveDialogDescription>
+        <ResponsiveDialogDescription className="sr-only">管理音乐平台账号和歌单</ResponsiveDialogDescription>
       </ResponsiveDialogHeader>
       {/* The lists virtualize their own scrolling, so this area must not scroll itself. */}
       <div className="flex min-h-0 min-w-0 flex-1 flex-col overflow-hidden p-4 sm:p-6">

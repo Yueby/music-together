@@ -69,7 +69,7 @@ function ArtistPage({ target, onClose }: { target: ArtistTarget; onClose: () => 
         </ResponsiveDialogTitle>
         <ResponsiveDialogDescription className="sr-only">歌手的热门歌曲和专辑</ResponsiveDialogDescription>
       </ResponsiveDialogHeader>
-      <ResponsiveDialogBody className="flex min-h-0 flex-1 flex-col overflow-hidden">
+      <ResponsiveDialogBody className="-mt-1 flex min-h-0 flex-1 flex-col pt-1">
         {album ? (
           <PlaylistDetail
             playlist={album}

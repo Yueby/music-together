@@ -11,6 +11,7 @@ import { Tabs, TabsList, TabsTrigger } from '@/components/ui/tabs'
 import { VirtualTrackList, type VirtualTrackListRef } from '@/components/VirtualTrackList'
 import { PlatformSelect } from '@/components/PlatformSelect'
 import { hasArtistPages } from '@/lib/artistLink'
+import { cn } from '@/lib/utils'
 import { openArtistPage } from '@/stores/artistPageStore'
 import { useSearch, type SearchType } from '@/hooks/useSearch'
 import { usePlaylist } from '@/hooks/usePlaylist'
@@ -55,6 +56,12 @@ export function SearchDialog({ open, onOpenChange, onAddToQueue, onInsertAfterCu
     source,
     searchType,
   )
+
+  // Compact until something has been searched or opened, then as tall as the other dialogs. Both heights are fixed
+  // lengths so the change animates; it stays tall afterwards (switching the type clears the results, which must not
+  // shrink the dialog just to grow it again).
+  const [expanded, setExpanded] = useState(false)
+  if ((hasSearched || selectedAlbum) && !expanded) setExpanded(true)
 
   // Auto re-search when source or type changes
   const prevSourceRef = useRef(source)
@@ -124,7 +131,12 @@ export function SearchDialog({ open, onOpenChange, onAddToQueue, onInsertAfterCu
 
   return (
     <ResponsiveDialog open={open} onOpenChange={onOpenChange}>
-      <ResponsiveDialogContent className="flex h-[70vh] flex-col overflow-hidden sm:h-auto sm:max-h-[80vh] sm:max-w-2xl">
+      <ResponsiveDialogContent
+        className={cn(
+          'flex h-[70vh] flex-col overflow-hidden transition-[height] [transition-duration:300ms] motion-reduce:transition-none sm:max-h-[80vh] sm:max-w-2xl',
+          expanded ? 'sm:h-[70vh]' : 'sm:h-[24.5rem]',
+        )}
+      >
         <ResponsiveDialogHeader>
           <div className="flex items-center justify-between gap-3 pr-8">
             <ResponsiveDialogTitle className="min-w-0 truncate">
@@ -134,7 +146,8 @@ export function SearchDialog({ open, onOpenChange, onAddToQueue, onInsertAfterCu
           </div>
         </ResponsiveDialogHeader>
 
-        <ResponsiveDialogBody className="flex min-h-0 flex-1 flex-col gap-4 overflow-hidden">
+        {/* No clipping here and a little room on top: the focus ring of the input, button and tabs is drawn outside them */}
+        <ResponsiveDialogBody className="-mt-1 flex min-h-0 flex-1 flex-col gap-4 pt-1">
           {selectedAlbum ? (
             <PlaylistDetail
               playlist={selectedAlbum}
@@ -151,32 +164,6 @@ export function SearchDialog({ open, onOpenChange, onAddToQueue, onInsertAfterCu
             />
           ) : (
             <>
-              {/* Type tabs */}
-              <Tabs
-                value={searchType}
-                onValueChange={(v) => {
-                  setSearchType(v as SearchType)
-                  resetState()
-                }}
-              >
-                <TabsList className="w-full">
-                  <TabsTrigger value="song" className="flex-1 text-xs sm:text-sm">
-                    单曲
-                  </TabsTrigger>
-                  {supportsArtists && (
-                    <TabsTrigger value="artist" className="flex-1 text-xs sm:text-sm">
-                      歌手
-                    </TabsTrigger>
-                  )}
-                  <TabsTrigger value="album" className="flex-1 text-xs sm:text-sm">
-                    专辑
-                  </TabsTrigger>
-                  <TabsTrigger value="playlist" className="flex-1 text-xs sm:text-sm">
-                    歌单
-                  </TabsTrigger>
-                </TabsList>
-              </Tabs>
-
               {/* Search input */}
               <div className="flex gap-2">
                 <Input
@@ -200,6 +187,22 @@ export function SearchDialog({ open, onOpenChange, onAddToQueue, onInsertAfterCu
                   {loading ? <Loader2 className="h-4 w-4 animate-spin" /> : <Search className="h-4 w-4" />}
                 </Button>
               </div>
+
+              {/* What to search for: a filter of the results below, so it sits between the input and them */}
+              <Tabs
+                value={searchType}
+                onValueChange={(v) => {
+                  setSearchType(v as SearchType)
+                  resetState()
+                }}
+              >
+                <TabsList variant="nav" aria-label="搜索类型" className="w-full justify-start">
+                  <TabsTrigger value="song">单曲</TabsTrigger>
+                  {supportsArtists && <TabsTrigger value="artist">歌手</TabsTrigger>}
+                  <TabsTrigger value="album">专辑</TabsTrigger>
+                  <TabsTrigger value="playlist">歌单</TabsTrigger>
+                </TabsList>
+              </Tabs>
 
               {/* Results area — virtual scrolling with auto-load */}
               {hasSearched ? (
