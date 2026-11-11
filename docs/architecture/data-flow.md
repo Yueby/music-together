@@ -258,6 +258,22 @@ Conductor（当前 `hostId` 对应用户）**自适应频率**上报当前播放
 - 三个平台统一接收 bitrate 参数。网易云登录态由 `neteasePlayback.ts` 映射到正常 `song_url_v1` 的 level，匿名网易云和其他平台保持 Meting 路径。登录态先合并并发的官方公钥握手、校验密钥并以 0600 文件原子更新 SDK 缓存，再验证播放响应的业务码、曲目与完整播放权益；HTTPS 链接通过限定域名、有界 Range 音频头检查后才下发。失败返回空值供既有降级逻辑处理；Cookie、密钥、完整签名链接及原始错误对象不进入日志。
 - `musicProvider.streamUrlCache` 的 key 包含 bitrate，不同音质自动隔离缓存。网易云已知 `music.126.net` CDN 路径时间按 UTC+8 严格解析为到期时间，预留 30s 获取/调度余量；缓存不得超过有效期，未知期限使用 5min，Cookie 请求继续不缓存。已过期的缓存或上游链接不会下发。
 
+## 客户端来的曲目不被信任
+
+成员发来的曲目只是对一首歌的描述，服务端不原样采用：
+
+- **入队（`queue:add` / `queue:insert_after_current` / `queue:add_batch`）**经 `incomingTracks.sanitizeIncomingTracks`：丢掉随曲目带来的 `streamUrl`（播放链接只由服务端解析填充，否则任何成员都能让全房间去请求自己指定的地址）；封面和缩略图只留 https（已知音乐 CDN 的 `http://` 自动升级，其余丢弃）；队列里已有的 `id`（或同一批里重复的）换成新的 nanoid，队列项 `id` 因此始终唯一，移除/重排/"下一首"不会串
+- **`player:play`** 带曲目时只认 `track.id`（`playerPlaySchema`）：服务端用队列里同 id 的那一项播放，不在队列里就忽略；不带 payload 表示播放/继续当前曲目
+- 房间设置：密码不能是空字符串（`null` 才是移除密码），房间名、昵称先 `trim` 再校验
+- 进程级 `uncaughtException` / `unhandledRejection` 只记日志不退出：所有房间都在这一个进程的内存里，不能因为某个定时器或 handler 的意外错误让全部房间一起断线
+
+## 歌单缓存
+
+`MusicProvider.fetchFullPlaylist` 读完整个歌单后把 id 列表缓存（按平台 + 歌单 id + 类型 + 账号 Cookie 哈希区分，30 分钟），翻页都从缓存取：
+
+- 歌单总数**不取自调用方**：`/api/music/playlist` 的 `total` 查询参数仍被接受（请求契约不变）但不参与抓取，列表一直读到"短页"为止；客户端传的偏小的 `total` 不会再把截断的列表缓存给所有人
+- 抓取器（`playlistFetchers`）返回 `{ tracks, complete }`：翻页中途超时/失败（网易云超时、酷狗/QQ 在已知总数之前遇到空页）时 `complete: false`，已读到的部分照常展示，但**不写入缓存**，下次请求重新读取
+
 ## 队列清空
 
 - Owner/Admin 可通过播放列表抽屉的「清空」按钮（`ListX` 图标）一次性清空队列

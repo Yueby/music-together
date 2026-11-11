@@ -214,6 +214,77 @@ describe('QQ Music', () => {
   })
 })
 
+describe('a size the caller claims, and a list that is cut short', () => {
+  it('does not stop reading at the size the caller claims', async () => {
+    const id = fresh()
+    ncm.playlist_track_all
+      .mockResolvedValueOnce({ body: { songs: neteaseSongs(1, 1000) } })
+      .mockResolvedValueOnce({ body: { songs: neteaseSongs(1001, 500) } })
+    // `total` arrives in the query string: a small claim must not shorten what is read, or what is remembered for everybody
+    const page = await musicProvider.getPlaylistPage('netease', id, 10, 0, 5)
+    expect(ncm.playlist_track_all).toHaveBeenCalledTimes(2)
+    expect(page.total).toBe(1500)
+    const again = await musicProvider.getPlaylistPage('netease', id, 10, 0)
+    expect(again.total).toBe(1500)
+  })
+
+  it('reads on after a full last chunk, to find the list has ended', async () => {
+    ncm.playlist_track_all
+      .mockResolvedValueOnce({ body: { songs: neteaseSongs(1, 1000) } })
+      .mockResolvedValueOnce({ body: { songs: [] } })
+    const page = await musicProvider.getPlaylistPage('netease', fresh(), 10, 0)
+    expect(page.total).toBe(1000)
+    expect(ncm.playlist_track_all).toHaveBeenCalledTimes(2)
+  })
+
+  it('shows what was read of a list that timed out, but reads it again next time', async () => {
+    const id = fresh()
+    ncm.playlist_track_all
+      .mockResolvedValueOnce({ body: { songs: neteaseSongs(1, 1000) } })
+      .mockRejectedValueOnce(new Error('offline'))
+    const first = await musicProvider.getPlaylistPage('netease', id, 10, 0)
+    expect(first.total).toBe(1000)
+
+    ncm.playlist_track_all
+      .mockResolvedValueOnce({ body: { songs: neteaseSongs(1, 1000) } })
+      .mockResolvedValueOnce({ body: { songs: neteaseSongs(1001, 500) } })
+    const second = await musicProvider.getPlaylistPage('netease', id, 10, 0)
+    expect(second.total).toBe(1500)
+  })
+
+  it('reads a Kugou list to the end when the API does not say how long it is', async () => {
+    kugou.getPlaylistTracks
+      .mockResolvedValueOnce({ songs: kugouSongs(1, 300), total: 0 })
+      .mockResolvedValueOnce({ songs: kugouSongs(301, 20), total: 0 })
+    const page = await musicProvider.getPlaylistPage('kugou', fresh(), 10, 0)
+    expect(page.total).toBe(320)
+  })
+
+  it('does not remember a QQ list whose page failed half way', async () => {
+    const id = fresh()
+    tencent.getPlaylistTracks
+      .mockResolvedValueOnce({ songs: tencentSongs(1, 100), total: 250 })
+      .mockResolvedValueOnce({ songs: [], total: 0 }) // the native call answers a failure like this
+    const first = await musicProvider.getPlaylistPage('tencent', id, 10, 0)
+    expect(first.total).toBe(100)
+
+    tencent.getPlaylistTracks
+      .mockResolvedValueOnce({ songs: tencentSongs(1, 100), total: 250 })
+      .mockResolvedValueOnce({ songs: tencentSongs(101, 100), total: 250 })
+      .mockResolvedValueOnce({ songs: tencentSongs(201, 50), total: 250 })
+    const second = await musicProvider.getPlaylistPage('tencent', id, 10, 0)
+    expect(second.total).toBe(250)
+  })
+
+  it('remembers a list that was read to its end', async () => {
+    const id = fresh()
+    tencent.getPlaylistTracks.mockResolvedValue({ songs: tencentSongs(1, 30), total: 30 })
+    await musicProvider.getPlaylistPage('tencent', id, 10, 0)
+    await musicProvider.getPlaylistPage('tencent', id, 10, 10)
+    expect(tencent.getPlaylistTracks).toHaveBeenCalledTimes(1)
+  })
+})
+
 describe('Meting answers it cannot use', () => {
   it.each([
     ['unparseable text', 'not json'],
