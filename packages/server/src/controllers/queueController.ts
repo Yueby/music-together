@@ -7,11 +7,11 @@ import {
   queueRemoveSchema,
   queueReorderSchema,
 } from '@music-together/shared'
-import type { Track } from '@music-together/shared'
 import type { TypedServer, TypedSocket } from '../middleware/types.js'
 import { createWithPermission } from '../middleware/withControl.js'
 import { checkSocketRateLimit } from '../middleware/socketRateLimiter.js'
 import * as chatService from '../services/chatService.js'
+import { sanitizeIncomingTracks } from '../services/incomingTracks.js'
 import * as playerService from '../services/playerService.js'
 import * as queueService from '../services/queueService.js'
 import { logger } from '../utils/logger.js'
@@ -28,7 +28,7 @@ export function registerQueueController(io: TypedServer, socket: TypedSocket) {
         socket.emit(EVENTS.ROOM_ERROR, { code: ERROR_CODE.INVALID_DATA, message: '无效的歌曲数据' })
         return
       }
-      const track: Track = { ...parsed.data.track, requestedBy: ctx.user.nickname }
+      const [track] = sanitizeIncomingTracks(ctx.roomId, [parsed.data.track], ctx.user.nickname)
 
       const added = queueService.addTrack(ctx.roomId, track)
       if (!added) {
@@ -61,7 +61,7 @@ export function registerQueueController(io: TypedServer, socket: TypedSocket) {
         socket.emit(EVENTS.ROOM_ERROR, { code: ERROR_CODE.INVALID_DATA, message: '无效的歌曲数据' })
         return
       }
-      const track: Track = { ...parsed.data.track, requestedBy: ctx.user.nickname }
+      const [track] = sanitizeIncomingTracks(ctx.roomId, [parsed.data.track], ctx.user.nickname)
 
       const added = queueService.insertAfterCurrent(ctx.roomId, track)
       if (!added) {
@@ -92,7 +92,7 @@ export function registerQueueController(io: TypedServer, socket: TypedSocket) {
         return
       }
       const { tracks: rawTracks, playlistName } = parsed.data
-      const tracks: Track[] = rawTracks.map((t) => ({ ...t, requestedBy: ctx.user.nickname }))
+      const tracks = sanitizeIncomingTracks(ctx.roomId, rawTracks, ctx.user.nickname)
 
       const addedCount = queueService.addBatchTracks(ctx.roomId, tracks)
       if (addedCount === 0) {

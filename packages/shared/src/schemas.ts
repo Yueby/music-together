@@ -9,14 +9,14 @@ export const roomIdSchema = z.string().regex(ROOM_ID_PATTERN)
 // ---------------------------------------------------------------------------
 
 export const roomCreateSchema = z.object({
-  nickname: z.string().min(1, '昵称不能为空').max(LIMITS.NICKNAME_MAX_LENGTH, '昵称过长'),
+  nickname: z.string().trim().min(1, '昵称不能为空').max(LIMITS.NICKNAME_MAX_LENGTH, '昵称过长'),
   roomName: z.string().max(LIMITS.ROOM_NAME_MAX_LENGTH, '房间名过长').optional(),
   password: z.string().max(LIMITS.ROOM_PASSWORD_MAX_LENGTH, '密码过长').optional(),
 })
 
 export const roomJoinSchema = z.object({
   roomId: roomIdSchema,
-  nickname: z.string().min(1, '昵称不能为空').max(LIMITS.NICKNAME_MAX_LENGTH, '昵称过长'),
+  nickname: z.string().trim().min(1, '昵称不能为空').max(LIMITS.NICKNAME_MAX_LENGTH, '昵称过长'),
   password: z.string().max(LIMITS.ROOM_PASSWORD_MAX_LENGTH).optional(),
   rejoinToken: z.string().min(1).max(500).optional(),
 })
@@ -26,8 +26,9 @@ export const audioQualitySchema = z.union([z.literal(128), z.literal(192), z.lit
 export const queueModeSchema = z.enum(['keep', 'consume'])
 
 export const roomSettingsSchema = z.object({
-  name: z.string().min(1).max(LIMITS.ROOM_NAME_MAX_LENGTH).optional(),
-  password: z.string().max(LIMITS.ROOM_PASSWORD_MAX_LENGTH).nullable().optional(),
+  name: z.string().trim().min(1).max(LIMITS.ROOM_NAME_MAX_LENGTH).optional(),
+  // null removes the password; an empty string would lock everyone out (it counts as "has a password" yet matches nothing)
+  password: z.string().min(1).max(LIMITS.ROOM_PASSWORD_MAX_LENGTH).nullable().optional(),
   audioQuality: audioQualitySchema.optional(),
   queueMode: queueModeSchema.optional(),
 })
@@ -75,13 +76,14 @@ export const playerSetModeSchema = z.object({
 // ---------------------------------------------------------------------------
 
 const trackSchema = z.object({
-  id: z.string().max(200),
+  id: z.string().min(1).max(200),
   title: z.string().max(500),
   artist: z.array(z.string().max(200)).max(20),
   artistIds: z.array(z.string().max(30)).max(20).optional(),
   album: z.string().max(500),
   duration: z.number().finite().nonnegative(),
   cover: z.string().max(2000),
+  thumbnailCover: z.string().max(2000).optional(),
   source: z.enum(MUSIC_SOURCES),
   sourceId: z.string().max(200),
   urlId: z.string().max(200),
@@ -103,6 +105,11 @@ export const queueAddBatchSchema = z.object({
 })
 
 export const queueRemoveSchema = z.object({ trackId: z.string().max(200) })
+/**
+ * PLAYER_PLAY: with no payload, play/resume what is loaded. With a track, only its `id` counts: the server plays the
+ * queue's own entry with that id, never an object the client made up.
+ */
+export const playerPlaySchema = z.object({ track: z.object({ id: z.string().min(1).max(200) }).optional() }).optional()
 export const queueReorderSchema = z.object({
   trackIds: z.array(z.string().max(200)).max(LIMITS.QUEUE_MAX_SIZE),
 })
@@ -241,11 +248,17 @@ const voteWithoutPayloadSchema = z.object({
   payload: z.undefined().optional(),
 })
 
+/** The track a vote is about. The title is only there for the vote banner everyone sees ("播放「…」"). */
+const votedTrackSchema = z.object({
+  trackId: z.string().min(1).max(200),
+  trackTitle: z.string().max(500).optional(),
+})
+
 export const voteStartSchema = z.discriminatedUnion('action', [
   voteWithoutPayloadSchema,
   z.object({ action: z.literal('set-mode'), payload: playerSetModeSchema }),
-  z.object({ action: z.literal('play-track'), payload: z.object({ trackId: z.string().min(1).max(200) }) }),
-  z.object({ action: z.literal('remove-track'), payload: z.object({ trackId: z.string().min(1).max(200) }) }),
+  z.object({ action: z.literal('play-track'), payload: votedTrackSchema }),
+  z.object({ action: z.literal('remove-track'), payload: votedTrackSchema }),
 ])
 
 export const voteCastSchema = z.object({

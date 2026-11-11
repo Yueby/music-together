@@ -167,3 +167,12 @@ function shutdown(signal: string) {
 
 process.on('SIGTERM', () => shutdown('SIGTERM'))
 process.on('SIGINT', () => shutdown('SIGINT'))
+
+// All rooms live in this one process's memory: a stray error in a timer or a socket handler must be logged, not take
+// every room down with it.
+process.on('uncaughtException', (error) => {
+  logger.error('Uncaught exception', error)
+})
+process.on('unhandledRejection', (reason) => {
+  logger.error('Unhandled rejection', reason)
+})

@@ -1,4 +1,4 @@
-import { EVENTS, ERROR_CODE, defineAbilityFor, playerSeekSchema, playerSetModeSchema, playerSyncSchema } from '@music-together/shared'
+import { EVENTS, ERROR_CODE, defineAbilityFor, playerPlaySchema, playerSeekSchema, playerSetModeSchema, playerSyncSchema } from '@music-together/shared'
 import type { TypedServer, TypedSocket } from '../middleware/types.js'
 import { createWithPermission } from '../middleware/withControl.js'
 import { createWithRoom } from '../middleware/withRoom.js'
@@ -15,13 +15,23 @@ export function registerPlayerController(io: TypedServer, socket: TypedSocket) {
 
   socket.on(
     EVENTS.PLAYER_PLAY,
-    withPermission('play', 'Player', async (ctx, data) => {
+    withPermission('play', 'Player', async (ctx, raw) => {
       if (!(await checkSocketRateLimit(ctx.socket))) return
-      const track = data?.track ?? ctx.room.currentTrack ?? ctx.room.queue[0]
+      const parsed = playerPlaySchema.safeParse(raw ?? undefined)
+      if (!parsed.success) {
+        ctx.socket.emit(EVENTS.ROOM_ERROR, { code: ERROR_CODE.INVALID_DATA, message: '无效的播放请求' })
+        return
+      }
+      const data = parsed.data
+      // A requested track is looked up in the queue by id; what the client says about it beyond that is not used.
+      const requestedId = data?.track?.id
+      const requested = requestedId ? ctx.room.queue.find((t) => t.id === requestedId) : undefined
+      if (requestedId && !requested) return
+      const track = requested ?? ctx.room.currentTrack ?? ctx.room.queue[0]
       if (!track) return
 
       // Resume: same track already loaded and has stream URL → keep position
-      if (!data?.track && ctx.room.currentTrack?.id === track.id && ctx.room.currentTrack?.streamUrl) {
+      if (!requested &&ctx.room.currentTrack?.id === track.id && ctx.room.currentTrack?.streamUrl) {
         playerService.resumeTrack(ctx.io, ctx.roomId, ctx.socket)
         return
       }
