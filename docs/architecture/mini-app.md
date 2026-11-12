@@ -26,7 +26,7 @@
 
 ## SDK 版本与官方能力核查
 
-开发树固定官方 SDK **0.3.0**，原样来源为平台已登录开发者页面所链接的 `linux-do/mapp-developer-guide` 提交 `f22f6e5247be95684a183c41b392ce468bc09785`，来源记录见 `vendor/README.md`。2026-11-10 核对上游最新提交 `7792ce37`：版本号仍为 0.3.0，仅增量新增应用间跳转 `app.call/return`、`app.call` 权限与 manifest `calls`，本项目未使用，因此未升级。类型和版本号不能代替现场能力检查。
+开发树固定官方 SDK **0.3.0**，原样来源为平台已登录开发者页面所链接的 `linux-do/mapp-developer-guide` 提交 `ae0b523297a8c25314304f2cd92270badc0ac629`，来源记录见 `vendor/README.md`。该提交的版本号仍为 0.3.0，相对此前固定的 `f22f6e52` 仅增量新增应用间跳转 `app.call/return`、通知申请 `notifications.request` 及其 `app.call`/`notifications` 权限，manifest 新增 `calls`、`notifications`、`tags`；运行时入口（`index.mjs`、`server.mjs`、媒体与网络工具）逐字未变，仅打包器 `pack.mjs` 随之更新，本项目均未使用新增能力。类型和版本号不能代替现场能力检查。
 
 | 边界 | 官方 SDK 0.3.0 的公开契约 | 集成要求 |
 | --- | --- | --- |

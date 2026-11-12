@@ -38,6 +38,8 @@ try {
 | `network.websocket`                        | `webSocket.connect(endpointName, options)`                               |
 | `assets.remote`                            | `assets.readBytes/readText/readJson(path)` 读取声明的 CDN 素材           |
 | `links.open`                               | `links.open(url)`                                                        |
+| `app.call`                                 | `app.call(appId, query?, options?)`                                      |
+| `notifications`                            | `notifications.request(templateId, request, options?)`                  |
 | `files.save`                               | `files.save(name, data)`                                                 |
 | `sharing.share`                            | `sharing.share(data)`                                                    |
 | `screen.keepAwake`                         | `screen.setKeepAwake(enabled)`                                           |
@@ -71,6 +73,10 @@ const unsubscribe = sdk.theme.onChange(({ locale }) => updateLanguage(locale));
 `links.open(url)` 仅接受 manifest `links` 数组中的完整 URL；query、fragment 也须一致。无声明的旧版本同样不可打开外链。完整示例见[外链声明](../docs/browser-capabilities.md#外链文件与分享)。
 
 更多能力：[外链、文件、分享、常亮、手柄与存档备份](../docs/browser-capabilities.md) · [分包、ESM 与 Worker](../docs/execution.md) · [网络恢复与分片上传](../docs/network-recovery.md) · [分片视频与画中画](../docs/segmented-media.md) · [直播、清晰度、音轨与跳转](../docs/media-timelines.md) · [设备访问](../docs/device-access.md) · [AudioWorklet](../docs/audio-worklet.md)。
+
+应用间同页跳转使用 [`app.call/return`](../docs/app-navigation.md)：manifest `calls` 只声明目标应用 ID，query 可动态传入；返回只允许当前调用栈中的祖先，无需额外声明。每次跳转都重新启动目标应用，返回数据从启动参数读取，不跨页面等待原 Promise。
+
+[`notifications.request()`](../docs/notifications.md) 在用户操作时申请下一次模板通知。前端提醒限 24 小时，后台许可限 30 天、仅用一次；每次都需用户同意。通知以论坛私信送达，用户可在应用信息中关闭。
 
 分片播放 `video.playSegments` 同时需要 `video.play` 与 `assets.remote`；画中画沿用 `video.play`。`network.reconnectSocket/reconnectEvents/uploadChunks` 复用底层网络权限，不新增业务权限。
 
