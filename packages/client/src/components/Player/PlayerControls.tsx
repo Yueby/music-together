@@ -195,23 +195,29 @@ export const PlayerControls = memo(function PlayerControls({
 
           {/* Center: prev + play/pause + next */}
           <div className="flex items-center gap-2">
-            <Tooltip delayDuration={300}>
-              <TooltipTrigger asChild>
-                <motion.div whileTap={{ scale: 0.9 }}>
-                  <Button
-                    variant="ghost"
-                    size="icon"
-                    className="h-9 w-9 text-white/70 hover:bg-white/10"
-                    disabled={disabled || skipCooldown === 'prev'}
-                    onClick={() => handleSkip(onPrev, 'prev')}
-                    aria-label="上一首"
-                  >
-                    <SkipBack className="size-5" fill="currentColor" />
-                  </Button>
-                </motion.div>
-              </TooltipTrigger>
-              <TooltipContent>上一首</TooltipContent>
-            </Tooltip>
+            {queueMode === 'consume' ? (
+              // What was heard has left a consumed queue, so there is no "previous": no button, but the play button
+              // stays where it is (an empty slot the size of the button).
+              <span className="size-9" aria-hidden="true" />
+            ) : (
+              <Tooltip delayDuration={300}>
+                <TooltipTrigger asChild>
+                  <motion.div whileTap={{ scale: 0.9 }}>
+                    <Button
+                      variant="ghost"
+                      size="icon"
+                      className="h-9 w-9 text-white/70 hover:bg-white/10"
+                      disabled={disabled || skipCooldown === 'prev'}
+                      onClick={() => handleSkip(onPrev, 'prev')}
+                      aria-label="上一首"
+                    >
+                      <SkipBack className="size-5" fill="currentColor" />
+                    </Button>
+                  </motion.div>
+                </TooltipTrigger>
+                <TooltipContent>上一首</TooltipContent>
+              </Tooltip>
+            )}
 
             <Tooltip delayDuration={300}>
               <TooltipTrigger asChild>
