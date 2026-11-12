@@ -33,6 +33,7 @@
     "index.mjs",
     "index.d.ts",
     "types.d.ts",
+    "notification-policy.d.ts",
     "pack.mjs",
     "pack.d.ts",
     "server.mjs",

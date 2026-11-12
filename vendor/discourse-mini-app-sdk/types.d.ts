@@ -1,5 +1,7 @@
 // Generated from sdk/src by tools/build-sdk.ts.
-export type Permission = "user.read" | "user.lookup" | "launch.read" | "theme.read" | "storage.read" | "storage.write" | "cookies.read" | "cookies.write" | "clipboard.read" | "clipboard.write" | "fullscreen" | "pointer.lock" | "audio.play" | "audio.webAudio" | "audio.worklet" | "video.play" | "assets.remote" | "network.request" | "network.websocket" | "links.open" | "files.save" | "sharing.share" | "screen.keepAwake" | "gamepad.read" | "code.load" | "workers.create" | "code.modules" | "code.eval" | "video.stream" | "camera" | "microphone" | "screen.capture" | "location.read" | "device.usb" | "device.bluetooth";
+export type Permission = "notifications" | "app.call" | "user.read" | "user.lookup" | "launch.read" | "theme.read" | "storage.read" | "storage.write" | "cookies.read" | "cookies.write" | "clipboard.read" | "clipboard.write" | "fullscreen" | "pointer.lock" | "audio.play" | "audio.webAudio" | "audio.worklet" | "video.play" | "assets.remote" | "network.request" | "network.websocket" | "links.open" | "files.save" | "sharing.share" | "screen.keepAwake" | "gamepad.read" | "code.load" | "workers.create" | "code.modules" | "code.eval" | "video.stream" | "camera" | "microphone" | "screen.capture" | "location.read" | "device.usb" | "device.bluetooth";
+/** Public URL query values passed to a newly started application. */
+export type AppQuery = Record<string, string | readonly string[]>;
 export type JsonValue = null | boolean | number | string | JsonValue[] | {
     [key: string]: JsonValue;
 };
