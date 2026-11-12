@@ -112,7 +112,12 @@ export function registerRoomController(io: TypedServer, socket: TypedSocket) {
       // 创建者是 owner，发送含密码的完整状态
       socket.emit(EVENTS.ROOM_STATE, roomService.toPublicRoomStateForOwner(room))
       const rejoin = issueRejoinTicket(room.id, user.id)
-      socket.emit(EVENTS.ROOM_REJOIN_TOKEN, { roomId: room.id, token: rejoin.token, expiresAt: rejoin.expiresAt })
+      socket.emit(EVENTS.ROOM_REJOIN_TOKEN, {
+        roomId: room.id,
+        token: rejoin.token,
+        expiresAt: rejoin.expiresAt,
+        ttlMs: rejoin.ttlMs,
+      })
 
       // 广播房间列表给大厅用户
       roomService.broadcastRoomList(io)
@@ -201,7 +206,12 @@ export function registerRoomController(io: TypedServer, socket: TypedSocket) {
       if (hostChanged || roleChanged) {
         socket.to(roomId).emit(EVENTS.ROOM_STATE, roomService.toPublicRoomState(updatedRoom))
       }
-      socket.emit(EVENTS.ROOM_REJOIN_TOKEN, { roomId, token: rejoin.token, expiresAt: rejoin.expiresAt })
+      socket.emit(EVENTS.ROOM_REJOIN_TOKEN, {
+        roomId,
+        token: rejoin.token,
+        expiresAt: rejoin.expiresAt,
+        ttlMs: rejoin.ttlMs,
+      })
       socket.emit(EVENTS.CHAT_HISTORY, chatService.getHistory(roomId))
 
       // Sync playback state to the joining client (auto-resume, auto-play)

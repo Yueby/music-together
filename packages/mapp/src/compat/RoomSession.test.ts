@@ -337,6 +337,28 @@ describe('Mapp room session', () => {
     expect(fake.sent(EVENTS.ROOM_JOIN)).toHaveLength(2)
   })
 
+  it('trusts the lifetime the server sends over the clocks, even when it is longer than the default', () => {
+    ready()
+    session.joinRoom({ roomId: 'room-a', nickname })
+    fake.server(EVENTS.ROOM_STATE, room())
+    // phone 10 minutes ahead of the server, server TTL 5 minutes: stamped in the local past, yet valid for 5 minutes
+    fake.server(EVENTS.ROOM_REJOIN_TOKEN, { ...ticket('room-a', Date.now() - 9 * 60_000), ttlMs: 300_000 })
+    vi.advanceTimersByTime(200_000)
+    reconnect()
+    expect(fake.sent(EVENTS.ROOM_JOIN)).toHaveLength(2)
+  })
+
+  it('expires a ticket once the lifetime the server sent has passed', () => {
+    ready()
+    session.joinRoom({ roomId: 'room-a', nickname })
+    fake.server(EVENTS.ROOM_STATE, room())
+    fake.server(EVENTS.ROOM_REJOIN_TOKEN, { ...ticket('room-a', Date.now() + 60_000), ttlMs: 30_000 })
+    vi.advanceTimersByTime(31_000)
+    reconnect()
+    expect(fake.sent(EVENTS.ROOM_JOIN)).toHaveLength(1)
+    expect(session.snapshot.errorCode).toBe('REJOIN_TOKEN_EXPIRED')
+  })
+
   it('does not restore a confirmed room with no ticket or an unrelated ticket', () => {
     ready()
     session.joinRoom({ roomId: 'room-a', nickname })
