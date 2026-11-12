@@ -2,7 +2,7 @@ import { getServerTime, isCalibrated } from '@/lib/clockSync'
 import { PLAYER_PLAY_DEDUP_MS } from '@/lib/constants'
 import { lyricPlayerBridge } from '@/lib/lyricPlayerBridge'
 import { playbackSoundFactory } from '@/lib/playbackSoundFactory'
-import { getScheduledPlaybackPosition } from '@/lib/playbackSync'
+import { getScheduledPlaybackPosition, getScheduledServerNow } from '@/lib/playbackSync'
 import { registerPendingPlayCancel } from '@/lib/scheduledPlayback'
 import { useSocketContext } from '@/providers/SocketProvider'
 import { usePlayerStore } from '@/stores/playerStore'
@@ -129,11 +129,10 @@ export function usePlayer() {
           playTimerRef.current = null
           if (data.playState.isPlaying) {
             startPlayback(() => {
-              const currentServerTime = isCalibrated() ? getServerTime() : Date.now()
               return getScheduledPlaybackPosition(
                 data.playState.currentTime,
                 data.playState.serverTimeToExecute,
-                currentServerTime,
+                getScheduledServerNow(data.playState.serverTimeToExecute),
               )
             })
           } else if (howlRef.current?.playing()) {
@@ -176,8 +175,11 @@ export function usePlayer() {
         playTimerRef.current = setTimeout(() => {
           playTimerRef.current = null
           startPlayback(() => {
-            const currentServerTime = isCalibrated() ? getServerTime() : Date.now()
-            return getScheduledPlaybackPosition(ct, data.playState.serverTimeToExecute, currentServerTime)
+            return getScheduledPlaybackPosition(
+              ct,
+              data.playState.serverTimeToExecute,
+              getScheduledServerNow(data.playState.serverTimeToExecute),
+            )
           })
         }, executeDelay)
       } else {
@@ -298,7 +300,7 @@ export function usePlayer() {
               getScheduledPlaybackPosition(
                 ps.currentTime,
                 scheduledExecution,
-                isCalibrated() ? getServerTime() : Date.now(),
+                getScheduledServerNow(scheduledExecution),
               ),
             )
           }, delay)

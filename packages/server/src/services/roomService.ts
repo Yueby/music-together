@@ -314,6 +314,12 @@ export function updateSettings(
   }
 
   if (settings.audioQuality !== undefined) {
+    if (settings.audioQuality !== room.audioQuality) {
+      // A stream URL is resolved for one quality (preloading leaves them on queue items); do not let the next
+      // transition reuse a link of the old one. What is playing or scheduled keeps its link.
+      const inUse = new Set([room.currentTrack?.id, room.pendingPlayback?.track?.id])
+      for (const track of room.queue) if (!inUse.has(track.id)) track.streamUrl = undefined
+    }
     room.audioQuality = settings.audioQuality
   }
 

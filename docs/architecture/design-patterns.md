@@ -151,7 +151,7 @@ withOwnerOnly(io)                →  withRoom(io)  →  Handler
 - `withPermission`：在 `withRoom` 基础上用 CASL `defineAbilityFor(role)` 检查 `(action, subject)` 权限
 - `withOwnerOnly`：在 `withRoom` 基础上仅允许房主（`user.role === 'owner'`），用于设置和角色管理
 
-错误统一通过 `ROOM_ERROR` 事件回传给客户端，错误码使用 `ERROR_CODE` 枚举（`shared/types.ts`），包括：`NOT_IN_ROOM`、`ROOM_NOT_FOUND`、`NO_PERMISSION`、`INVALID_DATA`、`QUEUE_FULL`、`RATE_LIMITED`、`INTERNAL` 等。
+错误统一通过 `ROOM_ERROR` 事件回传给客户端，错误码使用 `ERROR_CODE` 枚举（`shared/types.ts`），包括：`NOT_IN_ROOM`、`ROOM_NOT_FOUND`、`NO_PERMISSION`、`INVALID_DATA`、`QUEUE_FULL`、`RATE_LIMITED`、`ROOM_ENTRY_LIMITED`（建房/入房被限流或达到建房上限）、`INTERNAL` 等。
 
 ## 结构化日志（pino）
 

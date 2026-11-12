@@ -13,6 +13,8 @@ export const ERROR_CODE = {
   QUEUE_FULL: 'QUEUE_FULL',
   STREAM_FAILED: 'STREAM_FAILED',
   RATE_LIMITED: 'RATE_LIMITED',
+  /** Create/join refused by the room-entry rate limit or the per-identity room cap (unlike RATE_LIMITED, which is in-room). */
+  ROOM_ENTRY_LIMITED: 'ROOM_ENTRY_LIMITED',
   NO_VOTE_NEEDED: 'NO_VOTE_NEEDED',
   VOTE_IN_PROGRESS: 'VOTE_IN_PROGRESS',
   ALREADY_VOTED: 'ALREADY_VOTED',

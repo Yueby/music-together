@@ -100,7 +100,10 @@ export function ChatPanel() {
           placeholder="输入消息..."
           value={input}
           onChange={(e) => setInput(e.target.value)}
-          onKeyDown={(e) => e.key === 'Enter' && handleSend()}
+          onKeyDown={(e) => {
+            // Enter that confirms an IME candidate must not send the message.
+            if (e.key === 'Enter' && !e.nativeEvent.isComposing) handleSend()
+          }}
           className="flex-1"
           aria-label="输入聊天消息"
         />

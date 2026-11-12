@@ -429,12 +429,15 @@ export async function preloadUpcoming(io: TypedServer, roomId: string): Promise<
   const key = `${next.id}:${next.urlId}:${room.audioQuality}`
   if (announcedPreloads.get(roomId)?.key === key && next.streamUrl && !hasExpiredUrl(next)) return
 
+  const quality = room.audioQuality
   try {
     // Always resolve afresh: a URL left on the item may belong to another audio quality.
     const fresh = await refreshTrackUrl(roomId, room, next)
-    // Anything may have changed while the provider answered.
+    // Anything may have changed while the provider answered (including the audio quality the URL was resolved for).
     const latest = roomRepo.get(roomId)
-    if (!fresh || latest !== room || getLatestPlayback(room).track?.id !== current.id) return
+    if (!fresh || latest !== room || room.audioQuality !== quality || getLatestPlayback(room).track?.id !== current.id) {
+      return
+    }
     const item = room.queue.find((track) => track.id === next.id)
     if (!item) return
     item.streamUrl = fresh.streamUrl
@@ -626,7 +629,7 @@ export function playNextTrackInRoom(
     // What is (about to be) playing is the track being left.
     const leaving = getLatestPlayback(room).track
     // Count on from the track being left, which is not `room.currentTrack` while a switch is still pending.
-    let nextTrack = queueService.getNextTrack(roomId, playMode, consume ? leaving?.id : undefined)
+    let nextTrack = queueService.getNextTrack(roomId, playMode, leaving?.id)
     if (consume && nextTrack && nextTrack.id === leaving?.id) nextTrack = null // a lone track has no "next"
 
     if (consume && leaving) {
@@ -646,7 +649,11 @@ export function playNextTrackInRoom(
     if (!success) {
       // Past the one that failed (the track left behind is no longer in a consumed queue to count from).
       const skipTrack = queueService.getNextTrack(roomId, playMode, consume ? nextTrack.id : undefined)
-      if (skipTrack) await _playTrackInRoom(io, roomId, skipTrack, generation)
+      const skipped = skipTrack ? await _playTrackInRoom(io, roomId, skipTrack, generation) : false
+      if (!valid()) return
+      // The track just left was already removed from a consumed queue; with nothing left to play, do not keep
+      // presenting it as current (an empty queue with a current track blocks auto-play on the next add).
+      if (!skipped && consume) stopPlayback(io, roomId)
     }
 
     // Keep duplicate controls debounced immediately after URL resolution too.
@@ -669,7 +676,9 @@ export function playPrevTrackInRoom(
   const valid = () => roomRepo.get(roomId) === room && controlGenerations.get(roomId) === generation
   return withPlayMutex(roomId, async () => {
     if (!valid()) return
-    const prevTrack = queueService.getPreviousTrack(roomId)
+    // Step back from what is (about to be) playing, which is not `room.currentTrack` while a switch is still pending.
+    const leavingId = getLatestPlayback(room).track?.id
+    const prevTrack = queueService.getPreviousTrack(roomId, leavingId)
     if (!prevTrack) {
       // In a consumed queue what was heard has left it, so there is nothing to go back to: "previous" starts the
       // current track over instead of doing nothing.
@@ -680,7 +689,7 @@ export function playPrevTrackInRoom(
     const success = await _playTrackInRoom(io, roomId, prevTrack, generation)
     if (!valid()) return
     if (!success) {
-      const skipTrack = queueService.getPreviousTrack(roomId)
+      const skipTrack = queueService.getPreviousTrack(roomId, leavingId)
       if (skipTrack) await _playTrackInRoom(io, roomId, skipTrack, generation)
     }
 

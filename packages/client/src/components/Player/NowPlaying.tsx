@@ -25,6 +25,23 @@ export function NowPlaying({ compact = false, onCoverClick }: NowPlayingProps) {
   }, [])
   const layoutId = ready ? 'cover-art' : undefined
 
+  // The cover toggles the lyric view, so it must be reachable and operable without a pointer.
+  const coverButtonProps = onCoverClick
+    ? ({
+        role: 'button',
+        tabIndex: 0,
+        'aria-label': compact ? '收起歌词' : '展开歌词',
+        'aria-expanded': compact,
+        onClick: onCoverClick,
+        onKeyDown: (e: React.KeyboardEvent) => {
+          if (e.key === 'Enter' || e.key === ' ') {
+            e.preventDefault()
+            onCoverClick()
+          }
+        },
+      } as const)
+    : {}
+
   const coverContent = (
     <ArtworkImage
       cover={currentTrack?.cover}
@@ -42,10 +59,10 @@ export function NowPlaying({ compact = false, onCoverClick }: NowPlayingProps) {
       <div className="flex w-full items-center gap-3.5">
         <motion.div
           layoutId={layoutId}
-          onClick={onCoverClick}
+          {...coverButtonProps}
           whileTap={{ scale: 0.92 }}
           transition={LAYOUT_TRANSITION}
-          className="h-14 w-14 shrink-0 cursor-pointer overflow-hidden rounded-lg shadow-md shadow-black/20"
+          className="h-14 w-14 shrink-0 cursor-pointer overflow-hidden rounded-lg shadow-md shadow-black/20 focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-white/70"
         >
           {coverContent}
         </motion.div>
@@ -83,13 +100,13 @@ export function NowPlaying({ compact = false, onCoverClick }: NowPlayingProps) {
   return (
     <motion.div
       layoutId={layoutId}
-      onClick={onCoverClick}
+      {...coverButtonProps}
       whileTap={onCoverClick ? { scale: 0.96 } : undefined}
       transition={LAYOUT_TRANSITION}
       style={{ width: 'min(100cqw, 100cqh)' }}
       className={cn(
         'relative mx-auto aspect-square overflow-hidden rounded-3xl shadow-lg shadow-black/15',
-        onCoverClick && 'cursor-pointer',
+        onCoverClick && 'cursor-pointer focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-white/70',
       )}
     >
       {coverContent}

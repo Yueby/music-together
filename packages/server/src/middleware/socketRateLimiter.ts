@@ -1,5 +1,6 @@
 import { RateLimiterMemory } from 'rate-limiter-flexible'
 import { EVENTS, ERROR_CODE, LIMITS } from '@music-together/shared'
+import type { ErrorCode } from '@music-together/shared'
 import type { TypedSocket } from './types.js'
 
 const RATE_LIMIT_POINTS = 10
@@ -34,6 +35,12 @@ const authQrCheckLimiter = new RateLimiterMemory({
   duration: 60,
 })
 
+/** Reading the room list: it serialises every room, so a script must not be able to ask for it in a loop. */
+const roomListLimiter = new RateLimiterMemory({
+  points: 20,
+  duration: 10,
+})
+
 /** Entering a room (create / join): generous for rejoins and reconnects, tight enough to stop scripted scanning. */
 const roomEntryLimiter = new RateLimiterMemory({
   points: 10,
@@ -55,14 +62,19 @@ function identityKey(socket: TypedSocket): string {
  * Keyed by userId (not socket.id) to prevent bypass via multiple connections.
  * Returns true if allowed, false if rate-limited (error already emitted).
  */
-async function consumeLimiter(socket: TypedSocket, limiter: RateLimiterMemory, keySuffix = ''): Promise<boolean> {
+async function consumeLimiter(
+  socket: TypedSocket,
+  limiter: RateLimiterMemory,
+  keySuffix = '',
+  code: ErrorCode = ERROR_CODE.RATE_LIMITED,
+): Promise<boolean> {
   const key = `${identityKey(socket)}${keySuffix}`
   try {
     await limiter.consume(key)
     return true
   } catch {
     socket.emit(EVENTS.ROOM_ERROR, {
-      code: ERROR_CODE.RATE_LIMITED,
+      code,
       message: '操作过于频繁，请稍后再试',
     })
     return false
@@ -83,9 +95,22 @@ export function checkAuthQrCheckRateLimit(socket: TypedSocket): Promise<boolean>
   return consumeLimiter(socket, authQrCheckLimiter, ':auth-qr')
 }
 
+/**
+ * ROOM_LIST budget, kept apart from player controls. A refused read is dropped without an error: the lobby simply
+ * keeps the list it has, and a room-level error would be misread as the outcome of something else.
+ */
+export async function checkRoomListRateLimit(socket: TypedSocket): Promise<boolean> {
+  try {
+    await roomListLimiter.consume(`${identityKey(socket)}:room-list`)
+    return true
+  } catch {
+    return false
+  }
+}
+
 /** ROOM_CREATE / ROOM_JOIN budget, kept apart from player controls. */
 export function checkRoomEntryRateLimit(socket: TypedSocket): Promise<boolean> {
-  return consumeLimiter(socket, roomEntryLimiter, ':room-entry')
+  return consumeLimiter(socket, roomEntryLimiter, ':room-entry', ERROR_CODE.ROOM_ENTRY_LIMITED)
 }
 
 // ---------------------------------------------------------------------------

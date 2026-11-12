@@ -436,7 +436,7 @@ describe('Mapp room session', () => {
     },
   )
 
-  it.each(['ROOM_NOT_FOUND', 'WRONG_PASSWORD', 'JOIN_FAILED', 'INVALID_INPUT', 'INTERNAL'])(
+  it.each(['ROOM_NOT_FOUND', 'WRONG_PASSWORD', 'JOIN_FAILED', 'INVALID_INPUT', 'INTERNAL', 'ROOM_ENTRY_LIMITED'])(
     'still ends a join in flight on the entry error %s',
     (code) => {
       ready()

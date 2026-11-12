@@ -257,6 +257,7 @@ Conductor（当前 `hostId` 对应用户）**自适应频率**上报当前播放
 - **仅房主**可在房间设置中切换音质
 - 音质切换仅对**下一首歌**生效，当前播放不中断
 - 服务端 `playerService.playTrackInRoom()` 从 `room.audioQuality` 读取 bitrate，通过 `resolveStreamUrl()` 请求流 URL
+- **切换音质**：`updateSettings` 改变 `audioQuality` 时，清除队列中非当前/待生效曲目已预解析的 `streamUrl`，并重新预加载下一首；预加载在途时若音质已变，其结果被丢弃。每次 Meting 调用使用独立实例，避免并发请求互相覆盖 `temp.br`。
 - **降级策略**：如果请求的 bitrate 获取不到（VIP 限制或平台不支持），自动逐级降低 bitrate 重试（999 → 320 → 192 → 128）
 - 三个平台统一接收 bitrate 参数。网易云登录态由 `neteasePlayback.ts` 映射到正常 `song_url_v1` 的 level，匿名网易云和其他平台保持 Meting 路径。登录态先合并并发的官方公钥握手、校验密钥并以 0600 文件原子更新 SDK 缓存，再验证播放响应的业务码、曲目与完整播放权益；HTTPS 链接通过限定域名、有界 Range 音频头检查后才下发。失败返回空值供既有降级逻辑处理；Cookie、密钥、完整签名链接及原始错误对象不进入日志。
 - `musicProvider.streamUrlCache` 的 key 包含 bitrate，不同音质自动隔离缓存。网易云已知 `music.126.net` CDN 路径时间按 UTC+8 严格解析为到期时间，预留 30s 获取/调度余量；缓存不得超过有效期，未知期限使用 5min，Cookie 请求继续不缓存。已过期的缓存或上游链接不会下发。
