@@ -670,7 +670,12 @@ export function playPrevTrackInRoom(
   return withPlayMutex(roomId, async () => {
     if (!valid()) return
     const prevTrack = queueService.getPreviousTrack(roomId)
-    if (!prevTrack) return
+    if (!prevTrack) {
+      // In a consumed queue what was heard has left it, so there is nothing to go back to: "previous" starts the
+      // current track over instead of doing nothing.
+      if (room.queueMode === 'consume' && getLatestPlayback(room).track) seekTrack(io, roomId, 0)
+      return
+    }
 
     const success = await _playTrackInRoom(io, roomId, prevTrack, generation)
     if (!valid()) return

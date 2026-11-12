@@ -3,7 +3,7 @@ import { useRoomStore } from '@/stores/roomStore'
 import { storage } from '@/lib/storage'
 import { hostRuntime } from '@/lib/hostRuntime'
 import { authAutoResend } from '@/lib/authAutoResend'
-import { ERROR_CODE, EVENTS } from '@music-together/shared'
+import { ERROR_CODE, EVENTS, rejoinTicketExpiry } from '@music-together/shared'
 import type { AudioQuality, QueueMode, RoomAutoFallbackEvent, RoomState, User, UserRole } from '@music-together/shared'
 import { useEffect, useRef } from 'react'
 import { useNavigate } from 'react-router'
@@ -65,9 +65,9 @@ export function useRoomState() {
       useRoomStore.getState().addUser(user)
     }
 
-    const onRejoinToken = (data: { roomId: string; token: string; expiresAt: number }) => {
+    const onRejoinToken = (data: { roomId: string; token: string; expiresAt: number; ttlMs?: number }) => {
       if (hostRuntime.kind === 'mapp') return
-      storage.setRejoinToken(data.roomId, data.token, data.expiresAt)
+      storage.setRejoinToken(data.roomId, data.token, rejoinTicketExpiry(data, Date.now()))
     }
 
     const onUserLeft = (user: User) => {

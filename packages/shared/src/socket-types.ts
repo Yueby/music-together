@@ -25,7 +25,8 @@ export interface ServerToClientEvents {
   [EVENTS.IDENTITY_READY]: (data: { userId: string }) => void
   [EVENTS.ROOM_CREATED]: (data: { roomId: string; userId: string }) => void
   [EVENTS.ROOM_STATE]: (room: RoomState) => void
-  [EVENTS.ROOM_REJOIN_TOKEN]: (data: { roomId: string; token: string; expiresAt: number }) => void
+  /** `ttlMs`: how long the ticket lives, so clients can count it from arrival (see `rejoinTicketExpiry`). */
+  [EVENTS.ROOM_REJOIN_TOKEN]: (data: { roomId: string; token: string; expiresAt: number; ttlMs?: number }) => void
   [EVENTS.ROOM_ERROR]: (error: { code: string; message: string }) => void
   [EVENTS.ROOM_AUTO_FALLBACK]: (data: RoomAutoFallbackEvent) => void
   [EVENTS.ROOM_USER_JOINED]: (user: User) => void

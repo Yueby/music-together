@@ -3,6 +3,7 @@ import {
   ERROR_CODE,
   EVENTS,
   TIMING,
+  rejoinTicketExpiry,
   type ClientToServerEvents,
   type ServerToClientEvents,
 } from '@music-together/shared'
@@ -100,8 +101,13 @@ const IDLE: MappRoomSessionSnapshot = Object.freeze({
  * TTL. Anything shorter is clock skew or a shorter server setting, and the server is the final judge either way
  * (a rejected rejoin is attempted once per socket id and then reported as REJOIN_FAILED).
  */
-function localExpiry(expiresAt: number, receivedAt: number): number {
-  return receivedAt + Math.max(expiresAt - receivedAt, TIMING.ROOM_GRACE_PERIOD_MS)
+function localExpiry(ticket: { expiresAt: number; ttlMs?: number }, receivedAt: number): number {
+  // The server says how long a ticket lives: count that from arrival. An older server does not, and then the
+  // apparent TTL is only trusted when it is at least the default one.
+  if (typeof ticket.ttlMs === 'number' && Number.isFinite(ticket.ttlMs) && ticket.ttlMs > 0) {
+    return rejoinTicketExpiry(ticket, receivedAt)
+  }
+  return receivedAt + Math.max(ticket.expiresAt - receivedAt, TIMING.ROOM_GRACE_PERIOD_MS)
 }
 
 /** `socket.emit` throws while the transport is down; report that as "not sent". */
@@ -236,7 +242,7 @@ export function createMappRoomSession(options: MappRoomSessionOptions): MappRoom
       roomId: data.roomId,
       token: data.token,
       expiresAt: data.expiresAt,
-      localExpiresAt: localExpiry(data.expiresAt, receivedAt),
+      localExpiresAt: localExpiry(data, receivedAt),
     }
     if (pending?.roomId === data.roomId) pending.ticket = ticket
     if (confirmed?.roomId === data.roomId) recovery = { ...confirmed, ticket }

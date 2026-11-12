@@ -30,7 +30,10 @@ function pruneExpired(): void {
   }
 }
 
-export function issueRejoinTicket(roomId: string, userId: string): { token: string; expiresAt: number } {
+export function issueRejoinTicket(
+  roomId: string,
+  userId: string,
+): { token: string; expiresAt: number; ttlMs: number } {
   pruneExpired()
   const token = nanoid(36)
   const expiresAt = Date.now() + config.rejoin.ttlMs
@@ -42,7 +45,7 @@ export function issueRejoinTicket(roomId: string, userId: string): { token: stri
   set.add(token)
   roomUserIndex.set(key, set)
 
-  return { token, expiresAt }
+  return { token, expiresAt, ttlMs: config.rejoin.ttlMs }
 }
 
 export function consumeRejoinTicket(token: string, roomId: string, userId: string): boolean {

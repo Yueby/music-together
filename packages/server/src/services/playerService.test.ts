@@ -334,6 +334,47 @@ describe('playerService state transitions', () => {
 
       expect(data.queue.map((t) => t.id)).toEqual(['first', 'second'])
     })
+
+    it('starts the current track over for "previous", as what was heard has left the queue', async () => {
+      vi.useFakeTimers()
+      vi.setSystemTime(new Date('2026-01-01T00:00:10Z'))
+      const data = consumingRoom('first', 'second')
+      data.playState.currentTime = 42
+      const { io, emit } = ioMock()
+
+      await playPrevTrackInRoom(io as never, 'ROOM01')
+
+      expect(data.pendingPlayback?.type).toBe('seek')
+      expect(data.pendingPlayback?.playState.currentTime).toBe(0)
+      expect(data.currentTrack?.id).toBe('first')
+      expect(data.queue.map((t) => t.id)).toEqual(['first', 'second'])
+      expect(emit.mock.calls.some(([event]) => event === 'player:seek')).toBe(true)
+    })
+
+    it('still goes back to a track that was jumped over and not heard yet', async () => {
+      vi.useFakeTimers()
+      vi.setSystemTime(new Date('2026-01-01T00:00:10Z'))
+      const data = consumingRoom('first', 'second')
+      data.currentTrack = data.queue[1]
+      const { io } = ioMock()
+
+      await playPrevTrackInRoom(io as never, 'ROOM01')
+
+      expect(data.pendingPlayback?.track?.id).toBe('first')
+    })
+
+    it('does nothing for "previous" at the start of a room that keeps its queue', async () => {
+      vi.useFakeTimers()
+      vi.setSystemTime(new Date('2026-01-01T00:00:10Z'))
+      const data = consumingRoom('first', 'second')
+      data.queueMode = 'keep'
+      data.playMode = 'sequential'
+      const { io } = ioMock()
+
+      await playPrevTrackInRoom(io as never, 'ROOM01')
+
+      expect(data.pendingPlayback).toBeNull()
+    })
   })
 
   it('assigns a unique revision to every replacement action', () => {

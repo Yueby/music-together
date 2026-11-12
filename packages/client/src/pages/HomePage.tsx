@@ -16,7 +16,7 @@ import { useSocketContext } from '@/providers/SocketProvider'
 import { useRoomStore } from '@/stores/roomStore'
 import { useChatStore } from '@/stores/chatStore'
 import { useVersionCheck } from '@/hooks/useVersionCheck'
-import { EVENTS, ERROR_CODE, type RoomListItem, type RoomState } from '@music-together/shared'
+import { EVENTS, ERROR_CODE, rejoinTicketExpiry, type RoomListItem, type RoomState } from '@music-together/shared'
 import { GitFork, Headphones } from 'lucide-react'
 import { motion } from 'motion/react'
 import { useCallback, useEffect, useRef, useState } from 'react'
@@ -106,8 +106,8 @@ export default function HomePage() {
       navigate(`/room/${roomState.id}`)
     }
 
-    const onRejoinToken = (data: { roomId: string; token: string; expiresAt: number }) => {
-      storage.setRejoinToken(data.roomId, data.token, data.expiresAt)
+    const onRejoinToken = (data: { roomId: string; token: string; expiresAt: number; ttlMs?: number }) => {
+      storage.setRejoinToken(data.roomId, data.token, rejoinTicketExpiry(data, Date.now()))
     }
 
     // 服务端在 ROOM_JOIN 后同时 emit ROOM_STATE + CHAT_HISTORY，
