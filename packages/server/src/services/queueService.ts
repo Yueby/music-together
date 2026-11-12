@@ -121,8 +121,8 @@ export function getNextTrack(roomId: string, playMode?: PlayMode, fromTrackId?: 
 
   switch (mode) {
     case 'loop-one':
-      // Replay the current track; fall back to next if current is gone
-      if (room.currentTrack && currentIndex >= 0) return room.currentTrack
+      // Replay the track being left; fall back to the first if it is gone
+      if (currentIndex >= 0) return room.queue[currentIndex]
       return room.queue[0] ?? null
 
     case 'loop-all': {
@@ -149,11 +149,13 @@ export function getNextTrack(roomId: string, playMode?: PlayMode, fromTrackId?: 
   }
 }
 
-export function getPreviousTrack(roomId: string): Track | null {
+export function getPreviousTrack(roomId: string, fromTrackId?: string): Track | null {
   const room = roomRepo.get(roomId)
   if (!room || room.queue.length === 0) return null
 
-  const currentIndex = room.currentTrack ? room.queue.findIndex((t) => t.id === room.currentTrack!.id) : -1
+  // `fromTrackId` lets a caller step back from a transition that has been scheduled but not committed yet.
+  const fromId = fromTrackId ?? room.currentTrack?.id
+  const currentIndex = fromId ? room.queue.findIndex((t) => t.id === fromId) : -1
 
   // For loop-all, wrap to last track when at the beginning
   if (effectivePlayMode(room.queueMode, room.playMode) === 'loop-all' && currentIndex <= 0) {

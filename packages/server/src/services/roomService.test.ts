@@ -1,3 +1,4 @@
+import type { Track } from '@music-together/shared'
 import { afterEach, describe, expect, it } from 'vitest'
 import { roomRepo } from '../repositories/roomRepository.js'
 import { toPublicRoomState } from '../utils/roomUtils.js'
@@ -185,6 +186,33 @@ describe('roomService role and host reconciliation', () => {
     expect(room.hostId).toBe('admin')
     expect(room.playState.revision).toBe(5)
     expect(room.playState.currentTime).toBeCloseTo(32, 1)
+  })
+})
+
+describe('roomService audio quality', () => {
+  const item = (id: string) => ({ id, streamUrl: `https://example.com/${id}.mp3` }) as Track
+
+  it('drops stream URLs resolved for the old quality, except for what is playing', () => {
+    const room = createTestRoom()
+    const [playing, upcoming] = [item('playing'), item('upcoming')]
+    room.queue = [playing, upcoming]
+    room.currentTrack = playing
+
+    updateSettings(ROOM_ID, { audioQuality: 128 })
+
+    expect(room.audioQuality).toBe(128)
+    expect(playing.streamUrl).toBeDefined()
+    expect(upcoming.streamUrl).toBeUndefined()
+  })
+
+  it('keeps preloaded URLs when the quality is set to what it already is', () => {
+    const room = createTestRoom()
+    const upcoming = item('upcoming')
+    room.queue = [upcoming]
+
+    updateSettings(ROOM_ID, { audioQuality: room.audioQuality })
+
+    expect(upcoming.streamUrl).toBeDefined()
   })
 })
 

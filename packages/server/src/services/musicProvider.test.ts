@@ -189,6 +189,24 @@ describe('stream URL lifetime caching', () => {
   const signedUrl = (timestamp: string) =>
     `https://m801.music.126.net/${timestamp}/fixture-signature/ymusic/fixture.mp3`
 
+  it('resolves concurrent requests for different qualities on separate Meting instances', async () => {
+    const instances = new Set<unknown>()
+    vi.spyOn(Meting.prototype, 'url').mockImplementation(async function (this: unknown, _id, br) {
+      instances.add(this)
+      await Promise.resolve()
+      return JSON.stringify({ url: `https://example.com/${br}.mp3` })
+    })
+
+    const [high, low] = await Promise.all([
+      musicProvider.getStreamUrl('tencent', 'quality-race-fixture', 320),
+      musicProvider.getStreamUrl('tencent', 'quality-race-fixture', 128),
+    ])
+
+    expect(high).toBe('https://example.com/320.mp3')
+    expect(low).toBe('https://example.com/128.mp3')
+    expect(instances.size).toBe(2)
+  })
+
   it('re-fetches an expired cache hit normally and applies per-entry TTL', async () => {
     const clock = vi.spyOn(Date, 'now').mockReturnValue(now)
     const first = signedUrl('20260720081000')

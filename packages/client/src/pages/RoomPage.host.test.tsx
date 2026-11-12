@@ -17,14 +17,25 @@ const fixture = vi.hoisted(() => ({
   unlocked: true,
   unlock: vi.fn(async () => {}),
   navigate: vi.fn(),
+  mobile: false,
+  chatOpen: false,
 }))
 vi.mock('react-router', () => ({ useParams: () => ({ roomId: 'ABC123' }), useNavigate: () => fixture.navigate }))
-vi.mock('motion/react', () => ({ motion: { div: ({ children }: { children: ReactNode }) => <div>{children}</div> } }))
+vi.mock('motion/react', () => ({
+  motion: { div: ({ children }: { children: ReactNode }) => <div>{children}</div> },
+  AnimatePresence: ({ children }: { children: ReactNode }) => <>{children}</>,
+}))
 vi.mock('sonner', () => ({ toast: { error: vi.fn() } }))
 vi.mock('@/providers/SocketProvider', () => ({ useSocketContext: () => fixture.context }))
 vi.mock('@/providers/AbilityProvider', () => ({ AbilityProvider: ({ children }: { children: ReactNode }) => children }))
 vi.mock('@/stores/chatStore', () => {
-  const state = { isChatOpen: false, unreadCount: 0, setIsChatOpen: vi.fn() }
+  const state = {
+    get isChatOpen() {
+      return fixture.chatOpen
+    },
+    unreadCount: 0,
+    setIsChatOpen: vi.fn(),
+  }
   return {
     useChatStore: Object.assign((select: (value: typeof state) => unknown) => select(state), { getState: () => state }),
   }
@@ -36,6 +47,7 @@ vi.mock('@/lib/storage', () => ({
     getNickname: () => 'Fixture listener',
     getUserId: () => '',
     getRejoinToken: () => 'fixture-web-ticket',
+    hasAuthCookie: () => false,
   },
 }))
 vi.mock('@/hooks/useRoom', () => ({
@@ -53,7 +65,7 @@ vi.mock('@/hooks/useQueue', () => ({
     clearQueue: vi.fn(),
   }),
 }))
-vi.mock('@/hooks/useIsMobile', () => ({ useIsMobile: () => false }))
+vi.mock('@/hooks/useIsMobile', () => ({ useIsMobile: () => fixture.mobile }))
 vi.mock('@/hooks/useClockSync', () => ({ useClockSync: () => {} }))
 vi.mock('@/components/InteractionGate', () => ({
   InteractionGate: ({ onStart }: { onStart: (password?: string) => Promise<void> }) => (
@@ -64,17 +76,18 @@ vi.mock('@/components/InteractionGate', () => ({
   ),
 }))
 vi.mock('@/components/Player/AudioPlayer', () => ({ AudioPlayer: () => null }))
-vi.mock('@/components/Chat/ChatPanel', () => ({ ChatPanel: () => null }))
+vi.mock('@/components/Chat/ChatPanel', () => ({ ChatPanel: () => <div data-testid="chat-panel" /> }))
 vi.mock('@/components/Room/RoomHeader', () => ({
   RoomHeader: ({ onLeaveRoom }: { onLeaveRoom: () => void }) => <button onClick={onLeaveRoom}>Leave room</button>,
 }))
 vi.mock('@/components/Overlays/SearchDialog', () => ({ SearchDialog: () => null }))
 vi.mock('@/components/Overlays/QueueDrawer', () => ({ QueueDrawer: () => null }))
 vi.mock('@/components/Overlays/SettingsDialog', () => ({ SettingsDialog: () => null }))
+vi.mock('@/components/Overlays/Settings/PlatformHub', () => ({ PlatformHub: () => null }))
 vi.mock('@/components/Lobby/PasswordDialog', () => ({ PasswordDialog: () => null }))
 vi.mock('@/components/ui/drawer', () => ({
-  Drawer: () => null,
-  DrawerContent: () => null,
+  Drawer: ({ children }: { children: ReactNode }) => <div data-testid="chat-drawer">{children}</div>,
+  DrawerContent: ({ children }: { children: ReactNode }) => <>{children}</>,
   DrawerHeader: () => null,
   DrawerTitle: () => null,
 }))
@@ -89,6 +102,8 @@ describe('shared RoomPage host room commands', () => {
     fixture.context.socket.connected = true
     fixture.context.requiresManualJoin = false
     fixture.unlocked = true
+    fixture.mobile = false
+    fixture.chatOpen = false
     useRoomStore.getState().reset()
     vi.stubGlobal('IS_REACT_ACT_ENVIRONMENT', true)
     vi.stubGlobal(
@@ -255,5 +270,22 @@ describe('shared RoomPage host room commands', () => {
       },
       { automatic: false },
     )
+  })
+
+  describe('chat placement', () => {
+    const joinedRoom = { id: 'ABC123', name: 'Fixture room', users: [] } as unknown as RoomState
+
+    it.each([
+      ['landscape', false, 1, 0],
+      ['portrait', true, 1, 1],
+    ])('shows the chat in exactly one place in %s', async (_name, mobile, panels, drawers) => {
+      fixture.mobile = mobile
+      fixture.chatOpen = true
+      useRoomStore.setState({ room: joinedRoom })
+      await render()
+
+      expect(container.querySelectorAll('[data-testid="chat-panel"]')).toHaveLength(panels)
+      expect(container.querySelectorAll('[data-testid="chat-drawer"] [data-testid="chat-panel"]')).toHaveLength(drawers)
+    })
   })
 })

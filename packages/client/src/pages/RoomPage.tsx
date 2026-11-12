@@ -368,15 +368,17 @@ export default function RoomPage() {
               />
             </div>
 
-            {/* Desktop: inline chat panel that squeezes the player */}
-            <div
-              className={cn(
-                'hidden h-full shrink-0 overflow-hidden transition-[width] duration-200 ease-out md:block',
-                chatOpen ? 'w-[320px] pl-3' : 'w-0',
-              )}
-            >
-              <div className="flex h-full w-[320px] flex-col">{chatOpen && <ChatPanel />}</div>
-            </div>
+            {/* Landscape: inline chat panel that squeezes the player (portrait uses the drawer below, same test as every other overlay) */}
+            {!isMobile && (
+              <div
+                className={cn(
+                  'h-full shrink-0 overflow-hidden transition-[width] duration-200 ease-out',
+                  chatOpen ? 'w-[320px] pl-3' : 'w-0',
+                )}
+              >
+                <div className="flex h-full w-[320px] flex-col">{chatOpen && <ChatPanel />}</div>
+              </div>
+            )}
           </div>
 
           {/* Mobile: chat drawer from bottom */}
