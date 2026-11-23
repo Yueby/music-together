@@ -21,6 +21,7 @@ import { setHowlPosition } from '@/lib/howlPosition'
 import {
   getHardSeekThresholdMs,
   getScheduledPlaybackPosition,
+  getScheduledServerNow,
   getSyncExpectedPosition,
   getSyncRequestIntervalMs,
   isDriftSettled,
@@ -88,6 +89,8 @@ export function usePlayerSync(
   // Monotonic action ID — guards against stale setTimeout(fn, 0) callbacks
   // when rapid events arrive in the same event loop tick.
   const actionIdRef = useRef(0)
+  // Identity of the last PLAYER_PLAY handled, to recognise a repeated delivery of the same one.
+  const lastPlayKeyRef = useRef<string | null>(null)
   // When true, rate() micro-adjustment is disabled (browser plugin detected)
   const rateDisabledRef = useRef(false)
   // Consecutive count of rate override detections (require 3 to confirm plugin)
@@ -138,7 +141,7 @@ export function usePlayerSync(
         const getSeekTime = () => getScheduledPlaybackPosition(
           data.playState.currentTime,
           data.playState.serverTimeToExecute,
-          isCalibrated() ? getServerTime() : Date.now(),
+          getScheduledServerNow(data.playState.serverTimeToExecute),
         )
         if (data.playState.isPlaying) setScheduledPlayback(getSeekTime)
         else setDesiredPlayback(false, () => data.playState.currentTime)
@@ -225,7 +228,7 @@ export function usePlayerSync(
         const getSeekTime = () => getScheduledPlaybackPosition(
           data.playState.currentTime,
           data.playState.serverTimeToExecute,
-          isCalibrated() ? getServerTime() : Date.now(),
+          getScheduledServerNow(data.playState.serverTimeToExecute),
         )
         setScheduledPlayback(getSeekTime)
         if (!howlRef.current) return
@@ -259,8 +262,13 @@ export function usePlayerSync(
     // When a new track loads, cancel any pending action from the previous track
     // so it doesn't accidentally seek/pause/resume the new Howl instance.
     // Also reset rate-disabled flag to give the new track a fresh chance.
-    const onPlay = (data: { playState: ScheduledPlayState }) => {
+    const onPlay = (data: { track?: { id: string }; playState: ScheduledPlayState }) => {
       if (isStaleAction(data.playState)) return
+      // The same announcement delivered twice (room broadcast + a join/recovery sync) is dropped by `usePlayer`;
+      // cancelling here would then discard the start timer it armed for the first copy.
+      const playKey = `${data.track?.id}:${data.playState.revision}:${data.playState.serverTimestamp}`
+      if (lastPlayKeyRef.current === playKey) return
+      lastPlayKeyRef.current = playKey
       cancelScheduledPlay()
       clearScheduled()
       ++actionIdRef.current // invalidate any pending stale callbacks
@@ -422,6 +430,11 @@ export function usePlayerSync(
     socket.on(EVENTS.PLAYER_RESUME, onResume)
     socket.on(EVENTS.PLAYER_PLAY, onPlay)
     socket.on(EVENTS.PLAYER_SYNC_RESPONSE, onSyncResponse)
+    // After a reconnect the same announcement is legitimate again (mirrors the dedup reset in `usePlayer`).
+    const onDisconnect = () => {
+      lastPlayKeyRef.current = null
+    }
+    socket.on('disconnect', onDisconnect)
 
     return () => {
       clearScheduled()
@@ -434,6 +447,7 @@ export function usePlayerSync(
       socket.off(EVENTS.PLAYER_RESUME, onResume)
       socket.off(EVENTS.PLAYER_PLAY, onPlay)
       socket.off(EVENTS.PLAYER_SYNC_RESPONSE, onSyncResponse)
+      socket.off('disconnect', onDisconnect)
     }
   }, [socket, howlRef, soundIdRef, setCurrentTime, setDesiredPlayback, setScheduledPlayback])
 

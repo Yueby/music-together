@@ -74,19 +74,38 @@ afterEach(() => {
   vi.clearAllMocks()
 })
 
+describe('reading the room list is rate limited', () => {
+  it('answers a burst of requests only up to the budget, and drops the rest without an error', async () => {
+    const peer = connect(newIdentity('lister'))
+    for (let i = 0; i < 30; i++) await send(peer, EVENTS.ROOM_LIST)
+
+    expect(emitted(peer, EVENTS.ROOM_LIST_UPDATE)).toHaveLength(20)
+    expect(emitted(peer, EVENTS.ROOM_ERROR)).toHaveLength(0)
+  })
+
+  it('shares the budget between the connections of one identity', async () => {
+    const identity = newIdentity('lister')
+    const [tabA, tabB] = [connect(identity), connect(identity)]
+    for (let i = 0; i < 20; i++) await send(tabA, EVENTS.ROOM_LIST)
+
+    await send(tabB, EVENTS.ROOM_LIST)
+    expect(emitted(tabB, EVENTS.ROOM_LIST_UPDATE)).toHaveLength(0)
+  })
+})
+
 describe('entering rooms is rate limited', () => {
-  it('answers RATE_LIMITED to ROOM_CREATE once an identity has asked too often', async () => {
+  it('answers ROOM_ENTRY_LIMITED to ROOM_CREATE once an identity has asked too often', async () => {
     const peer = connect(newIdentity('spammer'))
     for (let i = 0; i < 10; i++) await send(peer, EVENTS.ROOM_CREATE, {})
     expect(lastError(peer)).toMatchObject({ code: ERROR_CODE.INVALID_INPUT })
 
     await send(peer, EVENTS.ROOM_CREATE, { nickname: 'Owner' })
-    expect(lastError(peer)).toMatchObject({ code: ERROR_CODE.RATE_LIMITED })
+    expect(lastError(peer)).toMatchObject({ code: ERROR_CODE.ROOM_ENTRY_LIMITED })
     expect(emitted(peer, EVENTS.ROOM_CREATED)).toHaveLength(0)
     expect(roomRepo.getAllIds()).toHaveLength(0)
   })
 
-  it('answers RATE_LIMITED to ROOM_JOIN once an identity has asked too often, whatever the room', async () => {
+  it('answers ROOM_ENTRY_LIMITED to ROOM_JOIN once an identity has asked too often, whatever the room', async () => {
     const owner = connect(newIdentity('owner'))
     const roomId = await createRoom(owner)
     const guest = connect(newIdentity('guest'))
@@ -94,7 +113,7 @@ describe('entering rooms is rate limited', () => {
     expect(lastError(guest)).toMatchObject({ code: ERROR_CODE.ROOM_NOT_FOUND })
 
     await send(guest, EVENTS.ROOM_JOIN, { roomId, nickname: 'Guest' })
-    expect(lastError(guest)).toMatchObject({ code: ERROR_CODE.RATE_LIMITED })
+    expect(lastError(guest)).toMatchObject({ code: ERROR_CODE.ROOM_ENTRY_LIMITED })
     expect(isMember(roomId, guest.identityUserId)).toBe(false)
   })
 
@@ -104,7 +123,7 @@ describe('entering rooms is rate limited', () => {
     const tabB = connect(identity)
     for (let i = 0; i < 10; i++) await send(tabA, EVENTS.ROOM_JOIN, { roomId: 'NOPE00', nickname: 'Me' })
     await send(tabB, EVENTS.ROOM_JOIN, { roomId: 'NOPE00', nickname: 'Me' })
-    expect(lastError(tabB)).toMatchObject({ code: ERROR_CODE.RATE_LIMITED })
+    expect(lastError(tabB)).toMatchObject({ code: ERROR_CODE.ROOM_ENTRY_LIMITED })
   })
 })
 
@@ -120,7 +139,7 @@ describe('rooms one identity may have created', () => {
 
     await send(peer, EVENTS.ROOM_CREATE, { nickname: 'Owner', roomName: 'One too many' })
 
-    expect(lastError(peer)).toMatchObject({ code: ERROR_CODE.RATE_LIMITED })
+    expect(lastError(peer)).toMatchObject({ code: ERROR_CODE.ROOM_ENTRY_LIMITED })
     expect(emitted(peer, EVENTS.ROOM_CREATED)).toHaveLength(max)
     expect(roomRepo.getAllIds()).toHaveLength(max)
     expect(roomRepo.getSocketMapping(peer.socket.id)?.roomId).toBe(lastRoomId)

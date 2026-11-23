@@ -1,7 +1,14 @@
-import { describe, expect, it } from 'vitest'
+import { describe, expect, it, vi } from 'vitest'
+
+const clock = vi.hoisted(() => ({ calibrated: false, serverNow: 0 }))
+vi.mock('@/lib/clockSync', () => ({
+  isCalibrated: () => clock.calibrated,
+  getServerTime: () => clock.serverNow,
+}))
 import {
   getHardSeekThresholdMs,
   getScheduledPlaybackPosition,
+  getScheduledServerNow,
   getSyncExpectedPosition,
   getSyncRequestIntervalMs,
   isDriftSettled,
@@ -9,6 +16,19 @@ import {
 } from './playbackSync'
 
 describe('playback sync helpers', () => {
+  it('assumes no time has elapsed past the start while the clock is uncalibrated', () => {
+    clock.calibrated = false
+    clock.serverNow = 99_999
+    // A local clock minutes ahead must not push the seek past the start position.
+    expect(getScheduledPlaybackPosition(12, 10_000, getScheduledServerNow(10_000))).toBe(12)
+  })
+
+  it('measures from the calibrated server clock once available', () => {
+    clock.calibrated = true
+    clock.serverNow = 10_250
+    expect(getScheduledPlaybackPosition(12, 10_000, getScheduledServerNow(10_000))).toBe(12.25)
+  })
+
   it('compensates playback position when a scheduled start is late', () => {
     expect(getScheduledPlaybackPosition(12, 10_000, 10_250)).toBe(12.25)
   })

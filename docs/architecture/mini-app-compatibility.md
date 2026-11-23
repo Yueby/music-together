@@ -78,7 +78,7 @@ SDK 0.3 的受控动态字节读取和 Web Audio 已在早期探针中实测（�
 
 ### 设置存储与房间命令
 
-既有 `storage` API 通过 `StorageAdapter` 访问后端，默认 `storageBackend` 保留浏览器 localStorage 的键、持久化和异常降级行为；模块导入时不访问原生存储。Mapp 对应 backend 仅使用本 realm Map，接受 `mt-` 设置键，显式不保存音乐平台 Cookie 或 rejoin ticket，并在应用卸载时提供 clear。昵称、服务器确认 ID 与外观/音量设置可复用原 facade，票据仍只由 RoomSession 管理。
+既有 `storage` API 通过 `StorageAdapter` 访问后端，默认 `storageBackend` 保留浏览器 localStorage 的键、持久化和异常降级行为；模块导入时不访问原生存储。Mapp 对应 backend 以本 realm Map 为主，接受 `mt-` 设置键；其中仅音乐平台登录 Cookie（`mt-auth-cookies`）会写入 SDK 的应用级持久存储以便下次恢复，rejoin ticket 不持久化，也不写入原生存储；应用卸载时提供 clear。昵称、服务器确认 ID 与外观/音量设置可复用原 facade，票据仍只由 RoomSession 管理。
 
 `client/lib/RoomCommands.ts` 保留 Web 原事件及 payload；大厅建房/加入、RoomPage 自动或密码加入、离房均通过这个入口。`MappRoomCommands` 只接受对应 session 的 socket，过滤客户端身份与重入票据，委托原 session API；自动加入在权威 joining/creating 或同房已加入时合并，避免与 RoomSession 恢复重复发送。未连接时大厅不缓存 room-list 请求，而由连接事件发起。
 
@@ -100,7 +100,7 @@ SDK 0.3 的受控动态字节读取和 Web Audio 已在早期探针中实测（�
 
 `client/src/providers/SocketProvider.tsx` 导出纯 `SocketStateProvider`，现有 `useSocketContext` 消费者无需更换 Context。`MappSocketProvider.tsx` 使用 `useSyncExternalStore` 订阅外部会话，仅在连接与服务器身份均就绪后投影 connected 状态；不会调用原生 getSocket、Cookie bootstrap、浏览器存储，或接管 session 的 connect/dispose。StrictMode 重挂及切换 session 只清理自己的订阅。
 
-正式页面尚未挂载该桥接。
+微应用入口 `client/src/platform/MappApp.tsx` 在 `MemoryRouter` 内以 `MappSocketProvider` 挂载该桥接；该入口仅在平台配置启用时可达，真实平台 sandbox 验收见上文。
 
 ### 只读搜索、歌词与封面
 
@@ -120,7 +120,7 @@ TTML 逐词歌词走第四个只读端点 `musicTtml`（`GET /api/music/ttml?sou
 
 封面走同一类受控读取：`GET /api/music/cover-proxy?url=<封面 https 地址>`，平台鉴权通过后复用 Web 封面代理的主机白名单（`y.gtimg.cn`、`p1`~`p4.music.126.net`、`imgessl.kugou.com`）抓取并返回图片字节（上游重定向手动跟随，目标必须仍在白名单且为 https，最多 3 跳，Web 与平台共用），上限 2MiB，限流沿用封面代理额度（每分钟 60 次）。网易云封面默认是数 MB 的原图（实测约 5MB，服务器上拉取需 8 秒以上，既超上限也易超时），所以平台端点对 `p1`~`p4.music.126.net` 且未带 `param` 的地址自动请求 `?param=600y600`（约 0.5MB、不到 1 秒）；列表缩略图已带的 `param=120y120` 保持不变，Web 封面代理不改。微应用侧 `coverLoader` 通过 SDK 读取字节后生成 Blob URL（官方要求图片以 Blob 加载，不直连 CDN）：白名单主机的 `http://` 先升级为 `https://`，要求 200、`image/*`（排除 SVG）、非空且不超过 2MiB；同一地址只请求一次、失败不缓存、并发 4；已完成的封面按最近使用排序、总计超过 48MiB 就回收（revoke）最久未用的，翻长列表不会让沙箱内存无限增长（白名单来自 shared 的 `COVER_HOST_ALLOWLIST`，与服务端是同一份）；排队等位的请求后来先服务，刚开始播放的这首的封面不会排在一长串列表缩略图后面；`useArtworkUrl` 失败后 2.5 秒自动重试一次，一次瞬时的代理/CDN 故障不会让占位图留到整首歌结束；宿主 dispose 时撤销全部 Blob URL 并取消在途请求。网页端 `artworkLoader` 默认直接返回原 URL，`useArtworkUrl` 同步返回，网页渲染不变。
 
-服务端 `createPlatformMetadataRouter` 默认未挂载，复用 `musicMetadataController` 的匿名目录搜索和歌词编排，不复制服务逻辑。显式 Authorization（含空/错误）、`mini_app_token` 查询参数或 Authorization 预检进入平台验证；正常 Web Cookie 请求与 Web 预检通过 `next('router')` 交还原链，不写头、不改变身份。平台验签检查 production/network.request、issuer/audience/app/time/Origin/GET/htu 与完整 query_keys，失败不降级 Cookie。认证限时 6 秒，处理限时 20 秒，JSON 响应不超过 1MiB，错误只返回固定 code。
+服务端 `createPlatformMetadataRouter` 仅在平台配置启用时挂载（`server/src/index.ts`，与媒体路由一并置于 Web CORS / Cookie 引导之前），复用 `musicMetadataController` 的匿名目录搜索和歌词编排，不复制服务逻辑。显式 Authorization（含空/错误）、`mini_app_token` 查询参数或 Authorization 预检进入平台验证；正常 Web Cookie 请求与 Web 预检通过 `next('router')` 交还原链，不写头、不改变身份。平台验签检查 production/network.request、issuer/audience/app/time/Origin/GET/htu 与完整 query_keys，失败不降级 Cookie。认证限时 6 秒，处理限时 20 秒，JSON 响应不超过 1MiB，错误只返回固定 code。
 
 限流不再手写：验签通过后设置 `req.identityUserId`，复用 `httpRateLimiter.ts` 的 `musicApiRateLimit`（每分钟 120 次，按身份分桶），可通过 `rateLimit` 选项替换。因路由自带该限流器，正式装配时须挂在通用 `/api/music` 限流器之前，避免重复计数。未验证请求的洪泛防护交给 Cloudflare 等入口层。
 

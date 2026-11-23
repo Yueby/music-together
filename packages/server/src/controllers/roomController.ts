@@ -13,6 +13,7 @@ import type { RoomData } from '../repositories/types.js'
 import { createWithOwnerOnly } from '../middleware/withControl.js'
 import {
   checkRoomEntryRateLimit,
+  checkRoomListRateLimit,
   clearJoinPasswordFailures,
   isJoinPasswordLocked,
   recordJoinPasswordFailure,
@@ -63,7 +64,8 @@ export function registerRoomController(io: TypedServer, socket: TypedSocket) {
   const withOwnerOnly = createWithOwnerOnly(io)
 
   // ---- Room list (不需要在房间内) ----
-  socket.on(EVENTS.ROOM_LIST, () => {
+  socket.on(EVENTS.ROOM_LIST, async () => {
+    if (!(await checkRoomListRateLimit(socket))) return
     try {
       socket.emit(EVENTS.ROOM_LIST_UPDATE, roomService.listRooms())
     } catch (err) {
@@ -89,7 +91,7 @@ export function registerRoomController(io: TypedServer, socket: TypedSocket) {
       // does not also kick the user out of where they are).
       if (countRoomsCreatedBy(socket.data.identityUserId) >= LIMITS.ROOM_MAX_CREATED_PER_IDENTITY) {
         socket.emit(EVENTS.ROOM_ERROR, {
-          code: ERROR_CODE.RATE_LIMITED,
+          code: ERROR_CODE.ROOM_ENTRY_LIMITED,
           message: `你创建的房间已达上限（${LIMITS.ROOM_MAX_CREATED_PER_IDENTITY} 个），请先关闭不用的房间`,
         })
         return
@@ -287,7 +289,9 @@ export function registerRoomController(io: TypedServer, socket: TypedSocket) {
       ctx.socket.to(ctx.roomId).emit(EVENTS.ROOM_SETTINGS, baseSettings)
 
       // How the queue is walked decides what comes next (and whether it is known in advance).
-      if (parsed.data.queueMode !== undefined) void playerService.preloadUpcoming(io, ctx.roomId)
+      if (parsed.data.queueMode !== undefined || parsed.data.audioQuality !== undefined) {
+        void playerService.preloadUpcoming(io, ctx.roomId)
+      }
 
       logger.info(`Room ${ctx.roomId} settings updated`, { roomId: ctx.roomId })
 

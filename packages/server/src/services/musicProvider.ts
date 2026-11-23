@@ -137,9 +137,6 @@ function getCoverRequestSize(source: MusicSource, size?: number): number {
 type TrackMeta = Omit<Track, 'id' | 'requestedBy'>
 
 class MusicProvider {
-  // Shared instances with format(true) — used for url/lyric/cover operations (no cookie)
-  private instances = new Map<MusicSource, MetingInstance>()
-
   // ---------------------------------------------------------------------------
   // 3-Layer Cache Architecture
   // ---------------------------------------------------------------------------
@@ -175,13 +172,14 @@ class MusicProvider {
   // Reads of whole playlists in flight, by `playlistCacheKey`: concurrent callers of the same list wait for one read.
   private playlistInflight = new Map<string, Promise<{ ids: string[]; total: number }>>()
 
+  /**
+   * A fresh formatted instance per operation. Meting keeps per-request state on the instance (`temp.br` is read
+   * after the HTTP round trip by the QQ/Kugou decoders, Kugou's `pic()` toggles `isFormat`), so sharing one across
+   * concurrent requests lets them overwrite each other (a 320k request answered with a 128k link, cached as 320k).
+   */
   private getInstance(source: MusicSource): MetingInstance {
-    let m = this.instances.get(source)
-    if (!m) {
-      m = new Meting(source)
-      m.format(true)
-      this.instances.set(source, m)
-    }
+    const m = new Meting(source)
+    m.format(true)
     return m
   }
 

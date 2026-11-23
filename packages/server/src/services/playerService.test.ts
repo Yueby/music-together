@@ -284,6 +284,21 @@ describe('playerService state transitions', () => {
       expect(emit.mock.calls.some(([event]) => event === 'player:play')).toBe(false)
     })
 
+    it('stops instead of keeping the finished track current when the next ones cannot be resolved', async () => {
+      vi.useFakeTimers()
+      vi.setSystemTime(new Date('2026-01-01T00:00:10Z'))
+      vi.spyOn(musicProvider, 'getStreamUrl').mockResolvedValue(null)
+      const data = consumingRoom('a', 'b')
+      data.queue = data.queue.map((t) => ({ ...t, streamUrl: undefined }))
+      data.currentTrack = data.queue[0]
+      const { io } = ioMock()
+
+      await playNextTrackInRoom(io as never, 'ROOM01', 'loop-all')
+
+      expect(data.queue).toEqual([])
+      expect(data.pendingPlayback?.type).toBe('stop')
+    })
+
     it('plays what was queued behind it, in the order it was queued', async () => {
       vi.useFakeTimers()
       vi.setSystemTime(new Date('2026-01-01T00:00:10Z'))
@@ -375,6 +390,34 @@ describe('playerService state transitions', () => {
 
       expect(data.pendingPlayback).toBeNull()
     })
+  })
+
+  it.each([
+    ['previous right after next', 'next', 'a'],
+    ['next right after previous', 'prev', 'a'],
+  ] as const)('navigates from the scheduled track, not the committed one: %s', async (_name, first, expected) => {
+    vi.useFakeTimers()
+    vi.setSystemTime(new Date('2026-01-01T00:00:10Z'))
+    const named = (id: string) => ({ ...track, id, sourceId: id, urlId: id })
+    const data = room()
+    data.playMode = 'loop-all'
+    data.queue = ['a', 'b', 'c'].map(named)
+    data.currentTrack = data.queue[0]
+    roomRepo.set('ROOM01', data)
+    const { io } = ioMock()
+
+    // The first switch is scheduled but not committed yet when the opposite control arrives.
+    if (first === 'next') {
+      await playNextTrackInRoom(io as never, 'ROOM01', 'loop-all')
+      expect(data.pendingPlayback?.track?.id).toBe('b')
+      await playPrevTrackInRoom(io as never, 'ROOM01', { skipDebounce: true })
+    } else {
+      await playPrevTrackInRoom(io as never, 'ROOM01')
+      expect(data.pendingPlayback?.track?.id).toBe('c')
+      await playNextTrackInRoom(io as never, 'ROOM01', 'loop-all', { skipDebounce: true })
+    }
+
+    expect(data.pendingPlayback?.track?.id).toBe(expected)
   })
 
   it('assigns a unique revision to every replacement action', () => {
@@ -872,6 +915,21 @@ describe('preloading the next track', () => {
     ])
     expect(data.queue[1].streamUrl).toBe(nextUrl)
     expect(data.queue[2].streamUrl).toBeUndefined()
+  })
+
+  it('discards a URL that finished resolving after the audio quality changed', async () => {
+    const data = playing()
+    let finish: (url: string) => void = () => {}
+    vi.spyOn(musicProvider, 'getStreamUrl').mockReturnValue(new Promise((resolve) => (finish = resolve)))
+    const { io, emit } = ioMock()
+
+    const pending = preloadUpcoming(io as never, 'ROOM01')
+    data.audioQuality = 128
+    finish(nextUrl)
+    await pending
+
+    expect(preloads(emit)).toHaveLength(0)
+    expect(data.queue[1].streamUrl).toBeUndefined()
   })
 
   it('does not repeat an announcement for the same upcoming track', async () => {

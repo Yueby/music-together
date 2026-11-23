@@ -1,3 +1,5 @@
+import { getServerTime, isCalibrated } from '@/lib/clockSync'
+
 /** Expected playback position when a scheduled play starts after its target time. */
 export function getScheduledPlaybackPosition(
   baseTime: number,
@@ -5,6 +7,15 @@ export function getScheduledPlaybackPosition(
   currentServerTime: number,
 ): number {
   return baseTime + Math.max(0, currentServerTime - serverTimeToExecute) / 1000
+}
+
+/**
+ * Server time to measure a scheduled start against. Before the clock is calibrated the local clock says nothing
+ * about the server's, so no time is assumed to have elapsed past the execution time (a client whose clock runs
+ * ahead would otherwise seek far into, or past the end of, the track).
+ */
+export function getScheduledServerNow(serverTimeToExecute: number): number {
+  return isCalibrated() ? getServerTime() : serverTimeToExecute
 }
 
 /** Adaptive hard-seek threshold based on NTP one-way delay uncertainty. */
