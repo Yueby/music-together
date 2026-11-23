@@ -1,6 +1,7 @@
 // Generated from sdk/src by tools/build-sdk.ts.
 import { type CodeDeclarations } from "./code-policy.js";
 import { type DevicePolicy } from "./device-policy.js";
+import { type NotificationTemplates } from "./notification-policy.js";
 import type { HttpMethod, Permission, RemoteAssetDeclaration } from "./types.js";
 export { bundleModules, type ModuleBundleOptions } from "./module-bundle.js";
 export interface EndpointDeclaration {
@@ -21,11 +22,17 @@ export interface MiniAppManifest {
     style: "app.css";
     permissions: readonly Permission[];
     name?: string;
+    /** Tags reviewed with this version. */
+    tags?: string[];
     assets?: string[];
     code?: CodeDeclarations;
     devices?: DevicePolicy;
     /** Exact external URLs allowed by links.open, including fixed query and fragment. */
     links?: string[];
+    /** Application UUIDv7 destinations reviewed for app.call. */
+    calls?: string[];
+    /** Reviewed notification text and optional permission-preview examples. */
+    notifications?: NotificationTemplates;
     /** Pinned CDN files; their bytes are omitted from the application ZIP. */
     remote_assets?: Record<string, RemoteAssetDeclaration>;
     media?: Record<string, {

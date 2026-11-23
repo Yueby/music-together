@@ -2,13 +2,15 @@
 import type { DeviceClient, DeviceSupported } from "./device-client.js";
 import type { MediaProgram, MediaProgramSource, MediaProgramState } from "./media-program.js";
 import type { NetworkTools } from "./network-tools.js";
-import type { HttpMethod, JsonValue, Permission } from "./types.js";
+import type { NotificationPermit, NotificationRequest } from "./notification-policy.js";
+import type { AppQuery, HttpMethod, JsonValue, Permission } from "./types.js";
 export type { NetworkTools } from "./network-tools.js";
+export type { NotificationTemplate, NotificationTemplates, NotificationRequest, NotificationPermit, } from "./notification-policy.js";
 export type { DeviceClient, DeviceSupported, CaptureKind, CaptureOptions, CaptureSnapshot, CapturedFrame, RecordingChunk, FinishedRecording, LocationSnapshot, UsbDeviceSnapshot, } from "./device-client.js";
 export type { DevicePolicy, UsbDeviceDeclaration, BluetoothDeviceDeclaration, } from "./device-policy.js";
 export type { CodeDeclarations } from "./code-policy.js";
 export type { MediaProgram, MediaByteRange, MediaAppendWindow, MediaTextSegment, MediaProgramTextTrack, MediaProgramSource, MediaProgramState, MediaFragment, MediaProgramTrack, MediaProgramVariant, MediaTimelineSegment, } from "./media-program.js";
-export type { HttpMethod, JsonValue, Permission, RemoteAssetDeclaration, RemoteAssetMime, } from "./types.js";
+export type { AppQuery, HttpMethod, JsonValue, Permission, RemoteAssetDeclaration, RemoteAssetMime, } from "./types.js";
 export interface MiniAppUser {
     id: number;
     username: string;
@@ -145,6 +147,16 @@ export interface MiniAppSocket {
 }
 /** Installed by the platform before the application's bundled script runs. */
 export interface MiniAppSDK {
+    readonly notifications: {
+        /** Ask during a real user action for one future delivery using a reviewed template. */
+        request(templateId: string, request: NotificationRequest, options?: RequestOptions): Promise<NotificationPermit>;
+    };
+    readonly app: {
+        /** Navigate to a manifest.calls destination. Success unloads this instance; continue at the destination's startup. */
+        call(appId: string, query?: AppQuery, options?: RequestOptions): Promise<void>;
+        /** Return to an ancestor as a fresh launch. Success unloads this instance. */
+        return(appId: string, query?: AppQuery, options?: RequestOptions): Promise<void>;
+    };
     readonly media: DeviceClient["media"];
     readonly location: DeviceClient["location"];
     readonly usb: DeviceClient["usb"];
