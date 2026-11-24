@@ -9,6 +9,7 @@ vi.mock('@/lib/metadataFetch', () => ({ metadataFetch: transport.fetch }))
 vi.mock('@/lib/config', () => ({ SERVER_URL: 'https://music.test' }))
 
 import { useRoomStore } from '@/stores/roomStore'
+import { clearAppQueryCache } from '@/lib/queryClient'
 import { useDiscover } from './useDiscover'
 
 const track = (id: string): Track => ({
@@ -44,6 +45,7 @@ function Probe() {
 }
 
 beforeEach(() => {
+  clearAppQueryCache()
   transport.fetch.mockReset()
   useRoomStore.setState({ room: { id: 'ROOM01' } as RoomState })
   container = document.createElement('div')
@@ -56,6 +58,18 @@ afterEach(() => {
 })
 
 describe('useDiscover', () => {
+  it('reuses a fresh radar list and fetches it again on explicit reload', async () => {
+    transport.fetch.mockResolvedValueOnce(json({ items: [list('1')] })).mockResolvedValueOnce(json({ items: [list('2')] }))
+    await act(async () => latest.loadRadar('netease'))
+    await act(async () => latest.loadRadar('netease'))
+    expect(transport.fetch).toHaveBeenCalledTimes(1)
+    expect(latest.radar.items).toEqual([list('1')])
+
+    await act(async () => latest.loadRadar('netease', true))
+    expect(transport.fetch).toHaveBeenCalledTimes(2)
+    expect(latest.radar.items).toEqual([list('2')])
+  })
+
   it("loads today's songs for the room the caller is in", async () => {
     transport.fetch.mockResolvedValueOnce(json({ items: [track('1'), track('2')] }))
     await act(async () => latest.loadDaily('netease'))

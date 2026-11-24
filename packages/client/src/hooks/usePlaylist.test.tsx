@@ -13,6 +13,7 @@ vi.mock('@/providers/SocketProvider', () => ({
 
 import { useRoomStore } from '@/stores/roomStore'
 import { usePlaylist } from './usePlaylist'
+import { clearAppQueryCache } from '@/lib/queryClient'
 
 const track = (id: string): Track => ({
   id: `t-${id}`,
@@ -52,6 +53,7 @@ function Probe() {
 }
 
 beforeEach(() => {
+  clearAppQueryCache()
   transport.fetch.mockReset()
   useRoomStore.setState({ room: { id: 'ROOM01' } as RoomState })
   container = document.createElement('div')

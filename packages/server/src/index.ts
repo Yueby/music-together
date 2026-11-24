@@ -8,6 +8,11 @@ import { fileURLToPath } from 'node:url'
 import { Server } from 'socket.io'
 import { config } from './config.js'
 import { initializeSocket } from './controllers/index.js'
+import {
+  createCompressionMiddleware,
+  createHelmetMiddleware,
+  createHttpLoggerMiddleware,
+} from './middleware/httpEnhancements.js'
 import { identityHttpMiddleware } from './middleware/identityHttp.js'
 import { musicApiRateLimit, roomCheckRateLimit } from './middleware/httpRateLimiter.js'
 import { attachSocketIdentity } from './middleware/socketIdentity.js'
@@ -42,6 +47,9 @@ const platform = loadPlatform()
 const app = express()
 // Behind a reverse proxy req.ip must be the real client (per-IP rate limits), see TRUST_PROXY in deployment.md.
 app.set('trust proxy', config.trustProxy)
+app.use(createHelmetMiddleware())
+app.use(createCompressionMiddleware())
+app.use(createHttpLoggerMiddleware())
 const httpServer = createServer(app)
 
 if (platform) {

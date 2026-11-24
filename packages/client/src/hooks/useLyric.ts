@@ -1,6 +1,7 @@
 import { SERVER_URL } from '@/lib/config'
 import { metadataFetch } from '@/lib/metadataFetch'
 import { findClosestLyricLine } from '@/lib/lyricMatching'
+import { fetchAppQuery, queryKeys } from '@/lib/queryClient'
 import { usePlayerStore } from '@/stores/playerStore'
 import { useSettingsStore } from '@/stores/settingsStore'
 import type { LyricLine } from '@applemusic-like-lyrics/core'
@@ -13,6 +14,7 @@ const isTtmlSource = (source: string): source is (typeof TTML_SOURCES)[number] =
 
 /** TTML 请求超时（ms） */
 const TTML_TIMEOUT_MS = 8_000
+const LYRIC_STALE_TIME = 30 * 60_000
 
 function mergeAuxiliaryLyrics(
   lines: LyricLine[],
@@ -52,8 +54,7 @@ export function useLyric() {
   const fetchLyric = useCallback(
     async (track: Track) => {
       // Cancel any in-flight lyric request (e.g. rapid track switching)
-      abortRef.current?.abort()
-      abortRef.current = null
+      const previous = abortRef.current
 
       // 重置歌词状态（立即清空，避免显示上一首歌的歌词）
       setTtmlLines(null)
@@ -71,14 +72,22 @@ export function useLyric() {
         yrc: string
         wordByWord?: LyricLine[]
       }
-      const lyricRequest: Promise<ServerLyric | null> = track.lyricId
-        ? metadataFetch(
-            `${SERVER_URL}/api/music/lyric?source=${track.source}&lyricId=${encodeURIComponent(track.lyricId)}`,
-            { signal: controller.signal, credentials: 'include' },
-          ).then(
-            (res) => (res.ok ? (res.json() as Promise<ServerLyric>) : null),
-            () => null,
-          )
+      const { lyricId } = track
+      const lyricRequest: Promise<ServerLyric | null> = lyricId
+        ? fetchAppQuery(
+            queryKeys.lyric(track.source, lyricId),
+            LYRIC_STALE_TIME,
+            async (signal) => {
+              const res = await metadataFetch(
+                `${SERVER_URL}/api/music/lyric?source=${track.source}&lyricId=${encodeURIComponent(lyricId)}`,
+                { signal, credentials: 'include' },
+              )
+              if (!res.ok) throw new Error('Lyric request failed')
+              return (await res.json()) as ServerLyric
+            },
+            controller.signal,
+            { gcTime: LYRIC_STALE_TIME },
+          ).catch(() => null)
         : Promise.resolve(null)
 
       // ========================================
@@ -91,24 +100,29 @@ export function useLyric() {
         const { ttmlEnabled } = useSettingsStore.getState()
         if (!ttmlEnabled || !isTtmlSource(track.source)) return
         try {
-          const ttmlUrl = `${SERVER_URL}/api/music/ttml?source=${track.source}&id=${encodeURIComponent(track.sourceId)}`
-          // 绑定主 controller：切歌/卸载时取消 TTML，避免过时响应写回 store；同时 8s 超时
-          const timeoutSignal = typeof AbortSignal?.timeout === 'function' ? AbortSignal.timeout(TTML_TIMEOUT_MS) : null
-          const SignalFactory = AbortSignal as typeof AbortSignal & {
-            any?: (signals: AbortSignal[]) => AbortSignal
-          }
-          const ttmlSignal =
-            timeoutSignal && typeof SignalFactory.any === 'function'
-              ? SignalFactory.any([controller.signal, timeoutSignal])
-              : controller.signal
-
-          const ttmlRes = await metadataFetch(ttmlUrl, { signal: ttmlSignal, credentials: 'include' })
-          if (!ttmlRes.ok) return
-          // `lines: null` 表示库里没有这首歌
-          const body = (await ttmlRes.json()) as { lines?: unknown }
-          if (controller.signal.aborted || !Array.isArray(body.lines) || body.lines.length === 0) return
+          const lines = await fetchAppQuery(
+            queryKeys.ttml(track),
+            LYRIC_STALE_TIME,
+            async (signal) => {
+              const url = `${SERVER_URL}/api/music/ttml?source=${track.source}&id=${encodeURIComponent(track.sourceId)}`
+              const ttmlSignal = typeof AbortSignal.timeout === 'function' && typeof AbortSignal.any === 'function'
+                ? AbortSignal.any([signal, AbortSignal.timeout(TTML_TIMEOUT_MS)])
+                : signal
+              const res = await metadataFetch(url, { signal: ttmlSignal, credentials: 'include' })
+              if (!res.ok) throw new Error('TTML request failed')
+              // `lines: null` 表示库里没有这首歌
+              const body = (await res.json()) as { lines?: unknown }
+              if (ttmlSignal.aborted) throw ttmlSignal.reason
+              if (body.lines === null) return null
+              if (!Array.isArray(body.lines)) throw new Error('Invalid TTML response')
+              return body.lines as LyricLine[]
+            },
+            controller.signal,
+            { gcTime: LYRIC_STALE_TIME },
+          )
+          if (controller.signal.aborted || !lines?.length) return
           ttmlApplied = true
-          setTtmlLines(body.lines as LyricLine[])
+          setTtmlLines(lines)
           setLyricLoading(false)
         } catch {
           // TTML 获取失败（超时/网络错误），静默回退
@@ -153,7 +167,9 @@ export function useLyric() {
         setLyricLoading(false)
       }
 
-      await Promise.all([fetchTtml(), applyServerLyric()])
+      const requests = Promise.all([fetchTtml(), applyServerLyric()])
+      previous?.abort()
+      await requests
       if (controller.signal.aborted) return
       setLyricLoading(false)
     },

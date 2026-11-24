@@ -1,5 +1,5 @@
 import { readFileSync } from 'node:fs'
-import { defineConfig } from 'vite'
+import { defineConfig, type UserConfig } from 'vite'
 import { createMappClientConfig } from '../client/mapp.vite.ts'
 
 const manifest = JSON.parse(readFileSync(new URL('./manifest.json', import.meta.url), 'utf8'))
@@ -10,6 +10,6 @@ const manifest = JSON.parse(readFileSync(new URL('./manifest.json', import.meta.
  */
 export default defineConfig(({ command }) =>
   command === 'build'
-    ? createMappClientConfig(process.env.MAPP_ROOM_URL, process.env.MINI_APP_VERSION || manifest.version)
+    ? (createMappClientConfig(process.env.MAPP_ROOM_URL, process.env.MINI_APP_VERSION || manifest.version) as UserConfig)
     : {},
 )

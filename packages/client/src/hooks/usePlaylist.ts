@@ -5,6 +5,7 @@ import { useRoomStore } from '@/stores/roomStore'
 import { SERVER_URL } from '@/lib/config'
 import { hostRuntime } from '@/lib/hostRuntime'
 import { metadataFetch } from '@/lib/metadataFetch'
+import { fetchAppQuery, queryKeys } from '@/lib/queryClient'
 
 /** Matches the most tracks a mini-app playlist page may carry, so every host pages the same way. */
 const PAGE_SIZE = MAPP_PLAYLIST_PAGE_MAX
@@ -89,6 +90,30 @@ interface PlaylistContext {
   personalRoomId?: string
 }
 
+interface PlaylistPage {
+  tracks?: Track[]
+  total?: number
+  hasMore?: boolean
+}
+
+function fetchPlaylistPage(ctx: PlaylistContext, offset: number, total: number | undefined, signal: AbortSignal) {
+  const { source, id, type, personalRoomId } = ctx
+  const queryKey = personalRoomId
+    ? queryKeys.playlist.mine(source, personalRoomId, id, offset, PAGE_SIZE)
+    : queryKeys.playlist.public(source, type ?? 'playlist', id, offset, PAGE_SIZE)
+  return fetchAppQuery(
+    queryKey,
+    personalRoomId ? 60_000 : 5 * 60_000,
+    async (querySignal) => {
+      const url = buildPlaylistUrl(source, id, PAGE_SIZE, offset, { total, type, personalRoomId })
+      const res = await metadataFetch(url, { credentials: 'include', signal: querySignal })
+      if (!res.ok) throw new Error('Playlist request failed')
+      return (await res.json()) as PlaylistPage
+    },
+    signal,
+  )
+}
+
 export function usePlaylist() {
   const { socket } = useSocketContext()
   const [myPlaylists, setMyPlaylists] = useState<Record<MusicSource, Playlist[]>>({
@@ -163,7 +188,7 @@ export function usePlaylist() {
       loadingMoreRef.current = false
 
       // A newer list replaces whatever was still loading.
-      abortRef.current?.abort()
+      const previous = abortRef.current
       const controller = new AbortController()
       abortRef.current = controller
       const context: PlaylistContext = { source, id: playlistId, type, personalRoomId }
@@ -173,26 +198,15 @@ export function usePlaylist() {
 
       // Own lists need a room; without one there is nothing to read them with.
       if (personal && !personalRoomId) {
+        previous?.abort()
         setTracksLoading(false)
         return []
       }
 
       try {
-        const url = buildPlaylistUrl(source, playlistId, PAGE_SIZE, 0, {
-          total: trackCount,
-          type,
-          personalRoomId,
-        })
-        const res = await metadataFetch(url, { credentials: 'include', signal: controller.signal })
-        // Whatever the answer, it only counts if this is still the list on screen: a late failure of an old list
-        // must not end the loading state of the new one.
-        if (!isCurrent()) return []
-        if (!res.ok) {
-          setTracksLoading(false)
-          return []
-        }
-
-        const data = await res.json()
+        const request = fetchPlaylistPage(context, 0, trackCount, controller.signal)
+        previous?.abort()
+        const data = await request
         if (!isCurrent()) return []
         const tracks: Track[] = data.tracks ?? []
         const total: number = data.total ?? tracks.length
@@ -219,25 +233,15 @@ export function usePlaylist() {
    */
   const loadMoreTracks = useCallback(async () => {
     const ctx = currentPlaylistRef.current
-    if (!ctx || loadingMoreRef.current || !hasMoreTracks) return
+    const controller = abortRef.current
+    if (!ctx || !controller || loadingMoreRef.current || !hasMoreTracks) return
 
     loadingMoreRef.current = true
     setLoadingMore(true)
 
     try {
       const offset = offsetRef.current
-      const url = buildPlaylistUrl(ctx.source, ctx.id, PAGE_SIZE, offset, {
-        total: playlistTotal,
-        type: ctx.type,
-        personalRoomId: ctx.personalRoomId,
-      })
-      const res = await metadataFetch(url, { credentials: 'include', signal: abortRef.current?.signal })
-      if (!res.ok) return
-
-      // Stale response guard — the list might have changed while we were fetching
-      if (currentPlaylistRef.current !== ctx) return
-
-      const data = await res.json()
+      const data = await fetchPlaylistPage(ctx, offset, playlistTotal, controller.signal)
       if (currentPlaylistRef.current !== ctx) return
       const newTracks: Track[] = data.tracks ?? []
 
@@ -247,8 +251,10 @@ export function usePlaylist() {
     } catch {
       // Silently fail — user can scroll again to retry
     } finally {
-      loadingMoreRef.current = false
-      setLoadingMore(false)
+      if (currentPlaylistRef.current === ctx) {
+        loadingMoreRef.current = false
+        setLoadingMore(false)
+      }
     }
   }, [hasMoreTracks, playlistTotal])
 

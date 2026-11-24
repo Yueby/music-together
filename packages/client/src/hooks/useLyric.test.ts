@@ -9,6 +9,7 @@ vi.mock('@/lib/metadataFetch', () => ({ metadataFetch: fetchMock }))
 import { usePlayerStore } from '@/stores/playerStore'
 import { useSettingsStore } from '@/stores/settingsStore'
 import { useLyric } from './useLyric'
+import { clearAppQueryCache } from '@/lib/queryClient'
 
 const track = { id: 't', source: 'netease', sourceId: 'sid', lyricId: 'lid' } as Track
 const ttmlLines = [{ startTime: 0, endTime: 1000, words: [{ word: 'ttml', startTime: 0, endTime: 1000 }] }]
@@ -23,6 +24,7 @@ const json = (body: unknown) => ({ ok: true, json: async () => body }) as Respon
 let fetchLyric: (t: Track) => Promise<void>
 
 beforeEach(() => {
+  clearAppQueryCache()
   vi.stubGlobal('IS_REACT_ACT_ENVIRONMENT', true)
   fetchMock.mockReset()
   usePlayerStore.getState().setLyric('', '')
@@ -36,6 +38,26 @@ afterEach(() => {
 })
 
 describe('useLyric', () => {
+  it('reuses the base lyric and retries a failed TTML request for the same track', async () => {
+    fetchMock
+      .mockResolvedValueOnce(json({ lyric: '[00:00.00]base' }))
+      .mockResolvedValueOnce({ ok: false })
+      .mockResolvedValueOnce(json({ lines: ttmlLines }))
+
+    await act(() => fetchLyric(track))
+    expect(usePlayerStore.getState().lyric).toBe('[00:00.00]base')
+    expect(usePlayerStore.getState().ttmlLines).toBeNull()
+
+    await act(() => fetchLyric(track))
+    expect(fetchMock).toHaveBeenCalledTimes(3)
+    expect(usePlayerStore.getState().ttmlLines).toEqual(ttmlLines)
+
+    await act(() => fetchLyric(track))
+    expect(fetchMock).toHaveBeenCalledTimes(3)
+    expect(usePlayerStore.getState().lyric).toBe('[00:00.00]base')
+    expect(usePlayerStore.getState().ttmlLines).toEqual(ttmlLines)
+  })
+
   it('shows the base lyric as soon as it arrives, without waiting for a slow TTML', async () => {
     const ttml = deferred<Response>()
     fetchMock.mockImplementation((url: string) =>

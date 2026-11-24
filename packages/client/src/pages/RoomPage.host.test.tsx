@@ -27,7 +27,10 @@ vi.mock('motion/react', () => ({
 }))
 vi.mock('sonner', () => ({ toast: { error: vi.fn() } }))
 vi.mock('@/providers/SocketProvider', () => ({ useSocketContext: () => fixture.context }))
-vi.mock('@/providers/AbilityProvider', () => ({ AbilityProvider: ({ children }: { children: ReactNode }) => children }))
+vi.mock('@/providers/AbilityProvider', () => ({
+  AbilityProvider: ({ children }: { children: ReactNode }) => children,
+  useAppAbility: () => ({ can: () => true }),
+}))
 vi.mock('@/stores/chatStore', () => {
   const state = {
     get isChatOpen() {
@@ -48,6 +51,8 @@ vi.mock('@/lib/storage', () => ({
     getUserId: () => '',
     getRejoinToken: () => 'fixture-web-ticket',
     hasAuthCookie: () => false,
+    getVolume: () => 0.8,
+    setVolume: vi.fn(),
   },
 }))
 vi.mock('@/hooks/useRoom', () => ({

@@ -1,5 +1,6 @@
 import { SERVER_URL } from '@/lib/config'
 import { metadataFetch } from '@/lib/metadataFetch'
+import { fetchAppQuery, queryKeys } from '@/lib/queryClient'
 import type { Artist, MusicSource, Playlist, Track } from '@music-together/shared'
 import { useCallback, useEffect, useRef, useState } from 'react'
 import { toast } from 'sonner'
@@ -34,22 +35,28 @@ export function useSearch(source: MusicSource, type: SearchType = 'song') {
   }, [])
 
   const fetchPage = useCallback(
-    async (
+    (
       searchSource: MusicSource,
       searchKeyword: string,
       searchPage: number,
       signal: AbortSignal,
       searchType: SearchType,
-    ): Promise<{ tracks: SearchResult[]; hasMore: boolean }> => {
-      const res = await metadataFetch(
-        `${SERVER_URL}/api/music/search?source=${searchSource}&keyword=${encodeURIComponent(searchKeyword)}&limit=${PAGE_SIZE}&page=${searchPage}&type=${searchType}`,
-        { signal, credentials: 'include' },
-      )
-      if (!res.ok) throw new Error('Search failed')
-      const data = await res.json()
-      const tracks = data.tracks || []
-      return { tracks, hasMore: data.hasMore ?? tracks.length >= PAGE_SIZE }
-    },
+    ): Promise<{ tracks: SearchResult[]; hasMore: boolean }> =>
+      fetchAppQuery(
+        queryKeys.search(searchSource, searchType, searchKeyword, searchPage),
+        3 * 60_000,
+        async (querySignal) => {
+          const res = await metadataFetch(
+            `${SERVER_URL}/api/music/search?source=${searchSource}&keyword=${encodeURIComponent(searchKeyword)}&limit=${PAGE_SIZE}&page=${searchPage}&type=${searchType}`,
+            { signal: querySignal, credentials: 'include' },
+          )
+          if (!res.ok) throw new Error('Search failed')
+          const data = (await res.json()) as { tracks?: SearchResult[]; hasMore?: boolean }
+          const tracks = data.tracks ?? []
+          return { tracks, hasMore: data.hasMore ?? tracks.length >= PAGE_SIZE }
+        },
+        signal,
+      ),
     [],
   )
 
@@ -58,7 +65,7 @@ export function useSearch(source: MusicSource, type: SearchType = 'song') {
       const trimmed = keyword.trim()
       if (!trimmed) return
 
-      abortRef.current?.abort()
+      const previous = abortRef.current
       loadMoreAbortRef.current?.abort()
       const controller = new AbortController()
       abortRef.current = controller
@@ -70,7 +77,9 @@ export function useSearch(source: MusicSource, type: SearchType = 'song') {
       setLoadingMore(false)
       setLoading(true)
       setHasSearched(true)
-      fetchPage(source, trimmed, 1, controller.signal, type)
+      const request = fetchPage(source, trimmed, 1, controller.signal, type)
+      previous?.abort()
+      request
         .then((data) => {
           if (searchIdRef.current !== currentSearchId) return
           setResults(data.tracks)

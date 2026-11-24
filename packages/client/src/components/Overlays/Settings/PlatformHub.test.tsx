@@ -89,6 +89,7 @@ vi.mock('./PlaylistSection', () => ({ PlaylistSection: () => <div data-testid="m
 
 import { useArtistPageStore } from '@/stores/artistPageStore'
 import { useRoomStore } from '@/stores/roomStore'
+import { clearAppQueryCache } from '@/lib/queryClient'
 import type { AccountSession } from '@/hooks/useAccountSession'
 import { useDialogPages } from '@/hooks/useDialogPages'
 import { PlatformHub, type AccountPage } from './PlatformHub'
@@ -107,6 +108,7 @@ function Hub({ session }: { session: AccountSession }) {
 let container: HTMLDivElement
 let root: ReturnType<typeof createRoot>
 beforeEach(() => {
+  clearAppQueryCache()
   vi.stubGlobal('IS_REACT_ACT_ENVIRONMENT', true)
   vi.clearAllMocks()
   hooks.daily = { items: dailySongs, loading: false, error: null, source: 'netease' }
@@ -181,7 +183,7 @@ describe('PlatformHub', () => {
     render('netease', true)
     hooks.loadDaily.mockClear()
     act(() => tile('加载失败，点击重试').click())
-    expect(hooks.loadDaily).toHaveBeenCalledExactlyOnceWith('netease')
+    expect(hooks.loadDaily).toHaveBeenCalledExactlyOnceWith('netease', true)
     expect(container.querySelector('[data-testid="detail"]')).toBeNull()
   })
 
@@ -237,7 +239,7 @@ describe('PlatformHub', () => {
     expect(container.textContent).not.toContain('暂无内容')
     hooks.loadHome.mockClear()
     act(() => tile('重试').click())
-    expect(hooks.loadHome).toHaveBeenCalledExactlyOnceWith('netease')
+    expect(hooks.loadHome).toHaveBeenCalledExactlyOnceWith('netease', true)
     // The blocks that did load are still there.
     expect(container.textContent).toContain('新专辑')
   })

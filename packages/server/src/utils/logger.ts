@@ -2,7 +2,7 @@ import pino from 'pino'
 
 const isDev = process.env.NODE_ENV !== 'production'
 
-const baseLogger = pino({
+export const baseLogger = pino({
   level: process.env.LOG_LEVEL || 'info',
   ...(isDev && {
     transport: {
