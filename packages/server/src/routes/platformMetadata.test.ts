@@ -484,6 +484,9 @@ describe('platform cover target', () => {
   describe('default fetcher (global fetch mocked, no network)', () => {
     const image = (bytes: number, headers: Record<string, string> = {}) =>
       new Response(Buffer.alloc(bytes), { headers: { 'content-type': 'image/png', ...headers } })
+    const coverFixture = (variant: string) => '/api/music/cover-proxy?url=' + encodeURIComponent(
+      new URL(`/${variant}.png`, coverImage).toString(),
+    )
     afterEach(() => vi.unstubAllGlobals())
 
     it('returns allowed-host images up to 2 MiB', async () => {
@@ -498,12 +501,13 @@ describe('platform cover target', () => {
     })
 
     it('rejects images above 2 MiB, declared or not', async () => {
-      for (const response of [
-        image(10, { 'content-length': String(2 * 1024 * 1024 + 1) }),
-        image(2 * 1024 * 1024 + 1),
-      ]) {
+      const variants = {
+        'declared-oversize': image(10, { 'content-length': String(2 * 1024 * 1024 + 1) }),
+        'actual-oversize': image(2 * 1024 * 1024 + 1),
+      }
+      for (const [variant, response] of Object.entries(variants)) {
         vi.stubGlobal('fetch', vi.fn().mockResolvedValue(response))
-        const f = fixture({ raw: coverRaw, defaults: true })
+        const f = fixture({ raw: coverFixture(variant), defaults: true })
         await f.run()
         expect(f.res.statusCode).toBe(503)
         expect(f.res.body).toEqual({ code: 'METADATA_COVER_REJECTED' })
@@ -528,7 +532,7 @@ describe('platform cover target', () => {
         'fetch',
         vi.fn().mockResolvedValue(new Response('<html>', { headers: { 'content-type': 'text/html' } })),
       )
-      const f = fixture({ raw: coverRaw, defaults: true })
+      const f = fixture({ raw: coverFixture('non-image'), defaults: true })
       await f.run()
       expect(f.res.statusCode).toBe(503)
       expect(f.res.body).toEqual({ code: 'METADATA_COVER_REJECTED' })

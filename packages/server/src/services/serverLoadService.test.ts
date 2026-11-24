@@ -4,6 +4,7 @@ import {
   deriveBaselineUnits,
   ELD_RESOLUTION_MS,
   normalizeEventLoopDelayMs,
+  type CapacityControllerConfig,
   type LoadSampleInput,
 } from './serverLoadService.js'
 
@@ -32,6 +33,26 @@ function makeSample(overrides: Partial<LoadSampleInput> = {}): LoadSampleInput {
   }
 }
 
+function makeController(overrides: Partial<CapacityControllerConfig> = {}) {
+  return new CapacityController({
+    enabled: true,
+    minUnits: 12,
+    maxUnits: 300,
+    baseUnits: 100,
+    mappWeight: 3,
+    maxQueue: 100,
+    initialMemoryLimitBytes: 512 * 1024 * 1024,
+    initialCpuLimitCores: 0.75,
+    ...overrides,
+  })
+}
+
+function recordTicks(ctrl: CapacityController, sample: LoadSampleInput, ticks: number) {
+  for (let tick = 0; tick < ticks; tick++) {
+    ctrl.recordSample({ ...sample, now: sample.now + tick * 2_000 })
+  }
+}
+
 describe('deriveBaselineUnits', () => {
   it('computes ~105 units for a 512 MiB / 0.75 CPU container', () => {
     const cap = deriveBaselineUnits(512 * 1024 * 1024, 0.75, 12, 300)
@@ -40,6 +61,203 @@ describe('deriveBaselineUnits', () => {
 })
 
 describe('CapacityController', () => {
+  it('caps relay overhead and charges one unit after the relay slots are accounted for', () => {
+    const ctrl = makeController({ baseUnits: 30 })
+    expect(ctrl.computeUsedUnits(5, 7)).toBe(5 + 7 * 3)
+    expect(ctrl.computeUsedUnits(5, 8)).toBe(5 + 8 * 3)
+    expect(ctrl.computeUsedUnits(5, 9)).toBe(5 + 9 + 2 * 8)
+    expect(ctrl.canAdmit('mapp', { webInRoom: 7, mappInRoom: 7, activeRooms: 1 })).toEqual({
+      allowed: false,
+      reason: 'capacity',
+    })
+    expect(ctrl.canAdmit('mapp', { webInRoom: 6, mappInRoom: 7, activeRooms: 1 })).toEqual({ allowed: true })
+    expect(ctrl.canAdmit('mapp', { webInRoom: 5, mappInRoom: 8, activeRooms: 1 })).toEqual({ allowed: true })
+    expect(ctrl.canAdmit('mapp', { webInRoom: 4, mappInRoom: 9, activeRooms: 1 })).toEqual({ allowed: true })
+  })
+
+  it.each([
+    { webInRoom: 0, mappInRoom: 0 },
+    { webInRoom: 94, mappInRoom: 1 },
+    { webInRoom: 76, mappInRoom: 7 },
+    { webInRoom: 77, mappInRoom: 7 },
+    { webInRoom: 74, mappInRoom: 8 },
+    { webInRoom: 15, mappInRoom: 20 },
+    { webInRoom: 64, mappInRoom: 20 },
+  ])('estimates successive admissions from %j across the relay boundary', (counts) => {
+    const ctrl = makeController()
+    const live = { ...counts, activeRooms: 3, queueLength: 0 }
+    const status = ctrl.getPublicStatus(live)
+
+    for (const kind of ['web', 'mapp'] as const) {
+      const current = { ...live }
+      let admitted = 0
+      while (admitted <= status.effectiveCap && ctrl.canAdmit(kind, current).allowed) {
+        if (kind === 'web') current.webInRoom++
+        else current.mappInRoom++
+        admitted++
+      }
+      expect(admitted).toBe(kind === 'web' ? status.estimatedWebRemaining : status.estimatedMappRemaining)
+    }
+  })
+
+  it.each([
+    { recentWaitP95Ms: 4_250, expectedLevel: 'busy', minPercent: 60 },
+    { recentWaitP95Ms: 6_000, expectedLevel: 'full', minPercent: 85 },
+  ])('reports consistent mini-app pressure and $expectedLevel level', ({ recentWaitP95Ms, expectedLevel, minPercent }) => {
+    const ctrl = makeController()
+    const sample = makeSample({ streams: { ...IDLE_STREAMS, recentWaitP95Ms } })
+    ctrl.recordSample(sample)
+    const status = ctrl.getPublicStatus(sample)
+
+    expect(status.level).toBe('normal')
+    expect(status.mappLevel).toBe(expectedLevel)
+    expect(status.mappPressurePercent).toBe(minPercent)
+    expect(status.mappPressurePercent).toBeGreaterThan(status.pressurePercent)
+    if (expectedLevel === 'full') expect(status.estimatedMappRemaining).toBe(0)
+    else expect(status.estimatedMappRemaining).toBeGreaterThan(0)
+  })
+
+  it('shows zero available places and a busy level when there are general capacity waiters', () => {
+    const ctrl = makeController()
+    const sample = makeSample({ queueLength: 1 })
+    expect(ctrl.getPublicStatus(sample)).toMatchObject({ level: 'normal', mappLevel: 'normal' })
+    expect(ctrl.getPublicStatus({ ...sample, capacityWaiting: true })).toMatchObject({
+      level: 'busy',
+      mappLevel: 'busy',
+      estimatedWebRemaining: 0,
+      estimatedMappRemaining: 0,
+      pressurePercent: 60,
+      mappPressurePercent: 60,
+    })
+  })
+
+  it('applies the room limit only to new mini-app joins in the saturated room', () => {
+    const ctrl = makeController()
+    const live = { webInRoom: 5, mappInRoom: 16, mappInTargetRoom: 16, activeRooms: 2 }
+    expect(ctrl.getPublicStatus({ ...live, queueLength: 0 }).mappRoomLimit).toBe(16)
+    expect(ctrl.canAdmit('mapp', live)).toEqual({ allowed: false, reason: 'mapp_room' })
+    expect(ctrl.canAdmit('web', live)).toEqual({ allowed: true })
+    expect(ctrl.canAdmit('mapp', { ...live, mappInTargetRoom: 15 })).toEqual({ allowed: true })
+    expect(ctrl.canAdmit('mapp', live, { isCreate: true })).toEqual({ allowed: true })
+    const atCapacity = { ...live, webInRoom: 10_000 }
+    expect(ctrl.canAdmit('mapp', atCapacity)).toEqual({ allowed: false, reason: 'capacity' })
+    expect(ctrl.canAdmit('mapp', atCapacity, { roomSwitch: true })).toEqual({ allowed: false, reason: 'mapp_room' })
+    expect(ctrl.canAdmit('mapp', { ...atCapacity, mappInTargetRoom: 15 }, { roomSwitch: true })).toEqual({ allowed: true })
+    expect(ctrl.canAdmit('mapp', live, { bypass: true })).toEqual({ allowed: true })
+  })
+
+  it.each([
+    { mappRoomBase: 1, expectedLimit: 8 },
+    { mappRoomBase: 30, expectedLimit: 18 },
+  ])('clamps room base $mappRoomBase to the relay slot and queue bounds', ({ mappRoomBase, expectedLimit }) => {
+    const ctrl = makeController({ mappRoomBase, relayMaxQueued: 10 })
+    expect(ctrl.getDiagnostics().mappRoomCap).toBe(expectedLimit)
+  })
+
+  it('shrinks only the room limit when relay pressure is sustained', () => {
+    const ctrl = makeController()
+    const sample = makeSample({
+      mappInRoom: 30,
+      mappPeakRoom: 10,
+      streams: { ...IDLE_STREAMS, activeStreams: 8, recentBusyCount: 2 },
+    })
+    ctrl.recordSample(sample)
+    expect(ctrl.getDiagnostics()).toMatchObject({ mappRoomCap: 16, effectiveCap: 100 })
+    ctrl.recordSample(sample)
+    expect(ctrl.getDiagnostics()).toMatchObject({ mappRoomCap: 10, effectiveCap: 100 })
+    recordTicks(ctrl, sample, 4)
+    expect(ctrl.getDiagnostics()).toMatchObject({ mappRoomCap: 8, effectiveCap: 100 })
+  })
+
+  it('defers two general shrinks to the room limit while relay utilization is high', () => {
+    const ctrl = makeController({ mappRoomBase: 32 })
+    const sample = makeSample({
+      eventLoopDelayP95Ms: 80,
+      webInRoom: 50,
+      mappInRoom: 28,
+      streams: { ...IDLE_STREAMS, activeStreams: 3, waitingCount: 1 },
+    })
+
+    recordTicks(ctrl, sample, 2)
+    expect(ctrl.canAdmit('web', sample)).toEqual({ allowed: false, reason: 'capacity' })
+    expect(ctrl.getDiagnostics()).toMatchObject({
+      mappRoomCap: 27, effectiveCap: 100, ewmaRelayUtil: 0.5, relayDeferredShrinks: 1,
+    })
+    recordTicks(ctrl, sample, 2)
+    expect(ctrl.getDiagnostics()).toMatchObject({ mappRoomCap: 22, effectiveCap: 100, relayDeferredShrinks: 2 })
+    recordTicks(ctrl, sample, 2)
+    expect(ctrl.getDiagnostics()).toMatchObject({ mappRoomCap: 18, effectiveCap: 85, relayDeferredShrinks: 2 })
+  })
+
+  it('shrinks general capacity immediately at the urgent memory threshold even under relay load', () => {
+    const ctrl = makeController()
+    const sample = makeSample({ streams: { ...IDLE_STREAMS, activeStreams: 8 } })
+    ctrl.recordSample(sample)
+    ctrl.recordSample({ ...sample, memoryRatio: 0.88 })
+    expect(ctrl.getDiagnostics()).toMatchObject({
+      effectiveCap: 16, mappRoomCap: 16, ewmaRelayUtil: 1, relayDeferredShrinks: 0,
+    })
+  })
+
+  it('shrinks general capacity after two overload ticks when the relay is idle', () => {
+    const ctrl = makeController()
+    const sample = makeSample({ eventLoopDelayP95Ms: 80 })
+    ctrl.recordSample(sample)
+    expect(ctrl.getDiagnostics().effectiveCap).toBe(100)
+    ctrl.recordSample(sample)
+    expect(ctrl.getDiagnostics()).toMatchObject({ effectiveCap: 16, mappRoomCap: 16, relayDeferredShrinks: 0 })
+  })
+
+  it('resets relay deferrals after general pressure cools below 0.65', () => {
+    const ctrl = makeController({ mappRoomBase: 32 })
+    const sample = makeSample({
+      eventLoopUtilization: 0.85,
+      mappInRoom: 28,
+      streams: { ...IDLE_STREAMS, activeStreams: 8 },
+    })
+    recordTicks(ctrl, sample, 4)
+    expect(ctrl.getDiagnostics().relayDeferredShrinks).toBe(2)
+    ctrl.recordSample({ ...sample, eventLoopUtilization: 0 })
+    expect(ctrl.getDiagnostics().relayDeferredShrinks).toBe(0)
+    recordTicks(ctrl, sample, 6)
+    expect(ctrl.getDiagnostics()).toMatchObject({ effectiveCap: 100, relayDeferredShrinks: 1 })
+  })
+
+  it.each([
+    { memoryRatio: 0.35, mappPeakRoom: 13, recentWaitP95Ms: 0 },
+    { memoryRatio: 0.35, mappPeakRoom: 12, recentWaitP95Ms: 500 },
+    { memoryRatio: 0.78, mappPeakRoom: 13, recentWaitP95Ms: 500 },
+    { memoryRatio: 0.35, mappPeakRoom: 13, recentWaitP95Ms: 4_000 },
+  ])('holds the room limit when growth prerequisites are unmet for %j', ({ memoryRatio, mappPeakRoom, recentWaitP95Ms }) => {
+    const ctrl = makeController()
+    recordTicks(ctrl, makeSample({
+      memoryRatio,
+      mappInRoom: 20,
+      mappPeakRoom,
+      streams: { ...IDLE_STREAMS, recentWaitP95Ms },
+    }), 6)
+    expect(ctrl.getDiagnostics().mappRoomCap).toBe(16)
+  })
+
+  it('requires five eligible ticks to grow the room limit and enforces a 30s cooldown', () => {
+    const ctrl = makeController()
+    const sample = makeSample({
+      mappInRoom: 15,
+      mappPeakRoom: 15,
+      streams: { ...IDLE_STREAMS, recentWaitP95Ms: 500 },
+    })
+    recordTicks(ctrl, sample, 4)
+    expect(ctrl.getDiagnostics().mappRoomCap).toBe(16)
+    ctrl.recordSample({ ...sample, now: 9_000 })
+    expect(ctrl.getDiagnostics().mappRoomCap).toBe(18)
+    recordTicks(ctrl, { ...sample, now: 11_000 }, 14)
+    expect(ctrl.getDiagnostics().mappRoomCap).toBe(18)
+    recordTicks(ctrl, { ...sample, now: 39_000 }, 4)
+    expect(ctrl.getDiagnostics().mappRoomCap).toBe(18)
+    ctrl.recordSample({ ...sample, now: 47_000 })
+    expect(ctrl.getDiagnostics().mappRoomCap).toBe(20)
+  })
+
   it('grows only after healthy samples at or above 80% utilization', () => {
     const ctrl = new CapacityController({
       enabled: true,
@@ -157,6 +375,43 @@ describe('CapacityController', () => {
     expect(ctrl.canAdmit('web', live, { isCreate: true })).toEqual({ allowed: false, reason: 'create_restricted' })
     expect(ctrl.canAdmit('web', live, { isCreate: false })).toEqual({ allowed: true })
     expect(ctrl.getPublicStatus({ ...live, queueLength: 0 }).createRestricted).toBe(true)
+  })
+
+  it('does not double-shrink mappRoomCap when stream and general overload fire on the same tick', () => {
+    const ctrl = new CapacityController({
+      enabled: true,
+      minUnits: 12,
+      maxUnits: 300,
+      baseUnits: 100,
+      mappWeight: 3,
+      relaySlots: 8,
+      mappRoomBase: 30,
+      maxQueue: 100,
+      initialMemoryLimitBytes: 512 * 1024 * 1024,
+      initialCpuLimitCores: 0.75,
+    })
+
+    const combinedOverload = makeSample({
+      memoryRatio: 0.85,
+      webInRoom: 10,
+      mappInRoom: 28,
+      mappPeakRoom: 28,
+      streams: {
+        activeStreams: 8,
+        maxStreams: 8,
+        waitingCount: 16,
+        maxQueued: 64,
+        recentWaitP95Ms: 8_000,
+        recentBusyCount: 2,
+      },
+    })
+    ctrl.recordSample({ ...combinedOverload, now: 1_000 })
+    ctrl.recordSample({ ...combinedOverload, now: 3_000 })
+
+    // Single 0.85x shrink: floor(30 * 0.85) = 25 (NOT double-shrunk to floor(25 * 0.85) = 21)
+    expect(ctrl.getDiagnostics().mappRoomCap).toBe(25)
+    expect(ctrl.getDiagnostics().effectiveCap).toBe(100)
+    expect(ctrl.getDiagnostics().relayDeferredShrinks).toBe(1)
   })
 })
 

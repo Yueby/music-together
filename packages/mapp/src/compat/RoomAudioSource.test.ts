@@ -69,6 +69,28 @@ describe('RoomAudioSource controlled SDK transport', () => {
     expect(fixture.body.cancel).not.toHaveBeenCalled()
   })
 
+  it.each(['8', undefined, '8.5'])('reports stream bytes with content-length %s', async (contentLength) => {
+    vi.useFakeTimers()
+    const fixture = streamFixture(
+      vi.fn()
+        .mockImplementationOnce(async () => {
+          await vi.advanceTimersByTimeAsync(80)
+          return { done: false, value: mp3.subarray(0, 4) }
+        })
+        .mockResolvedValueOnce({ done: false, value: mp3.subarray(4) })
+        .mockResolvedValue({ done: true }),
+    )
+    if (contentLength !== undefined) fixture.response.headers = { ...headers, 'Content-Length': contentLength }
+    const onProgress = vi.fn()
+    await read({ stream: vi.fn().mockResolvedValue(fixture.response) }, { mode: 'stream', onProgress })
+    const totalBytes = contentLength === '8' ? 8 : undefined
+    expect(onProgress.mock.calls).toEqual([
+      [{ loadedBytes: 0, totalBytes }],
+      [{ loadedBytes: 4, totalBytes }],
+      [{ loadedBytes: 8, totalBytes: 8 }],
+    ])
+  })
+
   it.each(['audio/mpeg', 'audio/flac', 'audio/ogg', 'application/octet-stream'])('accepts %s', async (contentType) => {
     await expect(
       read({
@@ -106,12 +128,24 @@ describe('RoomAudioSource controlled SDK transport', () => {
     vi.useFakeTimers()
     const request = vi
       .fn()
-      .mockResolvedValueOnce({ status, headers: {}, body: new Uint8Array() })
-      .mockResolvedValueOnce(response())
-    const result = read({ request })
+      .mockImplementationOnce(async (_endpoint: string, options: HttpRequestOptions<'bytes'>) => {
+        await options.onDownloadProgress?.({ loaded: 3 })
+        return { status, headers: {}, body: new Uint8Array() }
+      })
+      .mockImplementationOnce(async (_endpoint: string, options: HttpRequestOptions<'bytes'>) => {
+        await options.onDownloadProgress?.({ loaded: 4, total: 8 })
+        await options.onDownloadProgress?.({ loaded: 6, total: 8 })
+        return response()
+      })
+    const onProgress = vi.fn()
+    const result = read({ request }, { onProgress })
     await vi.advanceTimersByTimeAsync(2_000)
     await expect(result).resolves.toMatchObject({ bytes: mp3 })
     expect(request).toHaveBeenCalledTimes(2)
+    expect(onProgress.mock.calls).toEqual([
+      [{ loadedBytes: 4, totalBytes: 8 }],
+      [{ loadedBytes: 8, totalBytes: 8 }],
+    ])
   })
 
   it('retries a busy stream response once, releasing the discarded body', async () => {

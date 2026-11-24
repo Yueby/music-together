@@ -1,5 +1,5 @@
 import { afterEach, describe, expect, it, vi } from 'vitest'
-import type { HttpRequestOptions, MiniAppSDK } from '@discourse-mini-app/sdk'
+import type { HttpRequestOptions, HttpStreamOptions, MiniAppSDK } from '@discourse-mini-app/sdk'
 import { WebAudioPlayer } from './WebAudioPlayer.ts'
 import { MappAudioEngine, type MappAudioEngineSnapshot } from './MappAudioEngine.ts'
 
@@ -50,13 +50,23 @@ function environment(
     }),
   })
   const request = vi.fn(async (_endpoint: string, _options?: HttpRequestOptions<'bytes'>) => response)
+  const stream = vi.fn(async (_endpoint: string, _options?: HttpStreamOptions) => ({
+    ...response,
+    headers: { ...response.headers } as Record<string, string>,
+    body: new ReadableStream<Uint8Array>({
+      start(controller) {
+        controller.enqueue(bytes)
+        controller.close()
+      },
+    }),
+  }))
   const has = vi.fn((permission: string) =>
     permission === 'audio.webAudio' ? options.audio !== false : options.network !== false,
   )
-  const sdk = { http: { request }, permissions: { has } } as unknown as MiniAppSDK
+  const sdk = { http: { request, stream }, permissions: { has } } as unknown as MiniAppSDK
   const createContext = vi.fn(() => context as unknown as AudioContext)
   const engine = new MappAudioEngine({ sdk, createContext, onChange: options.onChange })
-  return { engine, context, sources, request, sdk, createContext, has }
+  return { engine, context, sources, request, stream, sdk, createContext, has }
 }
 
 // Global prototype spies are restored; every context and SDK in this suite is mocked.
@@ -66,6 +76,18 @@ afterEach(() => {
 })
 
 describe('MappAudioEngine thin WebAudioPlayer adapter', () => {
+  it('reports buffering, downloaded bytes and decoding in order', async () => {
+    const f = environment()
+    const onLoadProgress = vi.fn()
+    expect(await f.engine.loadRoomTrack({ ...input(), onLoadProgress })).toBe(true)
+    expect(onLoadProgress.mock.calls).toEqual([
+      [{ phase: 'buffering' }],
+      [{ phase: 'downloading', progress: 1, loadedBytes: 8, totalBytes: 8 }],
+      [{ phase: 'decoding', progress: 1, loadedBytes: 8, totalBytes: 8 }],
+    ])
+    await f.engine.dispose()
+  })
+
   it('releases a track on unload and reuses the unlocked context for the next track', async () => {
     const f = environment()
     await f.engine.loadRoomTrack(input('first'))
@@ -529,13 +551,49 @@ describe('MappAudioEngine thin WebAudioPlayer adapter', () => {
 describe('MappAudioEngine preloading the announced next track', () => {
   const preload = (trackId: string) => ({ roomId: 'AB12_-', trackId, mode: 'bytes' as const })
 
+  it.each([{ tracks: ['next'] }, { tracks: ['next', 'newest'] }])(
+    'defers preloading until the current load succeeds ($tracks)',
+    async ({ tracks }) => {
+      const f = environment()
+      const reply = deferred<typeof response>()
+      f.request.mockReturnValueOnce(reply.promise)
+      const loading = f.engine.loadRoomTrack(input('current'))
+      for (const trackId of tracks) f.engine.preloadRoomTrack(preload(trackId))
+      expect(f.request).toHaveBeenCalledOnce()
+      reply.resolve(response)
+      expect(await loading).toBe(true)
+      expect(f.request).toHaveBeenCalledTimes(2)
+      expect(f.request.mock.calls[1][1]).toMatchObject({ query: { trackId: tracks.at(-1) } })
+      await f.engine.dispose()
+    },
+  )
+
+  it.each(['cancel', 'unload', 'dispose'] as const)('drops a deferred preload on %s', async (action) => {
+    const f = environment()
+    const reply = deferred<typeof response>()
+    f.request.mockReturnValueOnce(reply.promise)
+    const loading = f.engine.loadRoomTrack(input('current'))
+    f.engine.preloadRoomTrack(preload('next'))
+    await f.engine[action]()
+    reply.resolve(response)
+    expect(await loading).toBe(false)
+    expect(f.request).toHaveBeenCalledOnce()
+    await f.engine.dispose()
+  })
+
   it('reads the bytes ahead of time and hands them to the load of that very track without another request', async () => {
     const f = environment()
     f.engine.preloadRoomTrack(preload('next'))
     await vi.waitFor(() => expect(f.request).toHaveBeenCalledOnce())
     expect(f.request.mock.calls[0][1]).toMatchObject({ query: { roomId: 'AB12_-', trackId: 'next' } })
 
-    expect(await f.engine.loadRoomTrack(input('next'))).toBe(true)
+    await new Promise<void>((resolve) => setTimeout(resolve, 0))
+    const onLoadProgress = vi.fn()
+    expect(await f.engine.loadRoomTrack({ ...input('next'), onLoadProgress })).toBe(true)
+    expect(onLoadProgress.mock.calls).toEqual([
+      [{ phase: 'buffering' }],
+      [{ phase: 'decoding', progress: 1, loadedBytes: 8, totalBytes: 8 }],
+    ])
     expect(f.request).toHaveBeenCalledOnce()
     expect(f.context.decodeAudioData).toHaveBeenCalledOnce()
     expect(f.engine.snapshot()).toMatchObject({ trackId: 'next', loading: false, errorCode: null })
@@ -551,6 +609,52 @@ describe('MappAudioEngine preloading the announced next track', () => {
     reply.resolve(response)
     expect(await loading).toBe(true)
     expect(f.request).toHaveBeenCalledOnce()
+    await f.engine.dispose()
+  })
+
+  it('replays the latest stream progress when adopting an in-flight preload and forwards completion', async () => {
+    const f = environment()
+    const reading = deferred<void>()
+    let transfer!: ReadableStreamDefaultController<Uint8Array>
+    const body = new ReadableStream<Uint8Array>(
+      {
+        start(controller) {
+          transfer = controller
+        },
+        pull() {
+          reading.resolve()
+        },
+      },
+      { highWaterMark: 0 },
+    )
+    f.stream.mockResolvedValueOnce({ ...response, headers: { ...response.headers, 'content-length': '8' }, body })
+    const options = { ...preload('next'), mode: 'stream' as const }
+    f.engine.preloadRoomTrack(options)
+    await reading.promise
+    const onLoadProgress = vi.fn()
+    const loading = f.engine.loadRoomTrack({ ...options, onLoadProgress })
+    expect(onLoadProgress).toHaveBeenLastCalledWith({
+      phase: 'downloading',
+      progress: 0,
+      loadedBytes: 0,
+      totalBytes: 8,
+    })
+    transfer.enqueue(bytes)
+    transfer.close()
+    expect(await loading).toBe(true)
+    expect(onLoadProgress).toHaveBeenCalledWith({
+      phase: 'downloading',
+      progress: 1,
+      loadedBytes: 8,
+      totalBytes: 8,
+    })
+    expect(onLoadProgress).toHaveBeenLastCalledWith({
+      phase: 'decoding',
+      progress: 1,
+      loadedBytes: 8,
+      totalBytes: 8,
+    })
+    expect(f.stream).toHaveBeenCalledOnce()
     await f.engine.dispose()
   })
 

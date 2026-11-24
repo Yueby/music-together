@@ -264,6 +264,10 @@ export interface ServerCapacityStatus {
   maxQueueLength: number
   /** 综合负载压力百分比（0–100） */
   pressurePercent: number
+  /** 微应用视角的综合负载压力百分比（0–100，含音频中转压力） */
+  mappPressurePercent: number
+  /** 当前单房间微应用听众动态上限 */
+  mappRoomLimit: number
   /** 高水位软保护：是否暂时限制新建房间（仍允许加入现有房间） */
   createRestricted: boolean
   /** 快照时间戳（ms） */
@@ -281,7 +285,7 @@ export interface AdmissionQueuedEvent {
   /** 加入房间时的目标房间号 */
   roomId?: string
   /** 触发排队的原因：综合承载满载 或 微应用音频中转拥塞 */
-  reason: 'capacity' | 'mapp_stream'
+  reason: 'capacity' | 'mapp_stream' | 'mapp_room'
   /** 最新服务端承载状态 */
   capacity: ServerCapacityStatus
 }

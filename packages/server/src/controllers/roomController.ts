@@ -279,7 +279,9 @@ export function registerRoomController(io: TypedServer, socket: TypedSocket) {
           io,
           socket,
           { action: 'create', nickname, roomName, password },
-          admission.reason === 'mapp_stream' ? 'mapp_stream' : 'capacity',
+          !admission.allowed && admission.reason && admission.reason !== 'create_restricted'
+            ? admission.reason
+            : 'capacity',
         )
         if (!queued.ok) {
           socket.emit(EVENTS.ROOM_ERROR, {
@@ -346,18 +348,24 @@ export function registerRoomController(io: TypedServer, socket: TypedSocket) {
         await clearJoinPasswordFailures(socket, roomId)
       }
 
-      // Whitelist bypass: existing members, valid rejoin tickets, returning owners/admins, and room switches
-      // (net load delta <= 0) must never be diverted to the waiting queue.
       const existingMapping = roomRepo.getSocketMapping(socket.id)
-      const bypass = validation.skipPassword || Boolean(existingMapping)
-      if (!bypass) {
-        const admission = canAdmitClient(resolveClientKind(socket), { isCreate: false })
-        if (!admission.allowed || admissionQueue.hasWaitingForCapacity()) {
+      const isTrustedReturn = validation.skipPassword
+      const isSameRoom = existingMapping?.roomId === roomId
+      const isRoomSwitch = Boolean(existingMapping) && !isSameRoom
+      const clientKind = resolveClientKind(socket)
+      if (!isTrustedReturn && !isSameRoom && (!isRoomSwitch || clientKind === 'mapp')) {
+        const admission = canAdmitClient(clientKind, { isCreate: false, targetRoomId: roomId, roomSwitch: isRoomSwitch })
+        const shouldQueue = isRoomSwitch
+          ? !admission.allowed && admission.reason === 'mapp_room'
+          : !admission.allowed || admissionQueue.hasWaitingForCapacity()
+        if (shouldQueue) {
           const queued = admissionQueue.enqueue(
             io,
             socket,
             { action: 'join', roomId, nickname, password, rejoinToken },
-            admission.reason === 'mapp_stream' ? 'mapp_stream' : 'capacity',
+            !admission.allowed && admission.reason && admission.reason !== 'create_restricted'
+              ? admission.reason
+              : 'capacity',
           )
           if (!queued.ok) {
             socket.emit(EVENTS.ROOM_ERROR, {

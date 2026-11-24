@@ -35,7 +35,7 @@ describe('default Web playback sound factory', () => {
     expect(playbackSoundFactory.supportsHtml5Analysis).toBe(true)
   })
 
-  it('passes the original media options and callbacks directly to Howler', () => {
+  it('passes only native media options and callbacks to Howler', () => {
     const options: PlaybackSoundOptions = {
       src: [track.streamUrl!],
       html5: true,
@@ -48,9 +48,11 @@ describe('default Web playback sound factory', () => {
       onloaderror: vi.fn(),
       onplayerror: vi.fn(),
     }
-    const sound = playbackSoundFactory.create(track, options)
+    const onprogress = vi.fn()
+    const sound = playbackSoundFactory.create(track, { ...options, onprogress })
     expect(native.constructor).toHaveBeenCalledExactlyOnceWith(options)
-    expect(native.constructor.mock.calls[0][0]).toBe(options)
+    expect(native.constructor.mock.calls[0][0]).not.toHaveProperty('onprogress')
+    expect(onprogress).not.toHaveBeenCalled()
     expect(sound).toBe(native.sound)
     expect(options.onload).not.toHaveBeenCalled()
     expect(options.onplay).not.toHaveBeenCalled()

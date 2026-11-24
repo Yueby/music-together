@@ -113,6 +113,37 @@ afterEach(() => {
 })
 
 describe('Mapp room session', () => {
+  it('deduplicates overload retries and restores the confirmed room after reconnecting', () => {
+    const random = vi.spyOn(Math, 'random').mockReturnValue(0.5)
+    try {
+      ready()
+      join()
+      fake.drop()
+      fake.fire('connect_error', new Error('SERVER_OVERLOADED'))
+      vi.advanceTimersByTime(1_000)
+      fake.fire('connect_error', new Error('SERVER_OVERLOADED'))
+      vi.advanceTimersByTime(5_499)
+      expect(fake.connect).not.toHaveBeenCalled()
+      vi.advanceTimersByTime(1)
+      expect(fake.connect).toHaveBeenCalledOnce()
+      fake.open('socket-2')
+      fake.identity()
+      expect(fake.sent(EVENTS.ROOM_JOIN)).toHaveLength(2)
+      expect(fake.sent(EVENTS.ROOM_JOIN).at(-1)?.[1]).toMatchObject({ roomId: 'room-a', rejoinToken: ticket().token })
+      vi.advanceTimersByTime(8_000)
+      expect(fake.connect).toHaveBeenCalledOnce()
+    } finally {
+      random.mockRestore()
+    }
+  })
+
+  it('cancels an overload retry on disposal', () => {
+    fake.fire('connect_error', new Error('SERVER_OVERLOADED'))
+    session.dispose()
+    vi.advanceTimersByTime(8_000)
+    expect(fake.connect).not.toHaveBeenCalled()
+  })
+
   it('clears a pending create when the user cancels admission', () => {
     ready()
     expect(session.createRoom({ nickname })).toBe(true)

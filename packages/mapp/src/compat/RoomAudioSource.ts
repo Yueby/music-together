@@ -27,6 +27,12 @@ export interface ReadRoomAudioOptions {
   trackId: string
   mode: RoomAudioMode
   signal?: AbortSignal
+  onProgress?: (progress: RoomAudioProgress) => void
+}
+
+export interface RoomAudioProgress {
+  loadedBytes: number
+  totalBytes?: number
 }
 
 export interface RoomAudioResult {
@@ -44,6 +50,7 @@ const TIMEOUT_MS = 75_000
 const RETRYABLE_STATUSES = new Set([429, 503])
 const MAX_ATTEMPTS = 2
 const RETRY_DELAY_MS = 2_000
+const PROGRESS_THROTTLE_MS = 80
 
 function sdkError(error: unknown): RoomAudioError {
   if (error instanceof RoomAudioError) return error
@@ -55,7 +62,7 @@ function sdkError(error: unknown): RoomAudioError {
   return new RoomAudioError('REQUEST_FAILED')
 }
 
-function checkResponse(response: { status: number; headers: Record<string, string> }): void {
+function checkResponse(response: { status: number; headers: Record<string, string> }): number | undefined {
   if (response.status !== 200) throw new RoomAudioError('HTTP_ERROR')
   const header = (name: string) => Object.entries(response.headers).find(([key]) => key.toLowerCase() === name)?.[1]
   const contentType = header('content-type')?.split(';', 1)[0].trim().toLowerCase() ?? ''
@@ -63,10 +70,18 @@ function checkResponse(response: { status: number; headers: Record<string, strin
   if (!contentType.startsWith('audio/') && contentType !== 'application/octet-stream') {
     throw new RoomAudioError('INVALID_CONTENT_TYPE')
   }
-  if (Number(header('content-length')) > ROOM_AUDIO_MAX_BYTES) throw new RoomAudioError('PAYLOAD_TOO_LARGE')
+  const contentLength = header('content-length')?.trim()
+  if (!contentLength || !/^\d+$/.test(contentLength)) return undefined
+  const totalBytes = Number(contentLength)
+  if (totalBytes > ROOM_AUDIO_MAX_BYTES) throw new RoomAudioError('PAYLOAD_TOO_LARGE')
+  return Number.isInteger(totalBytes) && totalBytes > 0 ? totalBytes : undefined
 }
 
-async function readChunks(body: ReadableStreamDefaultReader<Uint8Array>, wait: <T>(op: Promise<T>) => Promise<T>) {
+async function readChunks(
+  body: ReadableStreamDefaultReader<Uint8Array>,
+  wait: <T>(op: Promise<T>) => Promise<T>,
+  onProgress: (loadedBytes: number) => void,
+) {
   const chunks: Uint8Array[] = []
   let loaded = 0
   for (;;) {
@@ -75,6 +90,7 @@ async function readChunks(body: ReadableStreamDefaultReader<Uint8Array>, wait: <
     loaded += chunk.value.byteLength
     if (loaded > ROOM_AUDIO_MAX_BYTES) throw new RoomAudioError('PAYLOAD_TOO_LARGE')
     chunks.push(chunk.value)
+    onProgress(loaded)
   }
   const bytes = new Uint8Array(loaded)
   let offset = 0
@@ -87,7 +103,7 @@ async function readChunks(body: ReadableStreamDefaultReader<Uint8Array>, wait: <
 
 /** Only room/track identifiers go to the reviewed SDK endpoint; no URL, headers or credentials input. */
 export async function readRoomAudio(options: ReadRoomAudioOptions): Promise<RoomAudioResult> {
-  const { sdk, roomId, trackId, mode, signal } = options
+  const { sdk, roomId, trackId, mode, signal, onProgress } = options
   if (!/^[A-Z0-9_-]{6}$/.test(roomId)) throw new RoomAudioError('INVALID_ROOM_ID')
   if (trackId.length < 1 || trackId.length > 200) throw new RoomAudioError('INVALID_TRACK_ID')
   if (signal?.aborted) throw new RoomAudioError('ABORTED')
@@ -113,27 +129,62 @@ export async function readRoomAudio(options: ReadRoomAudioOptions): Promise<Room
     query: { roomId, trackId },
     timeoutMs: TIMEOUT_MS,
     signal: controller.signal,
-    onDownloadProgress: ({ loaded }: { loaded: number }) => {
-      if (loaded > ROOM_AUDIO_MAX_BYTES) stop('PAYLOAD_TOO_LARGE')
-    },
+  }
+  const enforceDownloadLimit = ({ loaded }: { loaded: number }) => {
+    if (loaded > ROOM_AUDIO_MAX_BYTES) stop('PAYLOAD_TOO_LARGE')
   }
   let stream: ReadableStream<Uint8Array> | undefined
   let reader: ReadableStreamDefaultReader<Uint8Array> | undefined
   try {
     let bytes!: Uint8Array<ArrayBuffer>
+    let totalBytes: number | undefined
     for (let attempt = 1; ; attempt++) {
       const mayRetry = attempt < MAX_ATTEMPTS
+      let lastProgressAt = -Infinity
+      const report = (progress: RoomAudioProgress, emit = onProgress) => {
+        if (!emit || controller.signal.aborted) return
+        const now = Date.now()
+        if (now - lastProgressAt < PROGRESS_THROTTLE_MS) return
+        lastProgressAt = now
+        emit(progress)
+      }
       if (mode === 'bytes') {
-        const response = await wait(sdk.http.request(ENDPOINT, { ...request, responseType: 'bytes' }))
+        // The SDK only exposes HTTP status once the bytes request resolves.
+        const updates: RoomAudioProgress[] = []
+        let receiving = true
+        const response = await wait(
+          sdk.http.request(ENDPOINT, {
+            ...request,
+            responseType: 'bytes',
+            onDownloadProgress: ({ loaded, total }) => {
+              if (!receiving || controller.signal.aborted) return
+              enforceDownloadLimit({ loaded })
+              if (onProgress && Number.isFinite(loaded) && loaded >= 0) {
+                report(
+                  {
+                    loadedBytes: loaded,
+                    totalBytes: total && Number.isFinite(total) && total > 0 ? total : undefined,
+                  },
+                  (progress) => updates.push(progress),
+                )
+              }
+            },
+          }),
+        )
+        receiving = false
         if (mayRetry && RETRYABLE_STATUSES.has(response.status)) {
           await wait(new Promise<void>((resolve) => setTimeout(resolve, RETRY_DELAY_MS)))
           continue
         }
         checkResponse(response)
         bytes = Uint8Array.from(response.body)
+        for (const update of updates) {
+          if (controller.signal.aborted) break
+          onProgress?.(update)
+        }
         break
       }
-      const pending = sdk.http.stream(ENDPOINT, request)
+      const pending = sdk.http.stream(ENDPOINT, { ...request, onDownloadProgress: enforceDownloadLimit })
       // A response that arrives after cancellation is never read; release its body.
       void pending.then(
         (late) => {
@@ -148,15 +199,18 @@ export async function readRoomAudio(options: ReadRoomAudioOptions): Promise<Room
         continue
       }
       stream = response.body
-      checkResponse(response)
+      totalBytes = checkResponse(response)
+      report({ loadedBytes: 0, totalBytes })
       reader = stream.getReader()
       // readChunks already merges into a fresh array that nothing else references; copying it again would only
       // add another whole track (up to 32 MiB) to the peak memory of a sandboxed frame.
-      bytes = await readChunks(reader, wait)
+      bytes = await readChunks(reader, wait, (loadedBytes) => report({ loadedBytes, totalBytes }))
       break
     }
     if (!bytes.byteLength) throw new RoomAudioError('EMPTY_AUDIO')
     if (bytes.byteLength > ROOM_AUDIO_MAX_BYTES) throw new RoomAudioError('PAYLOAD_TOO_LARGE')
+    if (controller.signal.aborted) throw new RoomAudioError(reason ?? 'ABORTED')
+    onProgress?.({ loadedBytes: bytes.byteLength, totalBytes: totalBytes ?? bytes.byteLength })
     return { bytes, trackId }
   } catch (error) {
     throw reason ? new RoomAudioError(reason) : sdkError(error)

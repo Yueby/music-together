@@ -133,9 +133,16 @@ export function useHowl(onTrackEnd: () => void) {
       trackTitleRef.current = track.title
       retryRef.current = false
 
-      if (!track.streamUrl) return
+      const { setAudioLoadState, setCurrentTime, setDuration } = usePlayerStore.getState()
+      if (!track.streamUrl) {
+        setAudioLoadState({ phase: 'idle' })
+        return
+      }
 
       const loadStartTime = Date.now()
+      setAudioLoadState({ phase: 'buffering', progress: null, loadedBytes: null, startedAt: loadStartTime })
+      setCurrentTime(seekTo ?? 0)
+      setDuration(Number.isFinite(track.duration) && track.duration > 0 ? track.duration : 0)
 
       const desiredPlayback = { howl: null as unknown as PlaybackSound, autoPlay, getSeekTime: undefined as (() => number) | undefined }
       const howl = playbackSoundFactory.create(track, {
@@ -143,8 +150,17 @@ export function useHowl(onTrackEnd: () => void) {
         html5: true,
         format: ['flac', 'm4a', 'ogg', 'mp3'],
         volume: 0,
+        onprogress: (info) => {
+          if (howlRef.current !== howl) return
+          setAudioLoadState({
+            phase: info.phase,
+            progress: info.progress ?? null,
+            loadedBytes: info.loadedBytes ?? null,
+          })
+        },
         onload: () => {
           if (howlRef.current !== howl) return // Stale instance guard
+          setAudioLoadState({ phase: 'idle' })
           const d = howl.duration()
           if (Number.isFinite(d) && d > 0) {
             usePlayerStore.getState().setDuration(d)
@@ -221,6 +237,7 @@ export function useHowl(onTrackEnd: () => void) {
         },
         onplay: () => {
           if (howlRef.current !== howl) return
+          setAudioLoadState({ phase: 'idle' })
           usePlayerStore.getState().setIsPlaying(true)
           const dur = howl.duration()
           if (Number.isFinite(dur) && dur > 0) {
@@ -239,17 +256,19 @@ export function useHowl(onTrackEnd: () => void) {
           stopTimeUpdate()
           onTrackEnd()
         },
-        onloaderror: (_id, msg) => {
+        onloaderror: () => {
           // If a newer track has been loaded, this Howl is stale — ignore.
           if (howlRef.current !== howl) return
           if (playbackSoundFactory.allowLoadRetry && !retryRef.current) {
             retryRef.current = true
-            console.warn('Howl load error, retrying:', msg)
+            setAudioLoadState({ phase: 'buffering', progress: null, loadedBytes: null })
+            console.warn('Howl load error, retrying')
             howl.load()
             return
           }
           retryRef.current = false
-          console.error('Howl load error (after retry):', msg)
+          setAudioLoadState({ phase: 'idle' })
+          console.error('Howl load failed')
           toast.error(`「${trackTitleRef.current}」加载失败，已跳到下一首`)
           onTrackEnd()
         },
@@ -320,6 +339,7 @@ export function useHowl(onTrackEnd: () => void) {
   }, [])
 
   const stopAndUnload = useCallback(() => {
+    usePlayerStore.getState().setAudioLoadState({ phase: 'idle' })
     if (unmuteTimerRef.current) clearTimeout(unmuteTimerRef.current)
     unmuteTimerRef.current = null
     if (playErrorTimerRef.current) clearTimeout(playErrorTimerRef.current)

@@ -61,7 +61,8 @@ export function getEffectiveServerLoad(capacity: ServerCapacityStatus): {
   const mappOnlyCongested = isMapp && capacity.mappLevel !== capacity.level && capacity.mappLevel !== 'normal'
   const meta = LEVEL_META[level]
   const titleText = mappOnlyCongested ? '微应用音频中转繁忙' : meta.longLabel
-  const pct = Math.min(100, Math.max(0, capacity.pressurePercent))
+  const rawPct = isMapp ? (capacity.mappPressurePercent ?? capacity.pressurePercent) : capacity.pressurePercent
+  const pct = Math.min(100, Math.max(0, rawPct))
 
   return { level, remaining, mappOnlyCongested, meta, titleText, pct }
 }

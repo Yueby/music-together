@@ -46,20 +46,113 @@ function isAllowedCoverTarget(url: URL): boolean {
 }
 
 const HOST_REJECTED: CoverResult = { ok: false, status: 403, error: 'Host not allowed', kind: 'host' }
+const IMAGE_TOO_LARGE: CoverResult = { ok: false, status: 413, error: 'Image too large', kind: 'invalid' }
+const PROXY_BUSY: CoverResult = { ok: false, status: 503, error: 'Cover proxy busy', kind: 'upstream' }
+
+interface CoverProxyOptions {
+  maxCacheBytes?: number
+  cacheTtlMs?: number
+  maxConcurrent?: number
+  maxQueued?: number
+  queueTimeoutMs?: number
+}
+
+export function createCoverProxy({
+  maxCacheBytes = 16 * 1024 * 1024,
+  cacheTtlMs = 15 * 60_000,
+  maxConcurrent = 16,
+  maxQueued = 64,
+  queueTimeoutMs = 10_000,
+}: CoverProxyOptions = {}) {
+  type CachedCover = Extract<CoverResult, { ok: true }> & { expiresAt: number }
+  const cache = new Map<string, CachedCover>()
+  const inFlight = new Map<string, Promise<CoverResult>>()
+  const waiting: Array<() => void> = []
+  let cachedBytes = 0
+  let active = 0
+
+  function evict(key: string, entry: CachedCover): void {
+    cache.delete(key)
+    cachedBytes -= entry.body.length
+  }
+
+  async function acquire(): Promise<boolean> {
+    if (active < maxConcurrent) {
+      active++
+      return true
+    }
+    if (waiting.length >= maxQueued) return false
+    return new Promise((resolve) => {
+      const grant = () => {
+        clearTimeout(timer)
+        resolve(true)
+      }
+      const timer = setTimeout(() => {
+        const index = waiting.indexOf(grant)
+        if (index >= 0) waiting.splice(index, 1)
+        resolve(false)
+      }, queueTimeoutMs)
+      timer.unref?.()
+      waiting.push(grant)
+    })
+  }
+
+  async function fetchAndCache(target: URL, key: string, maxBytes: number): Promise<CoverResult> {
+    if (!(await acquire())) return PROXY_BUSY
+    try {
+      const result = await fetchUpstreamCover(target, maxBytes, fetch)
+      if (result.ok && result.body.length > 0 && result.body.length <= Math.floor(maxCacheBytes / 4)) {
+        const previous = cache.get(key)
+        if (previous) evict(key, previous)
+        for (const [oldKey, entry] of cache) {
+          if (cachedBytes + result.body.length <= maxCacheBytes) break
+          evict(oldKey, entry)
+        }
+        cache.set(key, { ...result, expiresAt: Date.now() + cacheTtlMs })
+        cachedBytes += result.body.length
+      }
+      return result
+    } finally {
+      const next = waiting.shift()
+      if (next) next()
+      else active--
+    }
+  }
+
+  return {
+    async fetchCoverImage(imageUrl: string, maxBytes = MAX_WEB_COVER_BYTES): Promise<CoverResult> {
+      const target = new URL(imageUrl)
+      if (!isAllowedCoverTarget(target)) return HOST_REJECTED
+      const key = target.toString()
+      const cached = cache.get(key)
+      if (cached) {
+        if (Date.now() >= cached.expiresAt) {
+          evict(key, cached)
+        } else {
+          if (cached.body.length > maxBytes) return IMAGE_TOO_LARGE
+          cache.delete(key)
+          cache.set(key, cached)
+          return { ok: true, contentType: cached.contentType, body: cached.body }
+        }
+      }
+      const requestKey = `${key}|${maxBytes}`
+      const pending = inFlight.get(requestKey)
+      if (pending) return pending
+      const work = fetchAndCache(target, key, maxBytes).finally(() => inFlight.delete(requestKey))
+      inFlight.set(requestKey, work)
+      return work
+    },
+  }
+}
+
+const defaultCoverProxy = createCoverProxy()
 
 /**
  * Throws on an invalid URL or a network failure/timeout; callers map that to their own error response.
  * Redirects are followed by hand and must land on the same allowlist over https: a CDN answering with a
  * redirect must not be able to move the server's request to another host or port.
  */
-export async function fetchCoverImage(
-  imageUrl: string,
-  maxBytes: number = MAX_WEB_COVER_BYTES,
-  fetcher: typeof fetch = fetch,
-): Promise<CoverResult> {
-  let target = new URL(imageUrl)
-  if (!isAllowedCoverTarget(target)) return HOST_REJECTED
-
+async function fetchUpstreamCover(target: URL, maxBytes: number, fetcher: typeof fetch): Promise<CoverResult> {
   const signal = AbortSignal.timeout(10_000)
   // An early return must not leave the upstream body unread: the socket stays busy until the timeout otherwise.
   const discard = async (res: Response) => {
@@ -90,11 +183,22 @@ export async function fetchCoverImage(
   }
 
   const body = await readBounded(response, maxBytes)
-  if (!body) return { ok: false, status: 413, error: 'Image too large', kind: 'invalid' }
+  if (!body) return IMAGE_TOO_LARGE
   return { ok: true, contentType, body }
 }
 
+export async function fetchCoverImage(
+  imageUrl: string,
+  maxBytes = MAX_WEB_COVER_BYTES,
+  fetcher?: typeof fetch,
+): Promise<CoverResult> {
+  if (!fetcher) return defaultCoverProxy.fetchCoverImage(imageUrl, maxBytes)
+  const target = new URL(imageUrl)
+  if (!isAllowedCoverTarget(target)) return HOST_REJECTED
+  return fetchUpstreamCover(target, maxBytes, fetcher)
+}
+
 /** Cover for mini-app clients: size-limited upstream request and the platform response cap. */
-export function fetchPlatformCover(imageUrl: string, fetcher: typeof fetch = fetch): Promise<CoverResult> {
+export function fetchPlatformCover(imageUrl: string, fetcher?: typeof fetch): Promise<CoverResult> {
   return fetchCoverImage(limitCoverSize(imageUrl), MAPP_COVER_MAX_BYTES, fetcher)
 }

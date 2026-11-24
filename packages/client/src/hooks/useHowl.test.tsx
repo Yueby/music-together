@@ -3,6 +3,7 @@ import { act } from 'react'
 import { createRoot } from 'react-dom/client'
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import type { Track } from '@music-together/shared'
+import type { PlaybackSoundOptions } from '@/lib/PlaybackSound'
 import { usePlayerStore } from '@/stores/playerStore'
 import { useHowl } from './useHowl'
 
@@ -27,8 +28,6 @@ const track: Track = {
   streamUrl: 'https://media.example.test/fixture.mp3',
 }
 
-type SoundOptions = { onload?: () => void }
-
 function fakeSound() {
   return {
     duration: vi.fn(() => 120),
@@ -44,12 +43,12 @@ function fakeSound() {
   }
 }
 
-describe('useHowl volume handling while a track is loading', () => {
+describe('useHowl track loading', () => {
   let container: HTMLDivElement
   let root: ReturnType<typeof createRoot>
   let playback: ReturnType<typeof useHowl>
   let sound: ReturnType<typeof fakeSound>
-  let options: SoundOptions
+  let options: PlaybackSoundOptions
 
   beforeEach(async () => {
     vi.clearAllMocks()
@@ -59,7 +58,7 @@ describe('useHowl volume handling while a track is loading', () => {
     usePlayerStore.getState().reset()
     usePlayerStore.getState().setVolume(0.8)
     sound = fakeSound()
-    bridge.create.mockImplementation((_track: Track, opts: SoundOptions) => {
+    bridge.create.mockImplementation((_track: Track, opts: PlaybackSoundOptions) => {
       options = opts
       return sound
     })
@@ -75,6 +74,55 @@ describe('useHowl volume handling while a track is loading', () => {
   afterEach(async () => {
     await act(async () => root.unmount())
     vi.unstubAllGlobals()
+    vi.restoreAllMocks()
+  })
+
+  it('tracks download and decode progress until the sound loads', () => {
+    act(() => playback.loadTrack(track, 9, false))
+    const { audioLoadStartedAt } = usePlayerStore.getState()
+    expect(audioLoadStartedAt).toBeTypeOf('number')
+    expect(usePlayerStore.getState()).toMatchObject({
+      audioLoadPhase: 'buffering',
+      audioLoadProgress: null,
+      audioLoadedBytes: null,
+      currentTime: 9,
+      duration: 120,
+    })
+    act(() => options.onprogress?.({ phase: 'downloading', progress: 0.25, loadedBytes: 2 }))
+    expect(usePlayerStore.getState()).toMatchObject({
+      audioLoadPhase: 'downloading',
+      audioLoadProgress: 0.25,
+      audioLoadedBytes: 2,
+      audioLoadStartedAt,
+    })
+    act(() => options.onprogress?.({ phase: 'decoding', progress: 1, loadedBytes: 8 }))
+    expect(usePlayerStore.getState()).toMatchObject({ audioLoadPhase: 'decoding', audioLoadProgress: 1 })
+    act(() => options.onload?.())
+    expect(usePlayerStore.getState()).toMatchObject({
+      audioLoadPhase: 'idle',
+      audioLoadProgress: null,
+      audioLoadedBytes: null,
+      audioLoadStartedAt: null,
+    })
+  })
+
+  it('ignores progress from replaced sounds and clears a pending load on unload', () => {
+    act(() => playback.loadTrack(track))
+    const oldOptions = options
+    sound = fakeSound()
+    act(() => playback.loadTrack({ ...track, id: 'next' }))
+    act(() => oldOptions.onprogress?.({ phase: 'decoding', progress: 1 }))
+    expect(usePlayerStore.getState().audioLoadPhase).toBe('buffering')
+    act(() => playback.stopAndUnload())
+    act(() => options.onprogress?.({ phase: 'downloading', loadedBytes: 2 }))
+    expect(usePlayerStore.getState().audioLoadPhase).toBe('idle')
+  })
+
+  it('clears loading after a terminal load failure', () => {
+    vi.spyOn(console, 'error').mockImplementation(() => {})
+    act(() => playback.loadTrack(track))
+    act(() => options.onloaderror?.(1, 'LOAD_FAILED'))
+    expect(usePlayerStore.getState().audioLoadPhase).toBe('idle')
   })
 
   it('unmutes a paused load at the volume chosen during loading, not the one captured at load start', async () => {

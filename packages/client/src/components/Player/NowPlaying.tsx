@@ -4,7 +4,7 @@ import { MarqueeText } from '@/components/ui/marquee-text'
 import { cn } from '@/lib/utils'
 import { usePlayerStore } from '@/stores/playerStore'
 import { Disc3 } from 'lucide-react'
-import { motion } from 'motion/react'
+import { motion, useReducedMotion } from 'motion/react'
 import { useEffect, useState } from 'react'
 import { LAYOUT_TRANSITION, SPRING } from './constants'
 
@@ -17,6 +17,7 @@ interface NowPlayingProps {
 
 export function NowPlaying({ compact = false, onCoverClick }: NowPlayingProps) {
   const currentTrack = usePlayerStore((s) => s.currentTrack)
+  const prefersReducedMotion = useReducedMotion()
 
   // Skip layoutId on first frame to prevent unwanted entry animation
   const [ready, setReady] = useState(false)
@@ -42,10 +43,29 @@ export function NowPlaying({ compact = false, onCoverClick }: NowPlayingProps) {
       } as const)
     : {}
 
+  const heroLoadingSlot = !compact ? (
+    <div data-testid="cover-loading-motif" className="relative flex size-full items-center justify-center">
+      <div aria-hidden="true" className="absolute size-1/2 rounded-full bg-white/[0.05] blur-2xl" />
+      <div
+        aria-hidden="true"
+        className="relative flex size-[42%] items-center justify-center rounded-full bg-white/[0.04] ring-1 ring-white/[0.08]"
+      >
+        <Disc3
+          data-testid="cover-loading-disc"
+          className={cn(
+            'size-[72%] text-white/25',
+            !prefersReducedMotion && 'animate-spin [animation-duration:8s] motion-reduce:animate-none',
+          )}
+        />
+      </div>
+    </div>
+  ) : undefined
+
   const coverContent = (
     <ArtworkImage
       cover={currentTrack?.cover}
       alt={currentTrack?.title}
+      loadingSlot={heroLoadingSlot}
       fallback={<Disc3 className={cn('text-white/20', compact ? 'h-6 w-6' : 'h-1/3 w-1/3')} />}
       className="bg-secondary h-full w-full"
     />

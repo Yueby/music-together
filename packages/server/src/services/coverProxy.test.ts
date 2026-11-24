@@ -1,8 +1,9 @@
-import { describe, expect, it, vi } from 'vitest'
+import { afterEach, describe, expect, it, vi } from 'vitest'
 import { MAPP_COVER_MAX_BYTES } from '@music-together/shared'
 import {
   ALLOWED_COVER_HOSTS,
   MAX_WEB_COVER_BYTES,
+  createCoverProxy,
   fetchCoverImage,
   fetchPlatformCover,
   limitCoverSize,
@@ -15,6 +16,75 @@ function image(body: BodyInit | null = png, headers: Record<string, string> = { 
   return new Response(body, { headers })
 }
 const fetcher = (response: Response) => vi.fn<typeof fetch>().mockResolvedValue(response)
+
+describe('createCoverProxy', () => {
+  afterEach(() => {
+    vi.unstubAllGlobals()
+    vi.useRealTimers()
+  })
+
+  it('caches successful fetches until expiry and enforces the cap on cache hits', async () => {
+    vi.useFakeTimers()
+    const fetch = vi.fn(async () => image())
+    vi.stubGlobal('fetch', fetch)
+    const proxy = createCoverProxy({ cacheTtlMs: 100 })
+    await expect(proxy.fetchCoverImage(url)).resolves.toMatchObject({ ok: true, body: png })
+    await expect(proxy.fetchCoverImage(url, 3)).resolves.toMatchObject({ ok: false, status: 413 })
+    await expect(proxy.fetchCoverImage(url, 4)).resolves.toMatchObject({ ok: true, body: png })
+    expect(fetch).toHaveBeenCalledOnce()
+    vi.advanceTimersByTime(100)
+    await expect(proxy.fetchCoverImage(url)).resolves.toMatchObject({ ok: true, body: png })
+    expect(fetch).toHaveBeenCalledTimes(2)
+  })
+
+  it('evicts the least recently used image when the byte budget is exhausted', async () => {
+    const fetch = vi.fn(async () => image())
+    vi.stubGlobal('fetch', fetch)
+    const proxy = createCoverProxy({ maxCacheBytes: 16 })
+    const cover = (id: number) => proxy.fetchCoverImage(`${url}?id=${id}`)
+    for (const id of [1, 2, 3, 4, 1, 5, 1]) await cover(id)
+    expect(fetch).toHaveBeenCalledTimes(5)
+    await cover(2)
+    expect(fetch).toHaveBeenCalledTimes(6)
+  })
+
+  it('coalesces matching requests and bounds concurrent and queued upstream work', async () => {
+    const responses: Array<() => void> = []
+    const fetch = vi.fn(() => new Promise<Response>((resolve) => {
+      responses.push(() => resolve(image()))
+    }))
+    vi.stubGlobal('fetch', fetch)
+    const proxy = createCoverProxy({ maxConcurrent: 1, maxQueued: 1 })
+    const first = proxy.fetchCoverImage(url)
+    const duplicate = proxy.fetchCoverImage(url)
+    const queued = proxy.fetchCoverImage(`${url}?id=2`)
+    await expect(proxy.fetchCoverImage(`${url}?id=3`)).resolves.toMatchObject({ ok: false, status: 503 })
+    expect(fetch).toHaveBeenCalledOnce()
+    responses[0]()
+    await expect(Promise.all([first, duplicate])).resolves.toEqual([
+      { ok: true, contentType: 'image/png', body: png },
+      { ok: true, contentType: 'image/png', body: png },
+    ])
+    expect(fetch).toHaveBeenCalledTimes(2)
+    responses[1]()
+    await expect(queued).resolves.toMatchObject({ ok: true })
+  })
+
+  it('returns 503 when the cover transfer queue times out', async () => {
+    vi.useFakeTimers()
+    let finish!: (response: Response) => void
+    const fetch = vi.fn(() => new Promise<Response>((resolve) => { finish = resolve }))
+    vi.stubGlobal('fetch', fetch)
+    const proxy = createCoverProxy({ maxConcurrent: 1, queueTimeoutMs: 100 })
+    const active = proxy.fetchCoverImage(url)
+    const queued = proxy.fetchCoverImage(`${url}?id=2`)
+    await vi.advanceTimersByTimeAsync(100)
+    await expect(queued).resolves.toMatchObject({ ok: false, status: 503 })
+    expect(fetch).toHaveBeenCalledOnce()
+    finish(image())
+    await active
+  })
+})
 
 describe('fetchCoverImage', () => {
   it.each(ALLOWED_COVER_HOSTS)('fetches an image from allowed host %s', async (host) => {

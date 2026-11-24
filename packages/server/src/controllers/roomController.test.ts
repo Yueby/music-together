@@ -7,7 +7,7 @@ import { admissionQueue } from '../services/admissionQueueService.js'
 import { clearAllTimers } from '../services/roomLifecycleService.js'
 import { cleanupRoomRejoinTickets } from '../services/rejoinTicketService.js'
 import { canAdmitClient } from '../services/serverLoadService.js'
-import { registerRoomController } from './roomController.js'
+import { executeQueuedAdmission, registerRoomController } from './roomController.js'
 
 vi.mock('../services/playerService.js', () => ({
   autoPlayIfEmpty: vi.fn(async () => {}),
@@ -89,6 +89,34 @@ afterEach(() => {
 })
 
 describe('room admission', () => {
+  it('queues a mini-app room switch at the room limit and lets a Web switch proceed', async () => {
+    const sourceRoom = await createRoom(connect(newIdentity('source')))
+    const targetRoom = await createRoom(connect(newIdentity('target')))
+    const mapp = connect(`mapp_${newIdentity('guest')}`)
+    const web = connect(newIdentity('web'))
+    await send(mapp, EVENTS.ROOM_JOIN, { roomId: sourceRoom, nickname: 'Mini-app guest' })
+    await send(web, EVENTS.ROOM_JOIN, { roomId: sourceRoom, nickname: 'Web guest' })
+    vi.mocked(canAdmitClient).mockClear()
+    vi.mocked(canAdmitClient).mockReturnValue({ allowed: false, reason: 'mapp_room' })
+
+    await send(mapp, EVENTS.ROOM_JOIN, { roomId: targetRoom, nickname: 'Mini-app guest' })
+    await send(web, EVENTS.ROOM_JOIN, { roomId: targetRoom, nickname: 'Web guest' })
+
+    expect(canAdmitClient).toHaveBeenCalledExactlyOnceWith('mapp', {
+      isCreate: false, targetRoomId: targetRoom, roomSwitch: true,
+    })
+    expect(lastEmitted(mapp, EVENTS.ADMISSION_QUEUED)).toMatchObject({ roomId: targetRoom, reason: 'mapp_room' })
+    expect(isMember(sourceRoom, mapp.identityUserId)).toBe(true)
+    expect(isMember(targetRoom, mapp.identityUserId)).toBe(false)
+    expect(isMember(targetRoom, web.identityUserId)).toBe(true)
+    expect(emitted(web, EVENTS.ADMISSION_QUEUED)).toHaveLength(0)
+
+    admissionQueue.setExecutor(executeQueuedAdmission)
+    await admissionQueue.drain(io, () => ({ allowed: true }))
+    expect(isMember(sourceRoom, mapp.identityUserId)).toBe(false)
+    expect(isMember(targetRoom, mapp.identityUserId)).toBe(true)
+  })
+
   it.each([
     [EVENTS.ROOM_JOIN, 'join'],
     [EVENTS.ROOM_CREATE, 'create'],

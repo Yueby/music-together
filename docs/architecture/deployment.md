@@ -55,12 +55,15 @@ MAPP_MAX_STREAMS
 | `CAPACITY_MIN_UNITS` | `12` | 动态容量下限（加权单位） |
 | `CAPACITY_MAX_UNITS` | `300` | 动态容量上限（加权单位，至少为配置的下限） |
 | `CAPACITY_BASE_UNITS` | 自动估算 | 初始容量（加权单位），默认根据内存和 CPU 配额估算 |
-| `CAPACITY_MAPP_WEIGHT` | `3` | 每位微应用用户占用的加权单位，网页用户固定为 1 |
+| `CAPACITY_MAPP_WEIGHT` | `3` | 并发中转预算内每位微应用用户的总权重，最多对 `MAPP_MAX_STREAMS` 名听众收取额外权重。所有入房用户的基础权重为 1 |
+| `CAPACITY_MAPP_ROOM_BASE` | `2 × MAPP_MAX_STREAMS` | 微应用单房听众上限的初始值，可设置为 1–2000。运行时限制在中转并发槽位数与该槽位数加中转请求队列上限之间 |
 | `CAPACITY_MAX_QUEUE` | `100` | 等候队列人数上限，设为 `0` 时满载请求直接被拒绝 |
 | `CAPACITY_MAX_SOCKETS` | `500` | Socket.IO 并发连接上限，包含未进入房间的连接 |
 | `CAPACITY_MEMORY_LIMIT_MB` | 自动检测 | 可选内存上限（MiB），存在有限 cgroup 配额时取两者较小值 |
 
 Linux 容器从 cgroup 读取内存和 CPU 配额。内存采样在可用时扣除非活跃文件页缓存，并以 Node.js 进程 RSS 为下限。持续健康且已使用至少 80% 有效容量时，容量上限才会逐步回升。
+
+通用容量和微应用单房听众上限各自使用 AIMD 调节。持续中转拥塞会收紧单房上限。中转利用率高时，通用过载的前两次收缩优先收紧单房上限，之后也收紧通用容量。内存占比达到 88% 时立即收紧通用容量。单房上限在有近期中转等待记录、房间接近上限且两种压力都较低时增长，每次增长后冷却 30 秒。
 
 ### Discourse 微应用入口（可选，默认关闭）
 
@@ -85,7 +88,7 @@ MAPP_ALLOW_SANDBOX  可选，true 时同时接受沙箱通道令牌；默认只�
 - `production`：只安装服务端生产依赖链，复制构建产物。
 - 运行时使用非 root `node` 用户。
 - 容器通过 `/api/health` 执行 Docker `HEALTHCHECK`。
-- `GET /api/health` 返回 `status`、`timestamp` 和 `load` 摘要。摘要包含网页和微应用负载档位（`level`、`mappLevel`）、房间内在线人数（`onlineUsers`）、活跃房间数（`activeRooms`）、已用加权单位（`usedUnits`）、有效容量（`effectiveCap`）和排队人数（`queueLength`）。满载时健康检查仍返回 `status: 'ok'`。
+- `GET /api/health` 返回 `status`、`timestamp` 和 `load` 摘要。摘要包含网页和微应用负载档位（`level`、`mappLevel`）与百分比（`pressurePercent`、`mappPressurePercent`）、微应用单房听众上限（`mappRoomLimit`）、房间内在线人数（`onlineUsers`）、活跃房间数（`activeRooms`）、已用加权单位（`usedUnits`）、有效容量（`effectiveCap`）和排队人数（`queueLength`）。满载时健康检查仍返回 `status: 'ok'`。
 
 ## CORS 与 Cookie
 

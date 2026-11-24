@@ -1,10 +1,12 @@
 import type { MiniAppSDK } from '@discourse-mini-app/sdk'
+import type { AudioLoadProgress } from '../../../client/src/lib/PlaybackSound.ts'
 import { WebAudioPlayer, type WebAudioPlayerSnapshot } from './WebAudioPlayer.ts'
 import {
   readRoomAudio,
   RoomAudioError,
   type ReadRoomAudioOptions,
   type RoomAudioErrorCode,
+  type RoomAudioProgress,
   type RoomAudioResult,
 } from './RoomAudioSource.ts'
 
@@ -41,7 +43,12 @@ export interface MappAudioEngineOptions {
   onChange?: (snapshot: MappAudioEngineSnapshot) => void
 }
 
-export type LoadRoomTrackOptions = Omit<ReadRoomAudioOptions, 'sdk'>
+type PreloadRoomTrackOptions = Omit<ReadRoomAudioOptions, 'sdk' | 'signal' | 'onProgress'>
+
+export type LoadRoomTrackOptions = PreloadRoomTrackOptions & {
+  signal?: AbortSignal
+  onLoadProgress?: (progress: AudioLoadProgress) => void
+}
 
 /** The bytes of the announced next track, being fetched (or already fetched) ahead of its turn. */
 interface PreloadedTrack {
@@ -49,6 +56,9 @@ interface PreloadedTrack {
   trackId: string
   controller: AbortController
   result: Promise<RoomAudioResult>
+  done: boolean
+  lastProgress?: RoomAudioProgress
+  onProgress?: (progress: RoomAudioProgress) => void
 }
 
 /** Transport/lifetime adapter only. WebAudioPlayer retains all audio-clock and source scheduling. */
@@ -65,6 +75,7 @@ export class MappAudioEngine {
   private errorCode: MappAudioEngineErrorCode | null = null
   /** At most one: the compressed bytes only (decoded audio is far larger), so memory stays bounded. */
   private preloaded: PreloadedTrack | null = null
+  private pendingPreload: PreloadRoomTrackOptions | null = null
 
   constructor(options: MappAudioEngineOptions) {
     this.sdk = options.sdk
@@ -80,6 +91,7 @@ export class MappAudioEngine {
   async loadRoomTrack(options: LoadRoomTrackOptions): Promise<boolean> {
     if (this.disposed) return false
     this.invalidate()
+    this.pendingPreload = null
     const generation = this.generation
     const controller = new AbortController()
     this.controller = controller
@@ -100,7 +112,26 @@ export class MappAudioEngine {
       this.player.pause()
       this.notify()
       if (!this.current(generation)) return false
-      const result = await this.readTrackBytes(options, controller)
+      const reportProgress = (progress: AudioLoadProgress) => {
+        if (this.current(generation)) options.onLoadProgress?.(progress)
+      }
+      reportProgress({ phase: 'buffering' })
+      if (!this.current(generation)) return false
+      const result = await this.readTrackBytes(options, controller, ({ loadedBytes, totalBytes }) =>
+        reportProgress({
+          phase: 'downloading',
+          loadedBytes,
+          totalBytes,
+          progress: totalBytes && totalBytes > 0 ? Math.min(1, loadedBytes / totalBytes) : undefined,
+        }),
+      )
+      if (!this.current(generation)) return false
+      reportProgress({
+        phase: 'decoding',
+        progress: 1,
+        loadedBytes: result.bytes.byteLength,
+        totalBytes: result.bytes.byteLength,
+      })
       if (!this.current(generation)) return false
       const loaded = await this.decode(result.bytes, controller.signal)
       if (!this.current(generation)) return false
@@ -112,6 +143,11 @@ export class MappAudioEngine {
       }
       this.trackId = result.trackId
       this.notify()
+      if (this.current(generation) && !this.loading && this.pendingPreload) {
+        const deferred = this.pendingPreload
+        this.pendingPreload = null
+        this.preloadRoomTrack(deferred)
+      }
       return this.current(generation)
     } catch (error) {
       if (!this.current(generation)) return false
@@ -131,18 +167,40 @@ export class MappAudioEngine {
    * through the SDK takes seconds; loadRoomTrack takes these bytes over when that track's turn comes, and only the
    * decoding is left. A failed or superseded preload costs nothing: the real load simply reads the track itself.
    */
-  preloadRoomTrack(options: Omit<LoadRoomTrackOptions, 'signal'>): void {
+  preloadRoomTrack(options: PreloadRoomTrackOptions): void {
     if (this.disposed) return
+    if (this.trackId === options.trackId) {
+      this.pendingPreload = null
+      return
+    }
     const known = this.preloaded
-    if (known && known.roomId === options.roomId && known.trackId === options.trackId) return
-    if (this.trackId === options.trackId) return
+    const matches = known && known.roomId === options.roomId && known.trackId === options.trackId
+    if (this.loading) {
+      if (known && !matches) this.discardPreload()
+      this.pendingPreload = { ...options }
+      return
+    }
+    this.pendingPreload = null
+    if (matches) return
     this.discardPreload()
     const controller = new AbortController()
     const entry: PreloadedTrack = {
       roomId: options.roomId,
       trackId: options.trackId,
       controller,
-      result: readRoomAudio({ ...options, sdk: this.sdk, signal: controller.signal }),
+      done: false,
+      result: readRoomAudio({
+        ...options,
+        sdk: this.sdk,
+        signal: controller.signal,
+        onProgress: (progress) => {
+          entry.lastProgress = progress
+          entry.onProgress?.(progress)
+        },
+      }).then((result) => {
+        entry.done = true
+        return result
+      }),
     }
     // A failed read is forgotten, so the real load starts its own.
     entry.result.catch(() => {
@@ -157,33 +215,37 @@ export class MappAudioEngine {
   }
 
   /** The preloaded bytes when they are for this very track, otherwise a normal read. */
-  private async readTrackBytes(options: LoadRoomTrackOptions, controller: AbortController): Promise<RoomAudioResult> {
+  private async readTrackBytes(
+    { roomId, trackId, mode }: LoadRoomTrackOptions,
+    controller: AbortController,
+    onProgress: (progress: RoomAudioProgress) => void,
+  ): Promise<RoomAudioResult> {
     const preloaded = this.preloaded
-    if (preloaded && preloaded.roomId === options.roomId && preloaded.trackId === options.trackId) {
+    if (preloaded && preloaded.roomId === roomId && preloaded.trackId === trackId) {
       // The load now owns the transfer: cancelling the load cancels it.
       this.preloaded = null
+      if (preloaded.done) return preloaded.result
       const cancelPreload = () => preloaded.controller.abort()
       controller.signal.addEventListener('abort', cancelPreload, { once: true })
       try {
-        return await Promise.race([
-          preloaded.result,
-          new Promise<never>((_, reject) =>
-            controller.signal.addEventListener('abort', () => reject(new RoomAudioError('ABORTED')), { once: true }),
-          ),
-        ])
+        preloaded.onProgress = onProgress
+        if (preloaded.lastProgress) onProgress(preloaded.lastProgress)
+        return await preloaded.result
       } catch (error) {
         if (controller.signal.aborted) throw error
         // The preload failed on its own; fall through to a direct read.
       } finally {
+        preloaded.onProgress = undefined
         controller.signal.removeEventListener('abort', cancelPreload)
       }
     }
-    return readRoomAudio({ ...options, sdk: this.sdk, signal: controller.signal })
+    return readRoomAudio({ roomId, trackId, mode, sdk: this.sdk, signal: controller.signal, onProgress })
   }
 
   cancel(): void {
     if (this.disposed) return
     this.invalidate()
+    this.pendingPreload = null
     this.loading = false
     this.errorCode = 'ABORTED'
     this.notify()
@@ -248,6 +310,7 @@ export class MappAudioEngine {
   unload(): void {
     if (this.disposed) return
     this.invalidate()
+    this.pendingPreload = null
     this.trackId = null
     this.loading = false
     this.errorCode = null
@@ -259,6 +322,7 @@ export class MappAudioEngine {
     if (this.disposal) return this.disposal
     this.disposed = true
     this.invalidate()
+    this.pendingPreload = null
     this.discardPreload()
     this.trackId = null
     this.loading = false

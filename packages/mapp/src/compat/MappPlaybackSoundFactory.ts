@@ -18,7 +18,10 @@ export interface MappPlaybackSoundFactory extends PlaybackSoundFactory {
   dispose(): Promise<void>
 }
 
-type Callbacks = Pick<PlaybackSoundOptions, 'onload' | 'onloaderror' | 'onplay' | 'onplayerror' | 'onpause' | 'onend'>
+type Callbacks = Pick<
+  PlaybackSoundOptions,
+  'onload' | 'onprogress' | 'onloaderror' | 'onplay' | 'onplayerror' | 'onpause' | 'onend'
+>
 type Listener = (soundId: number) => void
 
 interface Owner {
@@ -122,6 +125,7 @@ export function createMappPlaybackSoundFactory(options: MappPlaybackSoundFactory
           ? {}
           : {
               onload: soundOptions.onload,
+              onprogress: soundOptions.onprogress,
               onloaderror: soundOptions.onloaderror,
               onplay: soundOptions.onplay,
               onplayerror: soundOptions.onplayerror,
@@ -257,25 +261,36 @@ export function createMappPlaybackSoundFactory(options: MappPlaybackSoundFactory
         engine.setVolume(soundOptions.volume ?? 0.12)
         const roomId = options.getRoomId()
         if (roomId === null) throw new Error('AUDIO_LOAD_FAILED')
-        engine.loadRoomTrack({ roomId, trackId: track.id, mode: options.mode ?? 'stream' }).then((loaded) => {
-          if (!current(entry)) return
-          if (!loaded) {
-            loadFailed()
-            return
-          }
-          try {
-            if (entry.pendingSeek !== undefined) engine.seek(entry.pendingSeek)
-            entry.pendingSeek = undefined
-          } catch {
-            loadFailed()
-            return
-          }
-          entry.state = 'loaded'
-          // Loading belongs to the handle, not to an individual play/seek operation.
-          queueMicrotask(() => {
-            if (current(entry) && entry.state === 'loaded') entry.callbacks.onload?.()
+        engine
+          .loadRoomTrack({
+            roomId,
+            trackId: track.id,
+            mode: options.mode ?? 'stream',
+            onLoadProgress: (info) => {
+              queueMicrotask(() => {
+                if (current(entry) && entry.state === 'loading') entry.callbacks.onprogress?.(info)
+              })
+            },
           })
-        }, loadFailed)
+          .then((loaded) => {
+            if (!current(entry)) return
+            if (!loaded) {
+              loadFailed()
+              return
+            }
+            try {
+              if (entry.pendingSeek !== undefined) engine.seek(entry.pendingSeek)
+              entry.pendingSeek = undefined
+            } catch {
+              loadFailed()
+              return
+            }
+            entry.state = 'loaded'
+            // Loading belongs to the handle, not to an individual play/seek operation.
+            queueMicrotask(() => {
+              if (current(entry) && entry.state === 'loaded') entry.callbacks.onload?.()
+            })
+          }, loadFailed)
       } catch {
         // Even synchronous permission/input errors cannot call back during create().
         queueMicrotask(loadFailed)

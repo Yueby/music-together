@@ -22,7 +22,9 @@ export const playbackSoundFactory: PlaybackSoundFactory = {
   create(_track, options) {
     // The real stream takes over the connection the warm-up opened.
     releaseWarmed()
-    return new Howl(options)
+    const howlOptions = { ...options }
+    delete howlOptions.onprogress
+    return new Howl(howlOptions)
   },
   preload(track) {
     releaseWarmed()

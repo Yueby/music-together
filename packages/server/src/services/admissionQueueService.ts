@@ -1,8 +1,9 @@
-import { EVENTS, type AdmissionCancelledEvent, type ClientKind } from '@music-together/shared'
+import { EVENTS, type AdmissionCancelledEvent, type AdmissionQueuedEvent, type ClientKind } from '@music-together/shared'
 import { config } from '../config.js'
 import type { TypedServer, TypedSocket } from '../middleware/types.js'
+import { roomRepo } from '../repositories/roomRepository.js'
 import { logger } from '../utils/logger.js'
-import { canAdmitClient, getPublicServerCapacity, notifyCapacityChanged } from './serverLoadService.js'
+import { canAdmitClient, getPublicServerCapacity, notifyCapacityChanged, type AdmissionDecision } from './serverLoadService.js'
 
 export type QueuedAdmissionPayload =
   | {
@@ -24,13 +25,13 @@ export interface QueuedAdmissionEntry {
   socketId: string
   clientKind: ClientKind
   payload: QueuedAdmissionPayload
-  reason: 'capacity' | 'mapp_stream'
+  reason: AdmissionQueuedEvent['reason']
   enqueuedAt: number
   disconnectedAt?: number
   disconnectTimer?: ReturnType<typeof setTimeout>
 }
 
-type QueueEntry = QueuedAdmissionEntry & { socket: TypedSocket }
+type QueueEntry = QueuedAdmissionEntry & { socket: TypedSocket; blockedBy?: AdmissionDecision['reason'] }
 
 export type AdmissionExecutor = (
   io: TypedServer,
@@ -45,8 +46,7 @@ const MAX_QUEUE_WAIT_MS = 30 * 60_000
  * Bounded FIFO waiting queue for room creation / joining when the server is at capacity.
  * - Deduplicates by `identityUserId` (opening multiple tabs cannot consume multiple slots).
  * - Holds a brief reconnect grace window for web clients.
- * - Avoids head-of-line blocking when only the mini-app audio relay pool is congested (web users behind a
- *   stream-blocked mini-app user can still be admitted).
+ * - Skips requests blocked by mini-app relay congestion or by a room's mini-app listener limit.
  */
 export class AdmissionQueue {
   private entries: QueueEntry[] = []
@@ -67,7 +67,7 @@ export class AdmissionQueue {
 
   hasWaitingForCapacity(): boolean {
     return this.entries.some((entry) =>
-      entry.reason === 'capacity' && entry.disconnectedAt === undefined && entry.socket.connected,
+      (entry.blockedBy ?? entry.reason) === 'capacity' && entry.disconnectedAt === undefined && entry.socket.connected,
     )
   }
 
@@ -85,7 +85,7 @@ export class AdmissionQueue {
     io: TypedServer,
     socket: TypedSocket,
     payload: QueuedAdmissionPayload,
-    reason: 'capacity' | 'mapp_stream',
+    reason: QueuedAdmissionEntry['reason'],
   ): { ok: true; position: number; queueLength: number } | { ok: false } {
     const identityUserId = socket.data.identityUserId
     const clientKind: ClientKind = socket.data.clientKind ?? (identityUserId.startsWith('mapp_') ? 'mapp' : 'web')
@@ -107,6 +107,7 @@ export class AdmissionQueue {
       existing.clientKind = clientKind
       existing.payload = payload
       existing.reason = reason
+      existing.blockedBy = undefined
       existing.disconnectedAt = undefined
       const position = existingIdx + 1
       this.emitQueued(io, existing, position)
@@ -124,6 +125,7 @@ export class AdmissionQueue {
       clientKind,
       payload,
       reason,
+      blockedBy: undefined,
       enqueuedAt: Date.now(),
     }
     this.entries.push(entry)
@@ -267,10 +269,27 @@ export class AdmissionQueue {
           skippedIdentities.has(entry.identityUserId)
         ) continue
 
-        const decision = canAdmitFn(entry.clientKind, { isCreate: entry.payload.action === 'create' })
+        const existingMapping = entry.payload.action === 'join' ? roomRepo.getSocketMapping(entry.socketId) : undefined
+        const roomSwitch = Boolean(
+          existingMapping && entry.payload.action === 'join' && existingMapping.roomId !== entry.payload.roomId,
+        )
+        const decision = canAdmitFn(entry.clientKind, {
+          isCreate: entry.payload.action === 'create',
+          targetRoomId: entry.payload.action === 'join' ? entry.payload.roomId : undefined,
+          ...(roomSwitch ? { roomSwitch: true } : {}),
+        })
         if (!decision.allowed) {
-          // If only mini-app audio relay is congested (or create is soft-restricted), let later eligible users pass.
-          if (decision.reason === 'mapp_stream' || decision.reason === 'create_restricted') {
+          const nextBlockedBy = decision.reason ?? 'capacity'
+          if (entry.blockedBy !== nextBlockedBy) {
+            entry.blockedBy = nextBlockedBy
+            mutated = true
+          }
+          if (decision.reason && decision.reason !== 'create_restricted' && entry.reason !== decision.reason) {
+            entry.reason = decision.reason
+            mutated = true
+          }
+          // Relay, room and creation gates can leave later requests eligible.
+          if (decision.reason === 'mapp_stream' || decision.reason === 'mapp_room' || decision.reason === 'create_restricted') {
             skippedIdentities.add(entry.identityUserId)
             continue
           }

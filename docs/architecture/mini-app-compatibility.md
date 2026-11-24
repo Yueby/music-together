@@ -66,10 +66,13 @@ SDK 0.3 的受控动态字节读取和 Web Audio 已在早期探针中实测（�
 
 ### 受控房间媒体契约
 
+同房听众会在切歌时集中请求音频。动态单房上限 `mappRoomCap` 因此按中转状况调整，目标房间达到上限时，新的微应用加入及跨房切换请求进入 `mapp_room` 队列。切房用户会留在原房间直至获准，网页切房可直接完成。持续中转拥塞优先收紧单房上限，网页首次准入继续按通用容量判断。
+
 固定 HTTP 目标为 `GET /api/mapp/audio`，唯一动态 query 是 `roomId` 与 `trackId`，SDK 端点名为 `roomAudio`。平台身份由正常 HTTP JWT 验证，仍限定可信 issuer/audience/app、production、请求方法、URL、Origin 与获准 query；不回退网页 Cookie。
 
 - 后端只允许当前房间成员读取该房间的 current/pending/queue 曲目；客户端不提供 URL。
 - 取源调用既有 `musicProvider` 和服务器房间账号池，不信任队列数据中可能由客户端携带的 `streamUrl`，不向微应用或 CDN 发送 Cookie。
+- 验证房间和曲目权限后，以房间实例隔离取链缓存。相同音源、曲目、码率和 Cookie 哈希的请求合并，单房最多缓存 64 条未过期链接，最长 5 分钟。取链完成后才申请传输槽位。当前及待生效曲目使用普通优先级，队列曲目使用低优先级。并发上限至少为 2 时为普通优先级预留一个槽位，低优先级的等待与拒绝单独排除在准入压力指标之外。
 - 取源完成及流读取过程中重新核对成员与曲目权限。源站拒绝直接返回固定错误，不改变身份请求头、切换 IP、解锁、转码或落盘。
 - 仅接受受控 HTTPS 音乐 CDN，检查并固定公网 DNS 解析，保持默认 TLS 校验；重定向、私网、压缩歧义或非 200 的上游响应不进入播放通路。响应只校验 Content-Type 白名单与 `nosniff`，不再做文件头签名嗅探；客户端仅用 `decodeAudioData` 读取。
 - 取链与房间播放共用 `streamUrlResolver`：按房间音质取链，取不到时依次降到 320/192/128（与 Web 一致，避免高音质无 URL 时微应用整首失败）。预算为 32MiB、取链 20 秒、整个请求含传输 5 分钟（`AbortSignal.timeout`；传输上限不再与取链共用 30 秒，慢连接也能下完一首）、源连接/头部 8 秒、全局并发流默认 8（`MAPP_MAX_STREAMS`，1–32）、单主体 2 个；超出全局上限的请求最多 64 个按先后排队、最长等 15 秒（排队只占一个挂起连接，不占上游连接和缓冲），超时或队列已满才返回 429，等待中取消则释放排位；客户端在 429/503 时 2 秒后重试一次，整体超时 75 秒；速率复用 `httpRateLimiter.ts` 的 `mediaStreamRateLimit`（每分钟 20 次，按身份分桶，可通过 `rateLimit` 选项注入）。流式转发使用 `stream/promises` 的 `pipeline`，取消与背压向上游传播；上游和字节守卫先写入暂存流，读到第一块数据后才写响应头。首字节之前的失败（上游断开、空正文、房间权限变化）因此仍能返回带 CORS 头的 JSON 错误，而不是销毁套接字——后者经 Cloudflare 变成不带 CORS 头的 502，浏览器只会报成 CORS 错误，什么都看不出来。音频接口的上游类失败（内部 502/504）对外一律发 503：Cloudflare 会把源站的 502/504 换成自己的错误页，那个页面没有 CORS 头，浏览器只会报一个 CORS 错误，固定 code 到不了客户端（封面/搜索等平台端点仍用 502/504，客户端对它们只做回退，不依赖状态码）。QQ 音乐的下载域名（当前为 `aqqmusic.tc.qq.com`）属于 `tc.qq.com`，CDN 白名单按该后缀放行。平台音频失败按固定 code 与状态码记录警告日志（不含 URL、Cookie 或供应商文本），401 与客户端取消除外。未验证请求的洪泛防护交给 Cloudflare 等入口层。前端 SDK 读取采用 45 秒预算和同样的大小上限，超限明确报错，不悄悄降低音质。客户端只要求 `audio/*` 或 `application/octet-stream`，不做文件头嗅探，非音频字节由 `decodeAudioData` 拒绝；取消后才到达的流响应会被 `cancel()` 释放。
@@ -82,15 +85,19 @@ SDK 0.3 的受控动态字节读取和 Web Audio 已在早期探针中实测（�
 
 `client/lib/RoomCommands.ts` 保留 Web 原事件及 payload；大厅建房/加入、RoomPage 自动或密码加入、离房均通过这个入口。`MappRoomCommands` 只接受对应 session 的 socket，过滤客户端身份与重入票据，委托原 session API；自动加入在权威 joining/creating 或同房已加入时合并，避免与 RoomSession 恢复重复发送。未连接时大厅不缓存 room-list 请求，而由连接事件发起。
 
+收到 Socket.IO 的 `SERVER_OVERLOADED` 时，微应用随机延时 5 至 8 秒重连，期间保留已确认房间的恢复票据。连接和会话销毁都会清除待重试的计时器。新平台握手达到连接硬上限时，Engine.IO 在 JWT 校验前直接返回 HTTP 503。微应用断线会丢弃准入队列位置，并提示重新进入。
+
 身份变化会以固定 `IDENTITY_CHANGED` 状态清除恢复，过期/缺失票据或恢复失败亦要求手动入房。MappSocketProvider 投影 `requiresManualJoin`；共享 RoomPage 返回 InteractionGate、清除旧密码引用，只有新的用户交互才能继续。这一门控对 Web 默认关闭。正式宿主构建的模块选择及启动装配仍未开启。
 
 ### 共享播放器媒体对象
 
 `client/src/lib/PlaybackSound.ts` 定义现有播放器 Hook 消费的最小媒体接口；默认 `playbackSoundFactory.ts` 原样将 options 传给 Howler。`useHowl` 只替换媒体创建入口，`usePlayer` 继续复用，`usePlayerSync` 保留既有计划执行、EMA 漂移校正和 conductor 上报逻辑。
 
-**首播耗时与码率上限**：网页端用 `<audio>` 流式播放（Howler `html5: true`，收到第一段就能播），微应用做不到——沙箱只有 Web Audio，`decodeAudioData` 需要完整文件，SDK 的 `audio.play` / `video.playProgram` 只播 manifest 声明并校验过的资源（固定文件，或每段带 `sha256`/`size` 的分段），不适用动态歌曲。沙箱 CSP 还有 `media-src 'none'`（沙箱实测：`<audio>` 加载 `blob:` URL 会被拦截），所以 `<audio>` / MediaSource 的边下边播也走不通。所以微应用的首播耗时就是整个文件的下载时间，而瓶颈是服务器（海外）到音乐 CDN 的链路：实测 2MB 封面约 0.6–0.7MB/s（偶发降到 50KB/s），音频约 1–1.5MB/s，320kbps 的 4 分钟歌（约 10MB）要 6–9 秒。服务端因此给微应用音频接口加了码率上限 `MAPP_AUDIO_MAX_BITRATE`（默认 128kbps，约 4MB，耗时约为 320kbps 的 40%，上游带宽也最省），取房间音质与上限中较小者，网页端不受影响；需要更高音质可设为 192/320/999。服务器配置有限，所以微应用只做转发，不转码、不落盘、不做服务端缓存，缓存、解码、预载都留在用户浏览器里。
+**首播耗时与码率上限**：网页端用 `<audio>` 流式播放（Howler `html5: true`，收到第一段就能播），微应用做不到——沙箱只有 Web Audio，`decodeAudioData` 需要完整文件，SDK 的 `audio.play` / `video.playProgram` 只播 manifest 声明并校验过的资源（固定文件，或每段带 `sha256`/`size` 的分段），不适用动态歌曲。沙箱 CSP 还有 `media-src 'none'`（沙箱实测：`<audio>` 加载 `blob:` URL 会被拦截），所以 `<audio>` / MediaSource 的边下边播也走不通。所以微应用的首播耗时就是整个文件的下载时间，而瓶颈是服务器（海外）到音乐 CDN 的链路：实测 2MB 封面约 0.6–0.7MB/s（偶发降到 50KB/s），音频约 1–1.5MB/s，320kbps 的 4 分钟歌（约 10MB）要 6–9 秒。服务端因此给微应用音频接口加了码率上限 `MAPP_AUDIO_MAX_BITRATE`（默认 128kbps，约 4MB，耗时约为 320kbps 的 40%，上游带宽也最省），取房间音质与上限中较小者，网页端不受影响；需要更高音质可设为 192/320/999。服务端流式转发音频，缓存的是取链结果。压缩音频字节的预取、缓存与解码由客户端处理。
 
 **切歌预取**：微应用必须经 SDK 下载整个文件才能解码（约 10MB 实测 7 秒），不预取时每次切歌都会比房主晚数秒、从曲目中途开始。服务端在每首歌开始后广播 `player:preload`（见 data-flow），`MappPlaybackSoundFactory.preload` 交给 `MappAudioEngine.preloadRoomTrack` 提前下载下一首的压缩字节（仅一份，不含解码后的音频，避免占用数倍内存）；切歌时 `loadRoomTrack` 接手同一首的预取（含仍在传输中的），只剩解码。鉴权沿用 `roomAudio`：下一首已在房间队列里，服务端的“曲目属于该房间”检查照常通过。
+
+当前曲目加载期间只记录最新的预取请求，成功解码后才开始下载。取消、卸载和关闭引擎都会清除待预取请求。
 
 `MappPlaybackSoundFactory` 使用一个共享 MappAudioEngine/context；只以 roomId/trackId 加载，忽略 Track.streamUrl/options.src，关闭音频源自动重试与 HTML5 频谱分支。每个媒体对象有稳定 sound ID、owner/operation 守卫、异步 load/play/pause/end 回调和 once 监听；卸载曲目释放 buffer，但保留已解锁 context，退出应用才 dispose。加载期间 seek 排队、pause 不终止合法字节读取；加载回调不被同一对象的控制操作丢弃。
 
@@ -103,6 +110,8 @@ SDK 0.3 的受控动态字节读取和 Web Audio 已在早期探针中实测（�
 微应用入口 `client/src/platform/MappApp.tsx` 在 `MemoryRouter` 内以 `MappSocketProvider` 挂载该桥接；该入口仅在平台配置启用时可达，真实平台 sandbox 验收见上文。
 
 ### 只读搜索、歌词与封面
+
+网页与微应用共用封面代理的 16 MiB LRU 缓存，缓存有效期为 15 分钟，单张超过 4 MiB 时直接返回抓取结果。同 URL 与字节上限的在途请求合并。上游抓取全局同时最多 16 个，另可排队 64 个，队列已满或等待超过 10 秒返回 HTTP 503。
 
 `shared/mappMetadata.ts` 集中固定 target、query allowlist、严格 schema 与 1MiB 预算。SDK 名称为 `musicSearch`、`musicLyric`、`musicTtml`、`musicCover`、`musicArtist`、`musicArtistSongs`、`musicArtistAlbums`、`musicPlaylist`，分别对应 `GET /api/music/search`、`/lyric`、`/ttml`、`/cover-proxy`、`/artist`、`/artist/songs`、`/artist/albums`、`/playlist`。查询拒绝未知和重复键（畸形转义同样报 `METADATA_QUERY_REJECTED`）；schema 解析显式采用 jitless，并沿用 Mapp 的 CSP 初始化策略。
 
@@ -118,7 +127,7 @@ TTML 逐词歌词走第四个只读端点 `musicTtml`（`GET /api/music/ttml?sou
 
 响应为 `{ lines }` JSON，平台端复用现有“JSON + 1MiB”传输。库里没有这首歌时是 `lines: null`（200，浏览器不会在控制台报错），上游故障是 502（平台端固定 code `METADATA_FAILED`）。共享歌词 Hook 在两端与服务端歌词请求同时发出，TTML 失败或没有歌词行时回退到 LRC/YRC/KRC 数据，库慢不会拖慢基础歌词。网页端过去直连第三方库会被 CORS 拦截（库对所有请求先 302），“库地址”设置项也无法在服务端安全沿用，该设置项已移除，改由运维用 `TTML_DB_BASE_URL` 指定。酷狗在库里没有目录，继续使用原生 KRC 逐词歌词。
 
-封面走同一类受控读取：`GET /api/music/cover-proxy?url=<封面 https 地址>`，平台鉴权通过后复用 Web 封面代理的主机白名单（`y.gtimg.cn`、`p1`~`p4.music.126.net`、`imgessl.kugou.com`）抓取并返回图片字节（上游重定向手动跟随，目标必须仍在白名单且为 https，最多 3 跳，Web 与平台共用），上限 2MiB，限流沿用封面代理额度（每分钟 60 次）。网易云封面默认是数 MB 的原图（实测约 5MB，服务器上拉取需 8 秒以上，既超上限也易超时），所以平台端点对 `p1`~`p4.music.126.net` 且未带 `param` 的地址自动请求 `?param=600y600`（约 0.5MB、不到 1 秒）；列表缩略图已带的 `param=120y120` 保持不变，Web 封面代理不改。微应用侧 `coverLoader` 通过 SDK 读取字节后生成 Blob URL（官方要求图片以 Blob 加载，不直连 CDN）：白名单主机的 `http://` 先升级为 `https://`，要求 200、`image/*`（排除 SVG）、非空且不超过 2MiB；同一地址只请求一次、失败不缓存、并发 4；已完成的封面按最近使用排序、总计超过 48MiB 就回收（revoke）最久未用的，翻长列表不会让沙箱内存无限增长（白名单来自 shared 的 `COVER_HOST_ALLOWLIST`，与服务端是同一份）；排队等位的请求后来先服务，刚开始播放的这首的封面不会排在一长串列表缩略图后面；`useArtworkUrl` 失败后 2.5 秒自动重试一次，一次瞬时的代理/CDN 故障不会让占位图留到整首歌结束；宿主 dispose 时撤销全部 Blob URL 并取消在途请求。网页端 `artworkLoader` 默认直接返回原 URL，`useArtworkUrl` 同步返回，网页渲染不变。
+封面走同一类受控读取：`GET /api/music/cover-proxy?url=<封面 https 地址>`，平台鉴权通过后复用 Web 封面代理的主机白名单（`y.gtimg.cn`、`p1`~`p4.music.126.net`、`imgessl.kugou.com`）抓取并返回图片字节（上游重定向手动跟随，目标必须仍在白名单且为 https，最多 3 跳，Web 与平台共用），上限 2MiB，限流沿用封面代理额度（每分钟 60 次）。网易云封面默认是数 MB 的原图（实测约 5MB，服务器上拉取需 8 秒以上，既超上限也易超时），所以平台端点对 `p1`~`p4.music.126.net` 且未带 `param` 的地址自动请求 `?param=600y600`（约 0.5MB、不到 1 秒）；列表缩略图使用已有的 `param=120y120`，网页仍按请求的尺寸抓取。微应用侧 `coverLoader` 通过 SDK 读取字节后生成 Blob URL（官方要求图片以 Blob 加载，不直连 CDN）：白名单主机的 `http://` 先升级为 `https://`，要求 200、`image/*`（排除 SVG）、非空且不超过 2MiB；同一地址只请求一次、失败不缓存、并发 4；已完成的封面按最近使用排序、总计超过 48MiB 就回收（revoke）最久未用的，翻长列表不会让沙箱内存无限增长（白名单来自 shared 的 `COVER_HOST_ALLOWLIST`，与服务端是同一份）；排队等位的请求后来先服务，刚开始播放的这首的封面不会排在一长串列表缩略图后面；`useArtworkUrl` 失败后 2.5 秒自动重试一次，一次瞬时的代理/CDN 故障不会让占位图留到整首歌结束；宿主 dispose 时撤销全部 Blob URL 并取消在途请求。网页端 `artworkLoader` 默认直接返回原 URL，`useArtworkUrl` 同步返回，网页渲染不变。
 
 服务端 `createPlatformMetadataRouter` 仅在平台配置启用时挂载（`server/src/index.ts`，与媒体路由一并置于 Web CORS / Cookie 引导之前），复用 `musicMetadataController` 的匿名目录搜索和歌词编排，不复制服务逻辑。显式 Authorization（含空/错误）、`mini_app_token` 查询参数或 Authorization 预检进入平台验证；正常 Web Cookie 请求与 Web 预检通过 `next('router')` 交还原链，不写头、不改变身份。平台验签检查 production/network.request、issuer/audience/app/time/Origin/GET/htu 与完整 query_keys，失败不降级 Cookie。认证限时 6 秒，处理限时 20 秒，JSON 响应不超过 1MiB，错误只返回固定 code。
 

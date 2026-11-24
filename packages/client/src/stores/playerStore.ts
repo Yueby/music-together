@@ -2,6 +2,21 @@ import { create } from 'zustand'
 import type { Track } from '@music-together/shared'
 import type { LyricLine as AMLLLyricLine } from '@applemusic-like-lyrics/core'
 import { storage } from '@/lib/storage'
+import type { AudioLoadPhase } from '@/lib/PlaybackSound'
+
+interface AudioLoadStateUpdate {
+  phase: AudioLoadPhase
+  progress?: number | null
+  loadedBytes?: number | null
+  startedAt?: number | null
+}
+
+const idleAudioLoadState = {
+  audioLoadPhase: 'idle',
+  audioLoadProgress: null,
+  audioLoadedBytes: null,
+  audioLoadStartedAt: null,
+} as const
 
 interface PlayerStore {
   currentTrack: Track | null
@@ -13,6 +28,10 @@ interface PlayerStore {
   tlyric: string
   ttmlLines: AMLLLyricLine[] | null
   lyricLoading: boolean
+  audioLoadPhase: AudioLoadPhase
+  audioLoadProgress: number | null
+  audioLoadedBytes: number | null
+  audioLoadStartedAt: number | null
   syncDrift: number
   lowFreqVolume: number
 
@@ -24,6 +43,7 @@ interface PlayerStore {
   setLyric: (lyric: string, tlyric?: string) => void
   setTtmlLines: (lines: AMLLLyricLine[] | null) => void
   setLyricLoading: (loading: boolean) => void
+  setAudioLoadState: (state: AudioLoadStateUpdate) => void
   setSyncDrift: (drift: number) => void
   setLowFreqVolume: (volume: number) => void
   reset: () => void
@@ -39,6 +59,7 @@ export const usePlayerStore = create<PlayerStore>((set) => ({
   tlyric: '',
   ttmlLines: null,
   lyricLoading: false,
+  ...idleAudioLoadState,
   syncDrift: 0,
   lowFreqVolume: 1,
 
@@ -53,6 +74,24 @@ export const usePlayerStore = create<PlayerStore>((set) => ({
   setLyric: (lyric, tlyric) => set({ lyric, tlyric: tlyric ?? '' }),
   setTtmlLines: (lines) => set({ ttmlLines: lines }),
   setLyricLoading: (loading) => set({ lyricLoading: loading }),
+  setAudioLoadState: ({ phase, progress, loadedBytes, startedAt }) =>
+    set((previous) => {
+      if (phase === 'idle') return idleAudioLoadState
+      let nextProgress = previous.audioLoadProgress
+      if (progress === null) nextProgress = null
+      else if (typeof progress === 'number' && Number.isFinite(progress)) {
+        nextProgress = Math.max(0, Math.min(1, progress))
+      }
+      return {
+        audioLoadPhase: phase,
+        audioLoadProgress: nextProgress,
+        audioLoadedBytes:
+          loadedBytes === null || (typeof loadedBytes === 'number' && Number.isFinite(loadedBytes))
+            ? loadedBytes
+            : previous.audioLoadedBytes,
+        audioLoadStartedAt: startedAt === undefined ? (previous.audioLoadStartedAt ?? Date.now()) : startedAt,
+      }
+    }),
   setSyncDrift: (drift) => set({ syncDrift: drift }),
   setLowFreqVolume: (lowFreqVolume) => set({ lowFreqVolume }),
   reset: () =>
@@ -65,6 +104,7 @@ export const usePlayerStore = create<PlayerStore>((set) => ({
       tlyric: '',
       ttmlLines: null,
       lyricLoading: false,
+      ...idleAudioLoadState,
       syncDrift: 0,
       lowFreqVolume: 1,
     }),

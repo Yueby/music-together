@@ -59,7 +59,8 @@ function fixture(maxBitrate: 128 | 192 | 320 | 999 = 999) {
   const service = createPlatformMediaService({ rooms, request, provider, cookie, slots, maxBitrate })
   const controller = new AbortController()
   const sink = new Sink()
-  const run = (target: Sink = sink) => service.stream(input, target as unknown as Response, controller.signal)
+  const run = (target: Sink = sink, signal = controller.signal) =>
+    service.stream(input, target as unknown as Response, signal)
   /** Both of this account's concurrent slots must be free again. */
   const expectSlotsFree = async () => {
     const a = await slots.acquire(input.userId)
@@ -76,6 +77,7 @@ describe('room-controlled media service', () => {
     'streams a member-accessible %s track using server quality/cookie and not streamUrl',
     async (location) => {
       const f = fixture()
+      const acquire = vi.spyOn(f.slots, 'acquire')
       if (location !== 'current') {
         f.room.currentTrack = null
         if (location === 'queue') f.room.queue = [f.track as unknown as RoomData['queue'][number]]
@@ -83,6 +85,9 @@ describe('room-controlled media service', () => {
       }
       f.body.end(audio)
       await f.run()
+      expect(acquire).toHaveBeenCalledExactlyOnceWith(input.userId, expect.any(AbortSignal), {
+        priority: location === 'queue' ? 'low' : 'normal',
+      })
       expect(f.provider.getStreamUrl).toHaveBeenCalledExactlyOnceWith(
         'netease',
         'trusted-url-id',
@@ -109,13 +114,13 @@ describe('room-controlled media service', () => {
     },
   )
 
-  it('waits for a free slot when the server is busy and does not touch the provider meanwhile', async () => {
+  it('waits for a free slot without starting an upstream transfer', async () => {
     const f = fixture()
     const busy = await Promise.all(Array.from({ length: 8 }, (_, i) => f.slots.acquire(`other${i}`)))
     f.body.end(audio)
     const running = f.run()
     await tick()
-    expect(f.provider.getStreamUrl).not.toHaveBeenCalled()
+    expect(f.request).not.toHaveBeenCalled()
     busy[0]()
     await running
     expect(Buffer.concat(f.sink.chunks)).toEqual(audio)
@@ -131,9 +136,72 @@ describe('room-controlled media service', () => {
     await tick()
     f.controller.abort()
     await outcome
-    expect(f.provider.getStreamUrl).not.toHaveBeenCalled()
+    expect(f.request).not.toHaveBeenCalled()
     busy.forEach((release) => release())
     await f.expectSlotsFree()
+  })
+
+  it('coalesces slow lookups before acquiring slots and caches the result only for the same room and cookie', async () => {
+    const f = fixture()
+    let resolve!: (url: string) => void
+    f.provider.getStreamUrl.mockReturnValueOnce(new Promise<string>((done) => {
+      resolve = done
+    }))
+    f.request.mockImplementation(async () => ({
+      body: Readable.from([audio]), contentType: 'audio/mpeg', length: audio.length,
+    }))
+    const first = f.run()
+    const second = f.run(new Sink())
+    await tick()
+    expect(f.provider.getStreamUrl).toHaveBeenCalledOnce()
+    expect(f.slots.getSnapshot()).toMatchObject({ activeStreams: 0, waitingCount: 0 })
+    expect(f.request).not.toHaveBeenCalled()
+    resolve('https://m1.music.126.net/coalesced')
+    await Promise.all([first, second])
+    await f.run(new Sink())
+    expect(f.provider.getStreamUrl).toHaveBeenCalledOnce()
+
+    f.cookie.mockReturnValue('changed-room-cookie')
+    await f.run(new Sink())
+    expect(f.provider.getStreamUrl).toHaveBeenCalledTimes(2)
+    f.rooms.get.mockReturnValue({ ...f.room })
+    await f.run(new Sink())
+    expect(f.provider.getStreamUrl).toHaveBeenCalledTimes(3)
+  })
+
+  it('keeps a shared URL lookup available when one caller aborts', async () => {
+    const f = fixture()
+    let resolve!: (url: string) => void
+    f.provider.getStreamUrl.mockReturnValueOnce(new Promise<string>((done) => {
+      resolve = done
+    }))
+    const cancelled = expect(f.run()).rejects.toMatchObject({ code: 'MEDIA_ABORTED' })
+    const remaining = f.run(new Sink(), new AbortController().signal)
+    f.controller.abort()
+    await cancelled
+    resolve('https://m1.music.126.net/shared')
+    f.body.end(audio)
+    await remaining
+    expect(f.provider.getStreamUrl).toHaveBeenCalledOnce()
+    expect(f.request).toHaveBeenCalledOnce()
+  })
+
+  it('refreshes a URL whose remaining lifetime falls below the margin while waiting for a slot', async () => {
+    const f = fixture()
+    const clock = vi.spyOn(Date, 'now').mockReturnValue(Date.parse('2026-11-24T00:00:00Z'))
+    const busy = await Promise.all(Array.from({ length: 8 }, (_, i) => f.slots.acquire(`other${i}`)))
+    const expired = 'https://m1.music.126.net/20261124080100/first'
+    const refreshed = 'https://m1.music.126.net/refreshed'
+    f.provider.getStreamUrl.mockResolvedValueOnce(expired).mockResolvedValueOnce(refreshed)
+    f.body.end(audio)
+    const running = f.run()
+    await tick()
+    expect(f.request).not.toHaveBeenCalled()
+    clock.mockReturnValue(Date.parse('2026-11-24T00:00:31Z'))
+    busy.forEach((release) => release())
+    await running
+    expect(f.provider.getStreamUrl).toHaveBeenCalledTimes(2)
+    expect(f.request).toHaveBeenCalledExactlyOnceWith('netease', refreshed, expect.any(AbortSignal))
   })
 
   it.each(['outsider', 'missing room', 'missing track', 'cross room'])(
@@ -279,7 +347,7 @@ describe('room-controlled media service', () => {
       }),
     )
     const work = f.run()
-    await tick() // the slot is taken first, then the resolution deadline starts
+    await tick()
     expect(spy).toHaveBeenCalledWith(5 * 60_000)
     expect(spy).toHaveBeenCalledWith(20_000)
     resolveTimeout.abort()
@@ -374,6 +442,30 @@ describe('room-controlled media service', () => {
 })
 
 describe('stream slots', () => {
+  it('reserves playback capacity and gives normal waiters priority without counting low-pressure metrics', async () => {
+    const slots = new StreamSlots({ maxStreams: 2, maxQueued: 2 })
+    const low = { priority: 'low' } as const
+    const first = await slots.acquire('first', undefined, low)
+    const queuedLow = slots.acquire('queued-low', undefined, low)
+    expect(slots.getSnapshot()).toMatchObject({ activeStreams: 1, waitingCount: 0, recentWaitP95Ms: 0, recentBusyCount: 0 })
+    const second = await slots.acquire('second')
+    const queuedNormal = slots.acquire('queued-normal')
+    await expect(slots.acquire('overflow-low', undefined, low)).rejects.toMatchObject({ code: 'MEDIA_BUSY' })
+    expect(slots.getSnapshot()).toMatchObject({ waitingCount: 1, recentBusyCount: 0 })
+
+    first()
+    const normal = await queuedNormal
+    const snapshot = slots.getSnapshot()
+    expect(snapshot).toMatchObject({ activeStreams: 2, waitingCount: 0, recentBusyCount: 0 })
+    second()
+    normal()
+    const preload = await queuedLow
+    expect(slots.getSnapshot()).toMatchObject({
+      activeStreams: 1, waitingCount: 0, recentWaitP95Ms: snapshot.recentWaitP95Ms, recentBusyCount: 0,
+    })
+    preload()
+  })
+
   afterEach(() => vi.useRealTimers())
   /** True once the promise has settled, without waiting for it. */
   const settled = async (promise: Promise<unknown>) => {

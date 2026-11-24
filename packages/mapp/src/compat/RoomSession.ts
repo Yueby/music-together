@@ -126,6 +126,11 @@ export function createMappRoomSession(options: MappRoomSessionOptions): MappRoom
   const socket = createMappRoomSocket(socketOptions)
   let snapshot = IDLE
   let disposed = false
+  let overloadRetryTimer: ReturnType<typeof setTimeout> | undefined
+  const clearOverloadRetry = () => {
+    clearTimeout(overloadRetryTimer)
+    overloadRetryTimer = undefined
+  }
   let identityReady = false
   let lastUserId: string | null = null
   let pending: Pending | undefined
@@ -172,6 +177,7 @@ export function createMappRoomSession(options: MappRoomSessionOptions): MappRoom
 
   /** Re-enter the confirmed room once per new socket id; creates/unconfirmed joins are never replayed. */
   function reconcile(): void {
+    if (socket.connected) clearOverloadRetry()
     if (!ready()) {
       publish({ connected: socket.connected, status: restingStatus() })
       return
@@ -216,9 +222,15 @@ export function createMappRoomSession(options: MappRoomSessionOptions): MappRoom
     identityReady = false
     publish({ connected: false, userId: null, roomId: null, status: 'disconnected', errorCode: null })
   }
-  const onConnectError = (): void => {
+  const onConnectError = (err?: Error): void => {
     identityReady = false
     publish({ connected: false, userId: null, status: 'disconnected', errorCode: 'CONNECT_FAILED' })
+    if (!disposed && err?.message === 'SERVER_OVERLOADED' && overloadRetryTimer === undefined) {
+      overloadRetryTimer = setTimeout(() => {
+        overloadRetryTimer = undefined
+        if (!disposed && !socket.connected) socket.connect()
+      }, 5_000 + Math.floor(Math.random() * 3_000))
+    }
   }
   const onCreated: ServerToClientEvents[typeof EVENTS.ROOM_CREATED] = ({ roomId }) => {
     if (ready() && pending?.kind === 'create') pending.roomId = roomId
@@ -307,6 +319,7 @@ export function createMappRoomSession(options: MappRoomSessionOptions): MappRoom
       }
     },
     connect() {
+      clearOverloadRetry()
       if (disposed || socket.connected) return
       publish({ status: 'connecting', errorCode: null })
       socket.connect()
@@ -334,6 +347,7 @@ export function createMappRoomSession(options: MappRoomSessionOptions): MappRoom
     },
     dispose() {
       if (disposed) return
+      clearOverloadRetry()
       clearRoom()
       identityReady = false
       disposed = true
