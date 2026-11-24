@@ -192,7 +192,7 @@ src/
 ├── socket.ts               #   Socket.IO 网页客户端实例
 ├── platform/SdkRoomSocket.ts #   可注入的微应用 SDK Socket.IO 传输（不替换网页实例）
     ├── storage.ts              #   localStorage 封装（带类型校验）
-    ├── platform.ts             #   平台常量（PLATFORM_LABELS / PLATFORM_SHORT_LABELS / PLATFORM_DOT / PLATFORM_GLYPH、会员名称 `vipLabel`（按平台区分等级）、状态查找函数）；平台清单本身（`MUSIC_SOURCES`、`ARTIST_SOURCES`、`DISCOVER_SOURCES`）在 shared/constants
+    ├── platform.ts             #   平台常量（PLATFORM_LABELS / PLATFORM_SHORT_LABELS / PLATFORM_DOT、会员名称 `vipLabel`（按平台区分等级）、状态查找函数）；平台清单本身（`MUSIC_SOURCES`、`ARTIST_SOURCES`、`DISCOVER_SOURCES`）在 shared/constants
     ├── format.ts               #   格式化工具（时间、文本等）
     ├── audioUnlock.ts          #   浏览器音频自动播放解锁
     └── utils.ts                #   cn() + trackKey() 等通用工具
