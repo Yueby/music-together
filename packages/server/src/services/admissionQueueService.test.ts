@@ -25,6 +25,18 @@ function createMockIo(sockets: TypedSocket[]) {
 }
 
 describe('AdmissionQueue', () => {
+  it('stops counting a create-restricted waiter against capacity while keeping its public reason', async () => {
+    const queue = new AdmissionQueue()
+    const { socket } = createMockSocket('create', 'creator')
+    const io = createMockIo([socket])
+    queue.setExecutor(vi.fn())
+    queue.enqueue(io, socket, { action: 'create', nickname: 'Creator' }, 'capacity')
+    expect(queue.hasWaitingForCapacity()).toBe(true)
+    await expect(queue.drain(io, () => ({ allowed: false, reason: 'create_restricted' }))).resolves.toBe(0)
+    expect(queue.hasWaitingForCapacity()).toBe(false)
+    expect(socket.emit).toHaveBeenLastCalledWith(EVENTS.ADMISSION_QUEUED, expect.objectContaining({ reason: 'capacity' }))
+  })
+
   it('enqueues in FIFO order, deduplicates per identity, and enforces maxQueueLength', () => {
     const queue = new AdmissionQueue({ maxQueueLength: 2 })
     const s1 = createMockSocket('sock-1', 'user-1', 'web')
@@ -79,6 +91,46 @@ describe('AdmissionQueue', () => {
     expect(executed).toEqual(['web-user-1'])
     expect(queue.length).toBe(1)
     expect(queue.findByIdentity('mapp_aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa')?.position).toBe(1)
+  })
+
+  it('lets web users and mini-app users in other rooms pass a room-blocked request', async () => {
+    const queue = new AdmissionQueue()
+    const first = createMockSocket('first', 'mapp_first', 'mapp')
+    const web = createMockSocket('web', 'web-user')
+    const otherRoom = createMockSocket('other', 'mapp_other', 'mapp')
+    const io = createMockIo([first.socket, web.socket, otherRoom.socket])
+    const execute = vi.fn((_io: TypedServer, _socket: TypedSocket) => {})
+    queue.setExecutor(execute)
+    queue.enqueue(io, first.socket, { action: 'join', roomId: 'ROOM01', nickname: 'A' }, 'mapp_room')
+    queue.enqueue(io, web.socket, { action: 'join', roomId: 'ROOM01', nickname: 'B' }, 'capacity')
+    queue.enqueue(io, otherRoom.socket, { action: 'join', roomId: 'ROOM02', nickname: 'C' }, 'capacity')
+
+    await expect(queue.drain(io, (kind, options) =>
+      kind === 'mapp' && options?.targetRoomId === 'ROOM01'
+        ? { allowed: false, reason: 'mapp_room' }
+        : { allowed: true },
+    )).resolves.toBe(2)
+    expect(execute.mock.calls.map(([, socket]) => socket.id)).toEqual(['web', 'other'])
+    expect(queue.findByIdentity('mapp_first')?.position).toBe(1)
+    expect(queue.hasWaitingForCapacity()).toBe(false)
+  })
+
+  it('refreshes a capacity waiter whose target room is now the limiting factor', async () => {
+    const queue = new AdmissionQueue()
+    const mapp = createMockSocket('mapp', 'mapp_user', 'mapp')
+    const io = createMockIo([mapp.socket])
+    queue.setExecutor(vi.fn())
+    queue.enqueue(io, mapp.socket, { action: 'join', roomId: 'ROOM01', nickname: 'M' }, 'capacity')
+    expect(queue.hasWaitingForCapacity()).toBe(true)
+
+    await expect(queue.drain(io, () => ({ allowed: false, reason: 'mapp_room' }))).resolves.toBe(0)
+    expect(queue.findByIdentity('mapp_user')?.entry.reason).toBe('mapp_room')
+    expect(queue.hasWaitingForCapacity()).toBe(false)
+    expect(mapp.socket.emit).toHaveBeenLastCalledWith(EVENTS.ADMISSION_QUEUED, expect.objectContaining({
+      reason: 'mapp_room',
+      position: 1,
+      queueLength: 1,
+    }))
   })
 
   it('cancels queued joiners when their target room is deleted and shifts remaining positions', () => {

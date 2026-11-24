@@ -1,3 +1,4 @@
+import { createHash } from 'node:crypto'
 import { once } from 'node:events'
 import { PassThrough, Readable, Transform } from 'node:stream'
 import { pipeline } from 'node:stream/promises'
@@ -5,11 +6,12 @@ import type { Response } from 'express'
 import type { AudioQuality, MusicSource } from '@music-together/shared'
 import { config } from '../config.js'
 import { roomRepo } from '../repositories/roomRepository.js'
-import type { RoomRepository } from '../repositories/types.js'
+import type { RoomData, RoomRepository } from '../repositories/types.js'
 import { musicProvider } from './musicProvider.js'
 import { getAnyCookie } from './authService.js'
 import { MAX_MEDIA_BYTES, MediaError, requestMediaSource } from './mediaSourceRequest.js'
 import { resolveStreamUrl } from './streamUrlResolver.js'
+import { getStreamUrlCacheTtl, isStreamUrlExpired } from './streamUrlLifetime.js'
 
 /** Resolving the signed URL (provider calls, including bitrate fallbacks). */
 const RESOLVE_TIMEOUT_MS = 20_000
@@ -27,6 +29,8 @@ interface SlotOptions {
   queueTimeoutMs?: number
 }
 
+export type StreamPriority = 'normal' | 'low'
+
 export interface StreamSlotsSnapshot {
   activeStreams: number
   maxStreams: number
@@ -40,14 +44,14 @@ const METRICS_WINDOW_MS = 30_000
 const MAX_WAIT_SAMPLES = 20
 
 /**
- * Concurrent-stream cap with a FIFO line. A whole room starts the same track at the same moment, so a full house is
- * the normal case rather than abuse: the overflow waits briefly for a free slot instead of being rejected. A user's
- * own concurrent requests (running or waiting) are still capped. The request rate is limited by `mediaStreamRateLimit`.
+ * Concurrent-stream cap with separate FIFO queues for playback and preloads. A whole room can start a track at once,
+ * so overflow waits briefly for a free slot. Each user's running and waiting requests share a cap.
  */
 export class StreamSlots {
   private total = 0
   private perUser = new Map<string, number>()
   private waiting: Array<() => void> = []
+  private lowWaiting: Array<() => void> = []
   private waitSamples: Array<{ at: number; ms: number }> = []
   private busyEvents: number[] = []
   private readonly maxStreams: number
@@ -97,7 +101,14 @@ export class StreamSlots {
     }
   }
 
-  async acquire(userId: string, signal?: AbortSignal): Promise<() => void> {
+  private canGrant(priority: StreamPriority): boolean {
+    if (priority === 'normal') return this.total < this.maxStreams
+    const reserved = this.maxStreams > 1 ? 1 : 0
+    return this.waiting.length === 0 && this.total < this.maxStreams - reserved
+  }
+
+  async acquire(userId: string, signal?: AbortSignal, options?: { priority?: StreamPriority }): Promise<() => void> {
+    const priority = options?.priority ?? 'normal'
     if (signal?.aborted) throw new MediaError('MEDIA_ABORTED', 499)
     const own = this.perUser.get(userId) ?? 0
     if (own >= MAX_STREAMS_PER_USER) throw new MediaError('MEDIA_BUSY', 429)
@@ -107,15 +118,15 @@ export class StreamSlots {
       if (left) this.perUser.set(userId, left)
       else this.perUser.delete(userId)
     }
-    if (this.total < this.maxStreams) {
+    if (this.canGrant(priority)) {
       this.total++
     } else {
       const waitedFrom = Date.now()
       try {
-        await this.wait(signal)
-        this.recordWait(Date.now() - waitedFrom)
+        await this.wait(priority, signal)
+        if (priority === 'normal') this.recordWait(Date.now() - waitedFrom)
       } catch (error) {
-        if (error instanceof MediaError && error.code === 'MEDIA_BUSY') this.recordBusy()
+        if (priority === 'normal' && error instanceof MediaError && error.code === 'MEDIA_BUSY') this.recordBusy()
         forgetUser()
         throw error
       }
@@ -131,9 +142,12 @@ export class StreamSlots {
   }
 
   /** Resolves once a slot has been handed over (already counted in `total`). */
-  private wait(signal?: AbortSignal): Promise<void> {
-    if (this.waiting.length >= this.maxQueued) return Promise.reject(new MediaError('MEDIA_BUSY', 429))
+  private wait(priority: StreamPriority, signal?: AbortSignal): Promise<void> {
+    if (this.waiting.length + this.lowWaiting.length >= this.maxQueued) {
+      return Promise.reject(new MediaError('MEDIA_BUSY', 429))
+    }
     if (signal?.aborted) return Promise.reject(new MediaError('MEDIA_ABORTED', 499))
+    const queue = priority === 'normal' ? this.waiting : this.lowWaiting
     return new Promise<void>((resolve, reject) => {
       const cleanup = () => {
         clearTimeout(timer)
@@ -146,19 +160,20 @@ export class StreamSlots {
       }
       const leave = (error: MediaError) => {
         cleanup()
-        const index = this.waiting.indexOf(grant)
-        if (index >= 0) this.waiting.splice(index, 1)
+        const index = queue.indexOf(grant)
+        if (index >= 0) queue.splice(index, 1)
         reject(error)
       }
       const onAbort = () => leave(new MediaError('MEDIA_ABORTED', 499))
       const timer = setTimeout(() => leave(new MediaError('MEDIA_BUSY', 429)), this.queueTimeoutMs)
       signal?.addEventListener('abort', onAbort, { once: true })
-      this.waiting.push(grant)
+      queue.push(grant)
     })
   }
 
   private grantNext(): void {
     while (this.total < this.maxStreams && this.waiting.length > 0) this.waiting.shift()!()
+    while (this.lowWaiting.length > 0 && this.canGrant('low')) this.lowWaiting.shift()!()
   }
 }
 const sharedSlots = new StreamSlots()
@@ -228,12 +243,62 @@ export function createPlatformMediaService(dependencies: Partial<Dependencies> =
     maxBitrate: config.mapp.audioMaxBitrate,
     ...dependencies,
   }
+  const roomUrlState = new WeakMap<
+    RoomData,
+    {
+      cache: Map<string, { url: string; expiresAt: number }>
+      inFlight: Map<string, Promise<string | null>>
+    }
+  >()
+
+  function resolveRoomUrl(room: RoomData, roomId: string, source: MusicSource, urlId: string): Promise<string | null> {
+    // Cap bitrate because the mini-app downloads the full file before playback.
+    const bitrate = Math.min(room.audioQuality, deps.maxBitrate) as AudioQuality
+    const cookie = deps.cookie(source, roomId)
+    const cookieHash = cookie ? createHash('sha256').update(cookie).digest('hex').slice(0, 16) : 'anon'
+    const key = `${source}:${urlId}:${bitrate}:${cookieHash}`
+    let state = roomUrlState.get(room)
+    if (!state) {
+      state = { cache: new Map(), inFlight: new Map() }
+      roomUrlState.set(room, state)
+    }
+    const { cache, inFlight } = state
+    const cached = cache.get(key)
+    const now = Date.now()
+    if (cached && now < cached.expiresAt && !isStreamUrlExpired(source, cached.url, now)) {
+      return Promise.resolve(cached.url)
+    }
+    cache.delete(key)
+    const pending = inFlight.get(key)
+    if (pending) return pending
+
+    // The provider is shared by callers, so only its own deadline can end the shared lookup.
+    const work = abortable(
+      resolveStreamUrl(deps.provider, source, urlId, bitrate, cookie ?? undefined),
+      AbortSignal.timeout(RESOLVE_TIMEOUT_MS),
+    )
+      .then((url) => {
+        const resolvedAt = Date.now()
+        if (url && !isStreamUrlExpired(source, url, resolvedAt)) {
+          const ttl = Math.min(getStreamUrlCacheTtl(source, url, resolvedAt), 5 * 60_000)
+          cache.set(key, { url, expiresAt: resolvedAt + ttl })
+          if (cache.size > 64) cache.delete(cache.keys().next().value!)
+        }
+        return url
+      })
+      .finally(() => inFlight.delete(key))
+    work.catch(() => {})
+    inFlight.set(key, work)
+    return work
+  }
+
   return {
     /** Streams a track the caller may currently hear in the room. Throws only sanitized MediaErrors. */
     async stream(input: RoomMediaInput, res: Response, parentSignal: AbortSignal): Promise<void> {
       const signal = AbortSignal.any([parentSignal, AbortSignal.timeout(STREAM_TIMEOUT_MS)])
       let release: (() => void) | undefined
       try {
+        if (signal.aborted) throw new MediaError('MEDIA_ABORTED', 499)
         const room = deps.rooms.get(input.roomId)
         // The caller must still be in the same room object and the track must still be playable there.
         const accessibleTrack = () => {
@@ -248,24 +313,28 @@ export function createPlatformMediaService(dependencies: Partial<Dependencies> =
         }
         // The URL comes from the server-side provider, never from client-supplied track data.
         const { source, urlId } = accessibleTrack()
+        const priority: StreamPriority =
+          room!.currentTrack?.id === input.trackId || room!.pendingPlayback?.track?.id === input.trackId
+            ? 'normal'
+            : 'low'
         const check = () => {
           const current = accessibleTrack()
           if (current.source !== source || current.urlId !== urlId) throw new MediaError('MEDIA_FORBIDDEN', 403)
         }
-        release = await deps.slots.acquire(input.userId, signal)
-        const url = await abortable(
-          resolveStreamUrl(
-            deps.provider,
-            source,
-            urlId,
-            // The whole file travels through this server before the mini-app can play it: cap the size.
-            Math.min(room!.audioQuality, deps.maxBitrate) as AudioQuality,
-            deps.cookie(source, input.roomId) ?? undefined,
-          ),
-          AbortSignal.any([signal, AbortSignal.timeout(RESOLVE_TIMEOUT_MS)]),
-        )
+        const resolveUrl = async () => {
+          const url = await abortable(
+            resolveRoomUrl(room!, input.roomId, source, urlId),
+            AbortSignal.any([signal, AbortSignal.timeout(RESOLVE_TIMEOUT_MS)]),
+          )
+          check()
+          if (!url) throw new MediaError('MEDIA_SOURCE_UNAVAILABLE', 502)
+          return url
+        }
+        let url = await resolveUrl()
+        release = await deps.slots.acquire(input.userId, signal, { priority })
         check()
-        if (!url) throw new MediaError('MEDIA_SOURCE_UNAVAILABLE', 502)
+        if (signal.aborted) throw new MediaError('MEDIA_ABORTED', 499)
+        if (isStreamUrlExpired(source, url)) url = await resolveUrl()
         const upstream = await deps.request(source, url, signal)
         try {
           check()

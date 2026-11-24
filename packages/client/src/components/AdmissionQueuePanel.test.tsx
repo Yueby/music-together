@@ -23,6 +23,8 @@ const queuedSample: AdmissionQueuedEvent = {
     queueLength: 12,
     maxQueueLength: 100,
     pressurePercent: 92,
+    mappPressurePercent: 98,
+    mappRoomLimit: 16,
     createRestricted: true,
     updatedAt: 1_000,
   },
@@ -115,6 +117,7 @@ describe('AdmissionQueueCard', () => {
     const text = container.textContent ?? ''
     expect(text).toContain('音频中转繁忙，正在排队')
     expect(text).toContain('创建新房间')
+    expect(text).toContain('98%')
     expect(text).toContain('有空位后会自动为你进入')
     expect(text).not.toContain('槽位')
   })
@@ -144,4 +147,18 @@ describe('AdmissionQueueDialog', () => {
     act(() => cancelBtn!.click())
     expect(onCancel).toHaveBeenCalledTimes(1)
   })
+})
+
+it.each([
+  { variant: 'card', Component: AdmissionQueueCard },
+  { variant: 'dialog', Component: AdmissionQueueDialog },
+])('shows room congestion and the mini-app percentage in the $variant', ({ Component }) => {
+  act(() => root.render(<Component queued={{ ...queuedSample, reason: 'mapp_room' }} onCancel={vi.fn()} />))
+
+  const surface = document.body.querySelector('[role="dialog"]') ?? container
+  expect(surface.textContent).toContain('房间音频中转繁忙，正在排队')
+  expect(surface.textContent).toContain('音频中转负载')
+  expect(surface.textContent).toContain('98%')
+  expect(surface.textContent).toContain('目标房间微应用听众较多（上限 16 人），有人离开后会自动为你进入，请保持页面开启。')
+  expect([...surface.querySelectorAll('.font-mono')].map((node) => node.textContent)).toEqual(['ROOM01'])
 })

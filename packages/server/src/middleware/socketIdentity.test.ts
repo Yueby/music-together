@@ -3,6 +3,7 @@ import type { Request, Response } from 'express'
 import { ERROR_CODE, EVENTS } from '@music-together/shared'
 import { afterEach, describe, expect, it, vi } from 'vitest'
 import { issueIdentityCookie } from '../services/identityService.js'
+import { config } from '../config.js'
 import { attachSocketIdentity, type SocketIdentityOptions } from './socketIdentity.js'
 import type { TypedServer, TypedSocket } from './types.js'
 
@@ -35,12 +36,14 @@ function setup(
   options: SocketIdentityOptions = {},
   url = '/socket.io/?EIO=4&transport=websocket',
   headers: Record<string, unknown> = {},
+  currentSockets = 0,
 ) {
   let engineMiddleware: EngineMiddleware | undefined
   let guard!: (socket: TypedSocket, next: (err?: Error) => void) => void
   let connected: ((socket: TypedSocket) => void) | undefined
   attachSocketIdentity(
     {
+      sockets: { sockets: { size: currentSockets } },
       engine: {
         use: (middleware: EngineMiddleware) => {
           engineMiddleware = middleware
@@ -87,6 +90,28 @@ function setup(
 afterEach(() => vi.useRealTimers())
 
 describe('attachSocketIdentity', () => {
+  it('rejects a new platform handshake at the socket cap before verifying the token', async () => {
+    const enabled = config.capacity.enabled
+    config.capacity.enabled = true
+    try {
+      const resolvePlatformIdentity = vi.fn()
+      const h = setup({ resolvePlatformIdentity }, platformUrl, {}, config.capacity.maxSockets)
+      const res = new ServerResponse({ method: 'GET', httpVersionMajor: 1, httpVersionMinor: 1 } as IncomingMessage)
+      const end = vi.spyOn(res, 'end').mockImplementation(() => res)
+      await h.upgrade(res)
+      expect(res.statusCode).toBe(503)
+      expect(end).toHaveBeenCalledOnce()
+      expect(h.accepted).not.toHaveBeenCalled()
+      expect(resolvePlatformIdentity).not.toHaveBeenCalled()
+      await h.upgrade()
+      expect(h.req.socket.end).toHaveBeenCalledExactlyOnceWith(
+        'HTTP/1.1 503 Service Unavailable\r\nConnection: close\r\nContent-Length: 0\r\n\r\n',
+      )
+    } finally {
+      config.capacity.enabled = enabled
+    }
+  })
+
   it('preserves real signed Web Cookie authentication and ignores client auth IDs', async () => {
     const resolver = vi.fn()
     const h = setup({ resolvePlatformIdentity: resolver }, undefined, { cookie: cookie() })

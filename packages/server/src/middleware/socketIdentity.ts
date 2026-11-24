@@ -104,6 +104,15 @@ function rejectUnauthorized(req: IncomingMessage, res: ServerResponse): void {
   req.socket.end('HTTP/1.1 401 Unauthorized\r\nConnection: close\r\nContent-Length: 0\r\n\r\n')
 }
 
+function rejectOverloaded(req: IncomingMessage, res: ServerResponse): void {
+  if (res instanceof ServerResponse) {
+    res.statusCode = 503
+    res.end()
+    return
+  }
+  req.socket.end('HTTP/1.1 503 Service Unavailable\r\nConnection: close\r\nContent-Length: 0\r\n\r\n')
+}
+
 /**
  * Cookie auth is unchanged unless the handshake explicitly carries a platform token.
  * Platform tokens are verified by an Engine.IO middleware, i.e. before the WebSocket upgrade is accepted.
@@ -117,6 +126,17 @@ export function attachSocketIdentity(io: TypedServer, options: SocketIdentityOpt
       const state = platformTokenState(url)
       if (state === 'absent') {
         next()
+        return
+      }
+      const query = url.split('#')[0].split('?').slice(1).join('?')
+      const hasSid = new URLSearchParams(query).has('sid')
+      const currentSockets = io.sockets?.sockets?.size ?? 0
+      if (!hasSid && config.capacity.enabled && currentSockets >= config.capacity.maxSockets) {
+        logger.warn('Rejected platform handshake: outer socket cap reached', {
+          currentSockets,
+          maxSockets: config.capacity.maxSockets,
+        })
+        rejectOverloaded(req, res)
         return
       }
       const userId =

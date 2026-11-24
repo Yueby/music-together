@@ -3,9 +3,11 @@ import {
   EVENTS,
   type AdmissionCancelledEvent,
   type AdmissionQueuedEvent,
+  type RoomState,
   type ServerCapacityStatus,
 } from '@music-together/shared'
 import { toast } from 'sonner'
+import { hostRuntime } from '@/lib/hostRuntime'
 import { useSocketContext } from '@/providers/SocketProvider'
 import { useServerStatusStore } from '@/stores/serverStatusStore'
 
@@ -41,16 +43,18 @@ export function ServerCapacitySync() {
       if (data.message) toast.error(data.message)
     }
 
-    const onRoomState = () => {
-      if (useServerStatusStore.getState().admissionQueue !== null) {
+    const onRoomState = (room: RoomState) => {
+      const { admissionQueue } = useServerStatusStore.getState()
+      if (admissionQueue && (admissionQueue.action !== 'join' || admissionQueue.roomId === room.id)) {
         useServerStatusStore.getState().clearAdmissionQueue()
       }
     }
 
     const onDisconnect = () => {
-      // Server preserves the queue spot across brief disconnects and re-emits ADMISSION_QUEUED on reconnect.
+      // Web has a 15-second reconnect grace period. Mini-app queue entries are dropped immediately.
       if (useServerStatusStore.getState().admissionQueue !== null) {
         useServerStatusStore.getState().clearAdmissionQueue()
+        if (hostRuntime.kind === 'mapp') toast.info('连接已断开，排队已取消，重连后请重新进入')
       }
     }
 

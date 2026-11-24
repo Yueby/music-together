@@ -13,6 +13,7 @@ import { cn } from '@/lib/utils'
 import type { AdmissionQueuedEvent } from '@music-together/shared'
 import { Clock, DoorOpen, PlusCircle } from 'lucide-react'
 import { AnimatePresence, motion, useReducedMotion } from 'motion/react'
+import { getEffectiveServerLoad } from './ServerLoadBadge'
 
 interface AdmissionQueueContentProps {
   queued: AdmissionQueuedEvent
@@ -20,11 +21,26 @@ interface AdmissionQueueContentProps {
   cancelLabel?: string
 }
 
+const queueTitles: Record<AdmissionQueuedEvent['reason'], string> = {
+  capacity: '服务器满载，正在排队',
+  mapp_stream: '音频中转繁忙，正在排队',
+  mapp_room: '房间音频中转繁忙，正在排队',
+}
+
 function QueueBody({ queued }: { queued: AdmissionQueuedEvent }) {
   const prefersReducedMotion = useReducedMotion()
   const isMappStream = queued.reason === 'mapp_stream'
+  const isMappRoom = queued.reason === 'mapp_room'
+  const isMappRelayQueue = isMappStream || isMappRoom
   const isCreate = queued.action === 'create'
-  const pct = Math.min(100, Math.max(0, queued.capacity.pressurePercent))
+  const pct = isMappRelayQueue
+    ? Math.min(100, Math.max(0, queued.capacity.mappPressurePercent ?? queued.capacity.pressurePercent))
+    : getEffectiveServerLoad(queued.capacity).pct
+  const hint = isMappRoom
+    ? `目标房间微应用听众较多（上限 ${queued.capacity.mappRoomLimit} 人），有人离开后会自动为你进入，请保持页面开启。`
+    : isMappStream
+      ? '音频中转有空位后会自动为你进入，请保持页面开启。'
+      : '有空位后会自动为你进入，请保持当前页面开启。'
   const aheadCount = Math.max(0, queued.position - 1)
   const isNextInLine = queued.position <= 1
 
@@ -90,7 +106,7 @@ function QueueBody({ queued }: { queued: AdmissionQueuedEvent }) {
       <div className="space-y-2">
         <div className="flex items-center justify-between gap-2 text-xs">
           <span className="min-w-0 truncate text-muted-foreground">
-            {isMappStream ? '音频中转负载' : '服务器负载'}
+            {isMappRelayQueue ? '音频中转负载' : '服务器负载'}
           </span>
           <span className={cn('shrink-0 font-medium tabular-nums', loadTextClass)}>{pct}%</span>
         </div>
@@ -105,9 +121,7 @@ function QueueBody({ queued }: { queued: AdmissionQueuedEvent }) {
         </div>
 
         <p className="text-xs leading-relaxed text-muted-foreground">
-          {isMappStream
-            ? '音频中转有空位后会自动为你进入，请保持页面开启。'
-            : '有空位后会自动为你进入，请保持当前页面开启。'}
+          {hint}
         </p>
       </div>
     </div>
@@ -116,8 +130,7 @@ function QueueBody({ queued }: { queued: AdmissionQueuedEvent }) {
 
 /** Modal / bottom drawer shown on the lobby page while waiting in the admission queue. */
 export function AdmissionQueueDialog({ queued, onCancel, cancelLabel = '取消排队' }: AdmissionQueueContentProps) {
-  const isMappStream = queued.reason === 'mapp_stream'
-  const titleText = isMappStream ? '音频中转繁忙，正在排队' : '服务器满载，正在排队'
+  const titleText = queueTitles[queued.reason]
 
   return (
     <ResponsiveDialog
@@ -149,8 +162,7 @@ export function AdmissionQueueDialog({ queued, onCancel, cancelLabel = '取消�
 /** Full-viewport centered card shown on RoomPage when opening a direct room link while queued. */
 export function AdmissionQueueCard({ queued, onCancel, cancelLabel = '取消并返回大厅' }: AdmissionQueueContentProps) {
   const prefersReducedMotion = useReducedMotion()
-  const isMappStream = queued.reason === 'mapp_stream'
-  const titleText = isMappStream ? '音频中转繁忙，正在排队' : '服务器满载，正在排队'
+  const titleText = queueTitles[queued.reason]
 
   return (
     <div className="fixed inset-0 z-50 flex items-center justify-center bg-background px-4">

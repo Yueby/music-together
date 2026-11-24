@@ -15,6 +15,7 @@ export function initializeSocket(io: TypedServer) {
   admissionQueue.setExecutor(executeQueuedAdmission)
   setCapacityQueueHooks({
     getQueueLength: () => admissionQueue.length,
+    hasCapacityWaiters: () => admissionQueue.hasWaitingForCapacity(),
     onTick: () => {
       void admissionQueue.drain(io)
     },

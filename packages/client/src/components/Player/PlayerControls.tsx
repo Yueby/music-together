@@ -2,6 +2,7 @@ import { Button } from '@/components/ui/button'
 import { Slider } from '@/components/ui/slider'
 import { Tooltip, TooltipContent, TooltipTrigger } from '@/components/ui/tooltip'
 import { formatTime } from '@/lib/format'
+import { cn } from '@/lib/utils'
 import { useAppAbility } from '@/providers/AbilityProvider'
 import { useSocketContext } from '@/providers/SocketProvider'
 import { usePlayerStore } from '@/stores/playerStore'
@@ -9,11 +10,65 @@ import { useRoomStore } from '@/stores/roomStore'
 import type { PlayMode, VoteAction } from '@music-together/shared'
 import { EVENTS, TIMING, effectivePlayMode } from '@music-together/shared'
 import { ArrowRightToLine, ListMusic, Pause, Play, Repeat, Repeat1, Shuffle, SkipBack, SkipForward } from 'lucide-react'
-import { AnimatePresence, motion } from 'motion/react'
+import { AnimatePresence, motion, useReducedMotion } from 'motion/react'
 import { memo, useEffect, useLayoutEffect, useRef, useState } from 'react'
 
 /** Design-time width (px) at which the controls are laid out — CSS zoom scales from this baseline */
 const DESIGN_WIDTH = 300
+
+/** Delay before revealing audio loading UI so quick web loads and preloaded tracks never flicker. */
+const AUDIO_LOAD_REVEAL_DELAY_MS = 300
+
+/** Perimeter progress ring sized to hug the 56px (h-14 w-14) play/pause button cleanly. */
+const PLAY_RING_SIZE = 56
+const PLAY_RING_STROKE = 2.5
+const PLAY_RING_RADIUS = (PLAY_RING_SIZE - PLAY_RING_STROKE) / 2
+const PLAY_RING_CIRCUMFERENCE = 2 * Math.PI * PLAY_RING_RADIUS
+/** Indeterminate orbiting arc covers ~28% of the perimeter for a clean luminous sweep. */
+const PLAY_RING_ORBIT_ARC = PLAY_RING_CIRCUMFERENCE * 0.28
+const PLAY_RING_ORBIT_GAP = PLAY_RING_CIRCUMFERENCE - PLAY_RING_ORBIT_ARC
+
+const WAVE_BARS = [
+  { id: 'left', keyframes: [0.34, 0.92, 0.42, 0.72, 0.34], decodingKeyframes: [0.42, 0.68, 0.42], delay: 0, staticHeight: 'h-2.5' },
+  { id: 'center', keyframes: [0.56, 1, 0.38, 0.88, 0.56], decodingKeyframes: [0.58, 0.86, 0.58], delay: 0.14, staticHeight: 'h-4.5' },
+  { id: 'right', keyframes: [0.4, 0.82, 0.5, 0.95, 0.4], decodingKeyframes: [0.46, 0.74, 0.46], delay: 0.28, staticHeight: 'h-3' },
+] as const
+
+function AudioLoadWave({ decoding, reducedMotion }: { decoding: boolean; reducedMotion: boolean }) {
+  return (
+    <span
+      aria-hidden="true"
+      data-testid="audio-load-wave"
+      data-wave-state={decoding ? 'decoding' : 'loading'}
+      className="flex h-5 items-center justify-center gap-[3.5px]"
+    >
+      {WAVE_BARS.map((bar) =>
+        reducedMotion ? (
+          <span
+            key={bar.id}
+            data-wave-bar={bar.id}
+            data-reduced-motion="true"
+            className={cn('w-[3px] rounded-full bg-white/85', bar.staticHeight)}
+          />
+        ) : (
+          <motion.span
+            key={bar.id}
+            data-wave-bar={bar.id}
+            className="h-5 w-[3px] origin-center rounded-full bg-white/90"
+            initial={{ scaleY: decoding ? bar.decodingKeyframes[0] : bar.keyframes[0] }}
+            animate={{ scaleY: decoding ? [...bar.decodingKeyframes] : [...bar.keyframes] }}
+            transition={{
+              duration: decoding ? 1.25 : 1.05,
+              delay: bar.delay,
+              ease: 'easeInOut',
+              repeat: Infinity,
+            }}
+          />
+        ),
+      )}
+    </span>
+  )
+}
 
 const PLAY_MODE_CYCLE: PlayMode[] = ['sequential', 'loop-all', 'loop-one', 'shuffle']
 /** A queue that is consumed as it plays never comes round again, so looping modes are not offered. */
@@ -50,6 +105,10 @@ export const PlayerControls = memo(function PlayerControls({
   const currentTime = usePlayerStore((s) => s.currentTime)
   const duration = usePlayerStore((s) => s.duration)
   const currentTrack = usePlayerStore((s) => s.currentTrack)
+  const audioLoadPhase = usePlayerStore((s) => s.audioLoadPhase)
+  const audioLoadProgress = usePlayerStore((s) => s.audioLoadProgress)
+  const audioLoadStartedAt = usePlayerStore((s) => s.audioLoadStartedAt)
+  const prefersReducedMotion = useReducedMotion()
   const queueLength = useRoomStore((s) => s.room?.queue?.length ?? 0)
   const queueMode = useRoomStore((s) => s.room?.queueMode ?? 'keep')
   // What actually plays: the room may have a looping mode stored that its queue mode does not honour.
@@ -63,12 +122,34 @@ export const PlayerControls = memo(function PlayerControls({
   const [playCooldown, setPlayCooldown] = useState(false)
   const [isSeeking, setIsSeeking] = useState(false)
   const [seekTime, setSeekTime] = useState(0)
+  const [loadingRevealed, setLoadingRevealed] = useState(false)
   const cooldownTimer = useRef<ReturnType<typeof setTimeout>>(null)
   const playCooldownTimer = useRef<ReturnType<typeof setTimeout>>(null)
   const wrapperRef = useRef<HTMLDivElement>(null)
   const innerRef = useRef<HTMLDivElement>(null)
 
   const disabled = !currentTrack
+  const isAudioLoading = audioLoadPhase !== 'idle'
+  const showAudioLoading = isAudioLoading && loadingRevealed
+
+  // Reveal loading animation only after 300ms to prevent flicker on fast loads and preloaded tracks.
+  useEffect(() => {
+    if (!isAudioLoading) {
+      setLoadingRevealed(false)
+      return
+    }
+
+    const startedAt = audioLoadStartedAt ?? Date.now()
+    const elapsed = Math.max(0, Date.now() - startedAt)
+    if (elapsed >= AUDIO_LOAD_REVEAL_DELAY_MS) {
+      setLoadingRevealed(true)
+      return
+    }
+
+    setLoadingRevealed(false)
+    const revealTimer = setTimeout(() => setLoadingRevealed(true), AUDIO_LOAD_REVEAL_DELAY_MS - elapsed)
+    return () => clearTimeout(revealTimer)
+  }, [isAudioLoading, audioLoadStartedAt])
 
   // Clean up cooldown timers on unmount
   useEffect(() => {
@@ -129,6 +210,14 @@ export const PlayerControls = memo(function PlayerControls({
 
   const modeConfig = PLAY_MODE_CONFIG[playMode]
   const ModeIcon = modeConfig.icon
+  const playButtonLabel = showAudioLoading ? (isPlaying ? '暂停 · 加载中' : '音频加载中') : isPlaying ? '暂停' : '播放'
+  const isDecoding = audioLoadPhase === 'decoding'
+  const ringMode: 'decoding' | 'determinate' | 'indeterminate' = isDecoding
+    ? 'decoding'
+    : audioLoadProgress !== null
+      ? 'determinate'
+      : 'indeterminate'
+  const clampedRingProgress = audioLoadProgress !== null ? Math.max(0, Math.min(1, audioLoadProgress)) : 0
 
   return (
     <div ref={wrapperRef} className="w-full">
@@ -137,6 +226,8 @@ export const PlayerControls = memo(function PlayerControls({
         <div className="flex w-full flex-col gap-1">
           <Slider
             value={[duration > 0 ? ((isSeeking ? seekTime : currentTime) / duration) * 100 : 0]}
+            bufferedValue={showAudioLoading && audioLoadProgress !== null ? audioLoadProgress * 100 : undefined}
+            loading={showAudioLoading && audioLoadProgress === null}
             max={100}
             step={0.1}
             disabled={disabled || !canSeek}
@@ -221,24 +312,120 @@ export const PlayerControls = memo(function PlayerControls({
 
             <Tooltip delayDuration={300}>
               <TooltipTrigger asChild>
-                <motion.div whileHover={{ scale: 1.05 }} whileTap={{ scale: 0.92 }}>
+                <motion.div
+                  whileHover={prefersReducedMotion ? undefined : { scale: 1.05 }}
+                  whileTap={prefersReducedMotion ? undefined : { scale: 0.92 }}
+                >
                   <Button
                     variant="ghost"
                     size="icon"
-                    className="h-14 w-14 rounded-full bg-white/20 text-white/90 hover:bg-white/30 hover:text-white"
+                    className={cn(
+                      'relative h-14 w-14 rounded-full text-white/90 hover:text-white',
+                      showAudioLoading ? 'bg-white/15 hover:bg-white/25' : 'bg-white/20 hover:bg-white/30',
+                    )}
                     disabled={disabled || playCooldown}
                     onClick={handlePlayPause}
-                    aria-label={isPlaying ? '暂停' : '播放'}
+                    aria-label={playButtonLabel}
+                    aria-busy={showAudioLoading}
                   >
-                    {isPlaying ? (
-                      <Pause className="size-7" fill="currentColor" />
-                    ) : (
-                      <Play className="ml-0.5 size-7" fill="currentColor" />
+                    {showAudioLoading && (
+                      <svg
+                        aria-hidden="true"
+                        data-testid="audio-load-ring"
+                        data-ring-mode={ringMode}
+                        viewBox={`0 0 ${PLAY_RING_SIZE} ${PLAY_RING_SIZE}`}
+                        className={cn(
+                          'pointer-events-none absolute inset-0 size-full -rotate-90',
+                          ringMode === 'indeterminate' &&
+                            !prefersReducedMotion &&
+                            'animate-spin [animation-duration:1.1s] motion-reduce:animate-none',
+                        )}
+                      >
+                        <circle
+                          cx={PLAY_RING_SIZE / 2}
+                          cy={PLAY_RING_SIZE / 2}
+                          r={PLAY_RING_RADIUS}
+                          fill="none"
+                          stroke="currentColor"
+                          strokeWidth={PLAY_RING_STROKE}
+                          className="text-white/15"
+                        />
+                        {ringMode === 'decoding' ? (
+                          <motion.circle
+                            cx={PLAY_RING_SIZE / 2}
+                            cy={PLAY_RING_SIZE / 2}
+                            r={PLAY_RING_RADIUS}
+                            fill="none"
+                            stroke="currentColor"
+                            strokeWidth={PLAY_RING_STROKE}
+                            strokeLinecap="round"
+                            strokeDasharray={PLAY_RING_CIRCUMFERENCE}
+                            strokeDashoffset={0}
+                            className="text-white/90 drop-shadow-[0_0_6px_rgba(255,255,255,0.35)]"
+                            animate={prefersReducedMotion ? { opacity: 0.9 } : { opacity: [0.65, 1, 0.65] }}
+                            transition={
+                              prefersReducedMotion ? { duration: 0 } : { duration: 1.4, ease: 'easeInOut', repeat: Infinity }
+                            }
+                          />
+                        ) : (
+                          <circle
+                            cx={PLAY_RING_SIZE / 2}
+                            cy={PLAY_RING_SIZE / 2}
+                            r={PLAY_RING_RADIUS}
+                            fill="none"
+                            stroke="currentColor"
+                            strokeWidth={PLAY_RING_STROKE}
+                            strokeLinecap="round"
+                            strokeDasharray={
+                              ringMode === 'determinate'
+                                ? PLAY_RING_CIRCUMFERENCE
+                                : `${PLAY_RING_ORBIT_ARC} ${PLAY_RING_ORBIT_GAP}`
+                            }
+                            strokeDashoffset={
+                              ringMode === 'determinate' ? PLAY_RING_CIRCUMFERENCE * (1 - clampedRingProgress) : 0
+                            }
+                            className={cn(
+                              'text-white/90 drop-shadow-[0_0_6px_rgba(255,255,255,0.35)]',
+                              ringMode === 'determinate' &&
+                                'transition-[stroke-dashoffset] duration-200 ease-out motion-reduce:transition-none',
+                            )}
+                          />
+                        )}
+                      </svg>
                     )}
+                    <AnimatePresence mode="wait" initial={false}>
+                      {showAudioLoading ? (
+                        <motion.span
+                          key="audio-load-wave"
+                          initial={prefersReducedMotion ? { opacity: 1, scale: 1 } : { opacity: 0, scale: 0.85 }}
+                          animate={{ opacity: 1, scale: 1 }}
+                          exit={prefersReducedMotion ? { opacity: 0 } : { opacity: 0, scale: 0.85 }}
+                          transition={prefersReducedMotion ? { duration: 0 } : { duration: 0.15, ease: 'easeOut' }}
+                          className="flex items-center justify-center"
+                        >
+                          <AudioLoadWave decoding={isDecoding} reducedMotion={Boolean(prefersReducedMotion)} />
+                        </motion.span>
+                      ) : (
+                        <motion.span
+                          key={isPlaying ? 'pause-icon' : 'play-icon'}
+                          initial={prefersReducedMotion ? { opacity: 1, scale: 1 } : { opacity: 0, scale: 0.85 }}
+                          animate={{ opacity: 1, scale: 1 }}
+                          exit={prefersReducedMotion ? { opacity: 0 } : { opacity: 0, scale: 0.85 }}
+                          transition={prefersReducedMotion ? { duration: 0 } : { duration: 0.15, ease: 'easeOut' }}
+                          className="flex items-center justify-center"
+                        >
+                          {isPlaying ? (
+                            <Pause className="size-7" fill="currentColor" />
+                          ) : (
+                            <Play className="ml-0.5 size-7" fill="currentColor" />
+                          )}
+                        </motion.span>
+                      )}
+                    </AnimatePresence>
                   </Button>
                 </motion.div>
               </TooltipTrigger>
-              <TooltipContent>{isPlaying ? '暂停' : '播放'}</TooltipContent>
+              <TooltipContent>{playButtonLabel}</TooltipContent>
             </Tooltip>
 
             <Tooltip delayDuration={300}>

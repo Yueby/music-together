@@ -2,7 +2,7 @@ import { beforeEach, describe, expect, it, vi } from 'vitest'
 import type { MiniAppSDK } from '@discourse-mini-app/sdk'
 import type { Track } from '@music-together/shared'
 import type { PlaybackSoundOptions } from '../../../client/src/lib/PlaybackSound.ts'
-import type { MappAudioEngineOptions, MappAudioEngineSnapshot } from './MappAudioEngine.ts'
+import type { LoadRoomTrackOptions, MappAudioEngineOptions, MappAudioEngineSnapshot } from './MappAudioEngine.ts'
 import { createMappPlaybackSoundFactory } from './MappPlaybackSoundFactory.ts'
 
 const mocks = vi.hoisted(() => ({ construct: vi.fn() }))
@@ -44,7 +44,7 @@ function environment(mode?: 'bytes' | 'stream') {
   const emit = () => observe?.(snapshot)
   const engine = {
     snapshot: vi.fn(() => snapshot),
-    loadRoomTrack: vi.fn(async (_input: { roomId: string; trackId: string; mode: 'bytes' | 'stream' }) => true),
+    loadRoomTrack: vi.fn(async (_input: LoadRoomTrackOptions) => true),
     preloadRoomTrack: vi.fn((_input: { roomId: string; trackId: string; mode: 'bytes' | 'stream' }) => {}),
     play: vi.fn(async () => {
       snapshot.audio.status = 'playing'
@@ -125,6 +125,34 @@ describe('MappPlaybackSoundFactory preload', () => {
 })
 
 describe('MappPlaybackSoundFactory shared engine handles', () => {
+  it.each(['load', 'unload', 'replace'] as const)(
+    'reports progress asynchronously and ignores it after %s',
+    async (action) => {
+      const f = environment()
+      const load = deferred<boolean>()
+      f.engine.loadRoomTrack.mockImplementationOnce((input) => {
+        input.onLoadProgress?.({ phase: 'buffering' })
+        return load.promise
+      })
+      const onprogress = vi.fn()
+      const options = { ...callbacks(), onprogress }
+      const sound = f.factory.create(track(), options)
+      const report = f.engine.loadRoomTrack.mock.calls[0][0].onLoadProgress!
+      expect(onprogress).not.toHaveBeenCalled()
+      await flush()
+      expect(onprogress).toHaveBeenCalledExactlyOnceWith({ phase: 'buffering' })
+
+      if (action === 'unload') sound.unload()
+      if (action === 'replace') f.factory.create(track('next'), callbacks())
+      load.resolve(true)
+      await flush()
+      if (action === 'load') expect(options.onload).toHaveBeenCalledOnce()
+      report({ phase: 'decoding', progress: 1 })
+      await flush()
+      expect(onprogress).toHaveBeenCalledOnce()
+    },
+  )
+
   it('starts loading immediately, reports loaded asynchronously and never autoplays', async () => {
     const f = environment()
     const options = callbacks()
@@ -196,6 +224,7 @@ describe('MappPlaybackSoundFactory shared engine handles', () => {
       roomId: 'AB12_-',
       trackId: 'netease:1',
       mode: mode ?? 'stream',
+      onLoadProgress: expect.any(Function),
     })
     expect(mocks.construct).toHaveBeenCalledExactlyOnceWith({
       sdk: f.sdk,

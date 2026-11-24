@@ -80,6 +80,9 @@ app.get('/api/health', (_req, res) => {
     load: {
       level: capacity.level,
       mappLevel: capacity.mappLevel,
+      pressurePercent: capacity.pressurePercent,
+      mappPressurePercent: capacity.mappPressurePercent,
+      mappRoomLimit: capacity.mappRoomLimit,
       onlineUsers: capacity.onlineUsers,
       activeRooms: capacity.activeRooms,
       usedUnits: capacity.usedUnits,

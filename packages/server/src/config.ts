@@ -70,10 +70,14 @@ const envSchema = z.object({
     (value) => (value === '' ? undefined : value),
     z.coerce.number().int().min(1).max(5000).optional(),
   ),
-  /** Weighted load cost of one mini-app user relative to one web user (1.0). */
+  /** Weighted load cost of a mini-app user within the concurrent relay budget. */
   CAPACITY_MAPP_WEIGHT: z.preprocess(
     (value) => (value === '' ? undefined : value),
     z.coerce.number().min(1).max(10).default(3),
+  ),
+  CAPACITY_MAPP_ROOM_BASE: z.preprocess(
+    (value) => (value === '' ? undefined : value),
+    z.coerce.number().int().min(1).max(2000).optional(),
   ),
   /** Maximum number of users allowed in the admission waiting queue. */
   CAPACITY_MAX_QUEUE: z.preprocess(
@@ -134,6 +138,7 @@ export const config = {
     maxUnits: Math.max(env.CAPACITY_MIN_UNITS, env.CAPACITY_MAX_UNITS),
     baseUnits: env.CAPACITY_BASE_UNITS,
     mappWeight: env.CAPACITY_MAPP_WEIGHT,
+    mappRoomBase: env.CAPACITY_MAPP_ROOM_BASE,
     maxQueue: env.CAPACITY_MAX_QUEUE,
     maxSockets: env.CAPACITY_MAX_SOCKETS,
     memoryLimitMb: env.CAPACITY_MEMORY_LIMIT_MB,

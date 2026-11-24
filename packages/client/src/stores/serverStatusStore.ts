@@ -13,7 +13,11 @@ interface ServerStatusStore {
 export const useServerStatusStore = create<ServerStatusStore>((set) => ({
   capacity: null,
   admissionQueue: null,
-  setCapacity: (capacity) => set({ capacity }),
+  setCapacity: (capacity) =>
+    set((state) => ({
+      capacity,
+      admissionQueue: state.admissionQueue ? { ...state.admissionQueue, capacity } : null,
+    })),
   setAdmissionQueue: (admissionQueue) =>
     set((state) => ({
       admissionQueue,

@@ -17,12 +17,23 @@ export interface PlaybackSound {
   unload(): unknown
 }
 
+export type AudioLoadPhase = 'idle' | 'buffering' | 'downloading' | 'decoding'
+
+export interface AudioLoadProgress {
+  phase: Exclude<AudioLoadPhase, 'idle'>
+  /** Normalized download progress (0–1) when total byte length is known. */
+  progress?: number
+  loadedBytes?: number
+  totalBytes?: number
+}
+
 export interface PlaybackSoundOptions {
   src: string[]
   html5?: boolean
   format?: string[]
   volume?: number
   onload?: () => void
+  onprogress?: (info: AudioLoadProgress) => void
   onplay?: () => void
   onpause?: () => void
   onend?: () => void

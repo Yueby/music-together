@@ -7,11 +7,21 @@ import { TooltipProvider } from '@/components/ui/tooltip'
 import { useRoomStore } from '@/stores/roomStore'
 import { useServerStatusStore } from '@/stores/serverStatusStore'
 import { RoomHeader } from '@/components/Room/RoomHeader'
-import { ServerLoadBadge } from './ServerLoadBadge'
+import { getEffectiveServerLoad, ServerLoadBadge } from './ServerLoadBadge'
 
 const socketFixture = vi.hoisted(() => ({
   isConnected: true,
 }))
+
+const runtimeFixture = vi.hoisted(() => ({ kind: 'web' as 'web' | 'mapp' }))
+
+vi.mock('@/lib/hostRuntime', async (importOriginal) => {
+  const original = await importOriginal<typeof import('@/lib/hostRuntime')>()
+  return {
+    ...original,
+    hostRuntime: { ...original.hostRuntime, get kind() { return runtimeFixture.kind } },
+  }
+})
 
 vi.mock('@/providers/SocketProvider', () => ({
   useSocketContext: () => ({ isConnected: socketFixture.isConnected }),
@@ -29,6 +39,8 @@ const baseCapacity: ServerCapacityStatus = {
   queueLength: 0,
   maxQueueLength: 100,
   pressurePercent: 17,
+  mappPressurePercent: 20,
+  mappRoomLimit: 16,
   createRestricted: false,
   updatedAt: 1_000,
 }
@@ -58,6 +70,7 @@ beforeEach(() => {
   vi.stubGlobal('IS_REACT_ACT_ENVIRONMENT', true)
   mockMatchMedia(false)
   socketFixture.isConnected = true
+  runtimeFixture.kind = 'web'
   useServerStatusStore.getState().reset()
   useRoomStore.getState().reset()
   container = document.createElement('div')
@@ -75,6 +88,29 @@ afterEach(() => {
 })
 
 describe('ServerLoadBadge', () => {
+  it('uses the load percentage of the current host runtime', () => {
+    const capacity = { ...baseCapacity, mappLevel: 'full' as const, mappPressurePercent: 91 }
+    expect(getEffectiveServerLoad(capacity)).toMatchObject({ level: 'normal', pct: 17 })
+    runtimeFixture.kind = 'mapp'
+    expect(getEffectiveServerLoad(capacity)).toMatchObject({ level: 'full', pct: 91 })
+  })
+
+  it('refreshes queued capacity snapshot when live capacity updates arrive', () => {
+    const store = useServerStatusStore.getState()
+    store.setAdmissionQueue({
+      position: 2,
+      queueLength: 5,
+      action: 'join',
+      roomId: 'ROOM01',
+      reason: 'mapp_room',
+      capacity: baseCapacity,
+    })
+    const updated = { ...baseCapacity, mappPressurePercent: 88, mappRoomLimit: 14, updatedAt: 2_000 }
+    store.setCapacity(updated)
+    expect(useServerStatusStore.getState().admissionQueue?.capacity).toEqual(updated)
+    expect(useServerStatusStore.getState().admissionQueue?.position).toBe(2)
+  })
+
   it('renders nothing before the first server capacity snapshot arrives', () => {
     act(() => root.render(<ServerLoadBadge />))
     expect(container.querySelector('[data-testid="server-load-badge"]')).toBeNull()

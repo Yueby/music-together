@@ -46,8 +46,22 @@ vi.mock('motion/react', () => ({
         {children}
       </div>
     ),
+    span: ({
+      children,
+      className,
+      style,
+    }: {
+      children?: React.ReactNode
+      className?: string
+      style?: React.CSSProperties
+    }) => (
+      <span className={className} style={style}>
+        {children}
+      </span>
+    ),
   },
   AnimatePresence: ({ children }: { children: React.ReactNode }) => <>{children}</>,
+  useReducedMotion: () => false,
 }))
 
 vi.mock('@/components/ui/marquee-text', () => ({

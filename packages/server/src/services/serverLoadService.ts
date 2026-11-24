@@ -1,5 +1,5 @@
 import { monitorEventLoopDelay, performance, type EventLoopUtilization } from 'node:perf_hooks'
-import { EVENTS, type ClientKind, type ServerCapacityStatus, type ServerLoadLevel } from '@music-together/shared'
+import { EVENTS, type AdmissionQueuedEvent, type ClientKind, type ServerCapacityStatus, type ServerLoadLevel } from '@music-together/shared'
 import { config } from '../config.js'
 import type { TypedServer } from '../middleware/types.js'
 import { roomRepo } from '../repositories/roomRepository.js'
@@ -15,6 +15,7 @@ export interface LoadSampleInput {
   streams: StreamSlotsSnapshot
   webInRoom: number
   mappInRoom: number
+  mappPeakRoom?: number
   activeRooms: number
   queueLength: number
   now: number
@@ -22,7 +23,7 @@ export interface LoadSampleInput {
 
 export interface AdmissionDecision {
   allowed: boolean
-  reason?: 'capacity' | 'mapp_stream' | 'create_restricted'
+  reason?: AdmissionQueuedEvent['reason'] | 'create_restricted'
 }
 
 export interface CapacityControllerConfig {
@@ -31,6 +32,9 @@ export interface CapacityControllerConfig {
   maxUnits: number
   baseUnits?: number
   mappWeight: number
+  relaySlots?: number
+  relayMaxQueued?: number
+  mappRoomBase?: number
   maxQueue: number
   /** Container limits used to derive initial baseUnits when baseUnits is not explicitly configured. */
   initialMemoryLimitBytes: number
@@ -40,6 +44,8 @@ export interface CapacityControllerConfig {
 const EWMA_ALPHA = 0.35
 const OVERLOAD_TICKS_TO_SHRINK = 2
 const HEALTHY_TICKS_TO_GROW = 5
+const MAPP_GROW_COOLDOWN_MS = 30_000
+const MAX_RELAY_DEFERRED_SHRINKS = 2
 const MIN_ROOMS_FOR_CREATE_RESTRICTION = 5
 export const ELD_RESOLUTION_MS = 20
 
@@ -61,10 +67,16 @@ function ramp(value: number, low: number, high: number): number {
   return clamp01((value - low) / (high - low))
 }
 
+function mapStreamPressureToPercent(pressure: number): number {
+  if (pressure <= 0.45) return 60 * ramp(pressure, 0, 0.45)
+  if (pressure <= 0.8) return 60 + 25 * ramp(pressure, 0.45, 0.8)
+  return 85 + 15 * ramp(pressure, 0.8, 1)
+}
+
 /**
  * Derive an initial weighted-unit baseline from container memory and CPU limits.
  * On the production container (512 MiB RAM, 0.75 CPU), this lands near ~105 units
- * (~105 web users or ~35 mini-app users) and then adapts continuously via AIMD.
+ * and then adapts continuously via AIMD.
  */
 export function deriveBaselineUnits(
   memoryLimitBytes: number,
@@ -87,20 +99,31 @@ export function deriveBaselineUnits(
 export class CapacityController {
   private readonly cfg: CapacityControllerConfig
   private effectiveCap: number
+  private readonly relaySlots: number
+  private readonly maxMappRoomCap: number
+  private mappRoomCap: number
   private initialized = false
   private ewmaMemRatio = 0
   private ewmaElDelayP95Ms = 0
   private ewmaElu = 0
   private ewmaThrottleRatio = 0
   private ewmaMappStreamPressure = 0
+  private ewmaRelayUtil = 0
   private overloadTicks = 0
   private healthyTicks = 0
+  private mappOverloadTicks = 0
+  private mappHealthyTicks = 0
+  private mappGrowCooldownUntil = 0
+  private relayDeferredShrinks = 0
   private lastGeneralPressure = 0
   private lastMappStreamPressure = 0
   private lastUpdatedAt = 0
 
   constructor(cfg: CapacityControllerConfig) {
     this.cfg = cfg
+    this.relaySlots = cfg.relaySlots ?? 8
+    this.maxMappRoomCap = this.relaySlots + (cfg.relayMaxQueued ?? 64)
+    this.mappRoomCap = clamp(cfg.mappRoomBase ?? this.relaySlots * 2, this.relaySlots, this.maxMappRoomCap)
     this.effectiveCap = cfg.baseUnits
       ? clamp(cfg.baseUnits, cfg.minUnits, cfg.maxUnits)
       : deriveBaselineUnits(cfg.initialMemoryLimitBytes, cfg.initialCpuLimitCores, cfg.minUnits, cfg.maxUnits)
@@ -112,7 +135,8 @@ export class CapacityController {
 
   /** Advance one sampling interval (e.g. every 2s) and adjust effectiveCap using AIMD with hysteresis. */
   recordSample(sample: LoadSampleInput): void {
-    const waitRatio = ramp(sample.streams.waitingCount / Math.max(1, sample.streams.maxStreams), 0.5, 2.0)
+    const maxStreams = Math.max(1, sample.streams.maxStreams)
+    const waitRatio = ramp(sample.streams.waitingCount / maxStreams, 0.5, 2.0)
     const waitLatency = ramp(sample.streams.recentWaitP95Ms, 2_000, 7_000)
     const busyPressure = clamp01(sample.streams.recentBusyCount / 2)
     const rawMappStreamPressure = Math.max(waitRatio, waitLatency, busyPressure)
@@ -122,6 +146,8 @@ export class CapacityController {
     this.ewmaElu = this.smooth(this.ewmaElu, clamp01(sample.eventLoopUtilization))
     this.ewmaThrottleRatio = this.smooth(this.ewmaThrottleRatio, clamp01(sample.cpuThrottledRatio))
     this.ewmaMappStreamPressure = this.smooth(this.ewmaMappStreamPressure, rawMappStreamPressure)
+    const relayUtil = clamp01((sample.streams.activeStreams + sample.streams.waitingCount) / maxStreams)
+    this.ewmaRelayUtil = this.smooth(this.ewmaRelayUtil, relayUtil)
     this.initialized = true
     this.lastUpdatedAt = sample.now
 
@@ -137,15 +163,24 @@ export class CapacityController {
     this.lastMappStreamPressure = Math.max(this.ewmaMappStreamPressure, rawMappStreamPressure >= 0.9 ? rawMappStreamPressure : 0)
 
     const usedUnits = this.computeUsedUnits(sample.webInRoom, sample.mappInRoom)
+    const mappPeakRoom = sample.mappPeakRoom ?? sample.mappInRoom
+    const shrunkMappThisTick = this.adjustMappRoomCap(sample, mappPeakRoom)
 
     // AIMD + hysteresis: shrink fast under overload, freeze when elevated, grow slowly when sustainably healthy.
+    const relayAttributed = this.ewmaRelayUtil >= 0.5 && urgentMemPressure === 0
+    if (this.lastGeneralPressure < 0.65) this.relayDeferredShrinks = 0
     if (this.lastGeneralPressure >= 0.85) {
       this.overloadTicks++
       this.healthyTicks = 0
       if (this.overloadTicks >= OVERLOAD_TICKS_TO_SHRINK || urgentMemPressure === 1) {
-        const multiplicative = Math.floor(this.effectiveCap * 0.85)
-        const target = Math.min(multiplicative, Math.max(this.cfg.minUnits, Math.floor(usedUnits)))
-        this.effectiveCap = clamp(target, this.cfg.minUnits, this.cfg.maxUnits)
+        if (relayAttributed && !shrunkMappThisTick) this.shrinkMappRoomCap(mappPeakRoom)
+        if (relayAttributed && this.relayDeferredShrinks < MAX_RELAY_DEFERRED_SHRINKS) {
+          this.relayDeferredShrinks++
+        } else {
+          const multiplicative = Math.floor(this.effectiveCap * 0.85)
+          const target = Math.min(multiplicative, Math.max(this.cfg.minUnits, Math.floor(usedUnits)))
+          this.effectiveCap = clamp(target, this.cfg.minUnits, this.cfg.maxUnits)
+        }
         this.overloadTicks = 0
       }
     } else if (this.lastGeneralPressure >= 0.65) {
@@ -166,8 +201,46 @@ export class CapacityController {
     }
   }
 
+  private shrinkMappRoomCap(mappPeakRoom: number): void {
+    const target = Math.min(Math.floor(this.mappRoomCap * 0.85), Math.max(this.relaySlots, mappPeakRoom))
+    this.mappRoomCap = clamp(target, this.relaySlots, this.maxMappRoomCap)
+  }
+
+  private adjustMappRoomCap(sample: LoadSampleInput, mappPeakRoom: number): boolean {
+    if (this.lastMappStreamPressure >= 0.8) {
+      this.mappOverloadTicks++
+      this.mappHealthyTicks = 0
+      if (this.mappOverloadTicks >= OVERLOAD_TICKS_TO_SHRINK) {
+        this.shrinkMappRoomCap(mappPeakRoom)
+        this.mappOverloadTicks = 0
+        return true
+      }
+      return false
+    }
+
+    this.mappOverloadTicks = 0
+    const canGrow =
+      this.lastMappStreamPressure < 0.3 &&
+      this.lastGeneralPressure < 0.65 &&
+      sample.streams.recentWaitP95Ms > 0 &&
+      mappPeakRoom >= Math.ceil(this.mappRoomCap * 0.8) &&
+      sample.now >= this.mappGrowCooldownUntil
+    this.mappHealthyTicks = canGrow ? this.mappHealthyTicks + 1 : 0
+    if (this.mappHealthyTicks >= HEALTHY_TICKS_TO_GROW) {
+      const step = Math.max(2, Math.ceil(this.mappRoomCap * 0.05))
+      this.mappRoomCap = clamp(this.mappRoomCap + step, this.relaySlots, this.maxMappRoomCap)
+      this.mappHealthyTicks = 0
+      this.mappGrowCooldownUntil = sample.now + MAPP_GROW_COOLDOWN_MS
+    }
+    return false
+  }
+
   computeUsedUnits(webInRoom: number, mappInRoom: number): number {
-    return webInRoom + mappInRoom * this.cfg.mappWeight
+    return webInRoom + mappInRoom + (this.cfg.mappWeight - 1) * Math.min(mappInRoom, this.relaySlots)
+  }
+
+  private mappMarginalCost(mappInRoom: number): number {
+    return mappInRoom < this.relaySlots ? this.cfg.mappWeight : 1
   }
 
   /**
@@ -176,12 +249,25 @@ export class CapacityController {
    */
   canAdmit(
     clientKind: ClientKind,
-    live: { webInRoom: number; mappInRoom: number; activeRooms: number; reservedUnits?: number },
-    options?: { isCreate?: boolean; bypass?: boolean },
+    live: {
+      webInRoom: number
+      mappInRoom: number
+      activeRooms: number
+      reservedUnits?: number
+      mappInTargetRoom?: number
+    },
+    options?: { isCreate?: boolean; bypass?: boolean; roomSwitch?: boolean },
   ): AdmissionDecision {
     if (!this.cfg.enabled || options?.bypass) return { allowed: true }
 
-    const weight = clientKind === 'mapp' ? this.cfg.mappWeight : 1
+    const targetRoomFull =
+      clientKind === 'mapp' && !options?.isCreate && (live.mappInTargetRoom ?? 0) + 1 > this.mappRoomCap
+    // A room switch has zero net membership cost, but the destination still needs room for the listener.
+    if (options?.roomSwitch) {
+      return targetRoomFull ? { allowed: false, reason: 'mapp_room' } : { allowed: true }
+    }
+
+    const weight = clientKind === 'mapp' ? this.mappMarginalCost(live.mappInRoom) : 1
     const usedUnits = this.computeUsedUnits(live.webInRoom, live.mappInRoom) + (live.reservedUnits ?? 0)
 
     // Mapp-only audio relay pool isolation: congested audio streams never block web clients.
@@ -192,6 +278,8 @@ export class CapacityController {
     if (this.lastGeneralPressure >= 0.85 || usedUnits + weight > this.effectiveCap) {
       return { allowed: false, reason: 'capacity' }
     }
+
+    if (targetRoomFull) return { allowed: false, reason: 'mapp_room' }
 
     if (options?.isCreate && this.isCreateRestricted(live.activeRooms)) {
       return { allowed: false, reason: 'create_restricted' }
@@ -209,29 +297,44 @@ export class CapacityController {
     mappInRoom: number
     activeRooms: number
     queueLength: number
+    capacityWaiting?: boolean
     now?: number
   }): ServerCapacityStatus {
     const usedUnits = this.computeUsedUnits(live.webInRoom, live.mappInRoom)
     const remainingUnits = Math.max(0, this.effectiveCap - usedUnits)
+    const mappMarginal = this.mappMarginalCost(live.mappInRoom)
     const generalFull = this.cfg.enabled && (this.lastGeneralPressure >= 0.85 || remainingUnits < 1)
-    const generalBusy = this.cfg.enabled && (this.lastGeneralPressure >= 0.6 || usedUnits >= this.effectiveCap * 0.75)
+    const generalBusy =
+      this.cfg.enabled &&
+      (this.lastGeneralPressure >= 0.6 || usedUnits >= this.effectiveCap * 0.75 || Boolean(live.capacityWaiting))
     const level: ServerLoadLevel = generalFull ? 'full' : generalBusy ? 'busy' : 'normal'
 
     const mappFull =
       this.cfg.enabled &&
-      (generalFull || this.lastMappStreamPressure >= 0.8 || remainingUnits < this.cfg.mappWeight)
+      (generalFull || this.lastMappStreamPressure >= 0.8 || remainingUnits < mappMarginal)
     const mappBusy =
       this.cfg.enabled &&
       (generalBusy ||
         this.lastMappStreamPressure >= 0.45 ||
-        usedUnits + this.cfg.mappWeight >= this.effectiveCap * 0.75)
+        usedUnits + mappMarginal >= this.effectiveCap * 0.75)
     const mappLevel: ServerLoadLevel = mappFull ? 'full' : mappBusy ? 'busy' : 'normal'
 
-    const estimatedWebRemaining = generalFull ? 0 : Math.floor(remainingUnits)
-    const estimatedMappRemaining = mappFull ? 0 : Math.floor(remainingUnits / this.cfg.mappWeight)
+    const estimatedWebRemaining = generalFull || live.capacityWaiting ? 0 : Math.floor(remainingUnits)
+    const weightedMappSlots = Math.max(0, this.relaySlots - live.mappInRoom)
+    const weightedMappUnits = this.cfg.mappWeight * weightedMappSlots
+    const availableMappSlots = remainingUnits <= weightedMappUnits
+      ? Math.floor(remainingUnits / this.cfg.mappWeight)
+      : weightedMappSlots + Math.floor(remainingUnits - weightedMappUnits)
+    const estimatedMappRemaining = mappFull || live.capacityWaiting ? 0 : availableMappSlots
 
     const unitPressure = this.effectiveCap > 0 ? usedUnits / this.effectiveCap : 1
-    const pressurePercent = Math.round(clamp01(Math.max(this.lastGeneralPressure, unitPressure)) * 100)
+    const rawGeneralPct = Math.round(clamp01(Math.max(this.lastGeneralPressure, unitPressure)) * 100)
+    const pressurePercent = Math.max(rawGeneralPct, level === 'full' ? 85 : level === 'busy' ? 60 : 0)
+    const mappPressurePercent = Math.max(
+      pressurePercent,
+      Math.round(mapStreamPressureToPercent(this.lastMappStreamPressure)),
+      mappLevel === 'full' ? 85 : mappLevel === 'busy' ? 60 : 0,
+    )
 
     return {
       level,
@@ -245,6 +348,8 @@ export class CapacityController {
       queueLength: live.queueLength,
       maxQueueLength: this.cfg.maxQueue,
       pressurePercent,
+      mappPressurePercent,
+      mappRoomLimit: this.mappRoomCap,
       createRestricted: this.isCreateRestricted(live.activeRooms),
       updatedAt: live.now ?? (this.lastUpdatedAt || Date.now()),
     }
@@ -253,6 +358,9 @@ export class CapacityController {
   getDiagnostics() {
     return {
       effectiveCap: this.effectiveCap,
+      mappRoomCap: this.mappRoomCap,
+      ewmaRelayUtil: Number(this.ewmaRelayUtil.toFixed(3)),
+      relayDeferredShrinks: this.relayDeferredShrinks,
       ewmaMemRatio: Number(this.ewmaMemRatio.toFixed(3)),
       ewmaElDelayP95Ms: Number(this.ewmaElDelayP95Ms.toFixed(1)),
       ewmaElu: Number(this.ewmaElu.toFixed(3)),
@@ -273,18 +381,26 @@ const BROADCAST_MIN_INTERVAL_MS = 2_000
 
 const PLATFORM_USER_PREFIX = 'mapp_'
 
-export function countInRoomUsers(): { webInRoom: number; mappInRoom: number; activeRooms: number } {
+export function countInRoomUsers() {
   let webInRoom = 0
   let mappInRoom = 0
   let activeRooms = 0
-  for (const room of roomRepo.getAll().values()) {
+  let mappPeakRoom = 0
+  const mappByRoom = new Map<string, number>()
+  for (const [roomId, room] of roomRepo.getAll()) {
+    let roomMappCount = 0
     if (room.users.length > 0) activeRooms++
     for (const user of room.users) {
-      if (user.id.startsWith(PLATFORM_USER_PREFIX)) mappInRoom++
+      if (user.id.startsWith(PLATFORM_USER_PREFIX)) roomMappCount++
       else webInRoom++
     }
+    if (roomMappCount > 0) {
+      mappByRoom.set(roomId, roomMappCount)
+      mappInRoom += roomMappCount
+      mappPeakRoom = Math.max(mappPeakRoom, roomMappCount)
+    }
   }
-  return { webInRoom, mappInRoom, activeRooms }
+  return { webInRoom, mappInRoom, activeRooms, mappByRoom, mappPeakRoom }
 }
 
 const initialContainer = readContainerResourceSample({
@@ -297,6 +413,9 @@ const controller = new CapacityController({
   maxUnits: config.capacity.maxUnits,
   baseUnits: config.capacity.baseUnits,
   mappWeight: config.capacity.mappWeight,
+  relaySlots: config.mapp.maxStreams,
+  relayMaxQueued: getStreamSlotsSnapshot().maxQueued,
+  mappRoomBase: config.capacity.mappRoomBase,
   maxQueue: config.capacity.maxQueue,
   initialMemoryLimitBytes: initialContainer.memoryLimitBytes,
   initialCpuLimitCores: initialContainer.cpuLimitCores,
@@ -311,6 +430,7 @@ let lastLogAt = 0
 let lastBroadcastAt = 0
 let lastBroadcastSignature = ''
 let queueLengthProvider: () => number = () => 0
+let capacityWaitersProvider: () => boolean = () => false
 let tickListener: (() => void) | null = null
 
 function statusSignature(status: ServerCapacityStatus): string {
@@ -323,6 +443,8 @@ function statusSignature(status: ServerCapacityStatus): string {
     status.queueLength,
     status.createRestricted ? 1 : 0,
     Math.round(status.pressurePercent / 5),
+    Math.round(status.mappPressurePercent / 5),
+    status.mappRoomLimit,
   ].join('|')
 }
 
@@ -369,6 +491,7 @@ function sampleOnce(): void {
     streams,
     webInRoom: live.webInRoom,
     mappInRoom: live.mappInRoom,
+    mappPeakRoom: live.mappPeakRoom,
     activeRooms: live.activeRooms,
     queueLength,
     now,
@@ -414,18 +537,23 @@ export function getPublicServerCapacity(): ServerCapacityStatus {
   return controller.getPublicStatus({
     ...live,
     queueLength: queueLengthProvider(),
+    capacityWaiting: capacityWaitersProvider(),
     now: Date.now(),
   })
 }
 
 export function canAdmitClient(
   clientKind: ClientKind,
-  options?: { isCreate?: boolean; bypass?: boolean; reservedUnits?: number },
+  options?: { isCreate?: boolean; bypass?: boolean; reservedUnits?: number; targetRoomId?: string; roomSwitch?: boolean },
 ): AdmissionDecision {
   const live = countInRoomUsers()
   return controller.canAdmit(
     clientKind,
-    { ...live, reservedUnits: options?.reservedUnits },
+    {
+      ...live,
+      reservedUnits: options?.reservedUnits,
+      mappInTargetRoom: options?.targetRoomId ? live.mappByRoom.get(options.targetRoomId) ?? 0 : 0,
+    },
     options,
   )
 }
@@ -437,9 +565,11 @@ export function notifyCapacityChanged(force = false): void {
 
 export function setCapacityQueueHooks(hooks: {
   getQueueLength: () => number
+  hasCapacityWaiters?: () => boolean
   onTick: () => void
 }): void {
   queueLengthProvider = hooks.getQueueLength
+  capacityWaitersProvider = hooks.hasCapacityWaiters ?? (() => false)
   tickListener = hooks.onTick
 }
 
@@ -456,12 +586,16 @@ export function startServerLoadMonitor(io: TypedServer): void {
   sampleOnce()
   sampleTimer = setInterval(sampleOnce, SAMPLE_INTERVAL_MS)
   sampleTimer.unref()
+  const { effectiveCap, mappRoomCap, ewmaRelayUtil, relayDeferredShrinks } = controller.getDiagnostics()
   logger.info('Server capacity monitor started', {
     enabled: config.capacity.enabled,
     source: initialContainer.source,
     memLimitMb: Math.round(initialContainer.memoryLimitBytes / (1024 * 1024)),
     cpuLimitCores: Number(initialContainer.cpuLimitCores.toFixed(2)),
-    initialEffectiveCap: controller.getDiagnostics().effectiveCap,
+    initialEffectiveCap: effectiveCap,
+    mappRoomCap,
+    ewmaRelayUtil,
+    relayDeferredShrinks,
     mappWeight: config.capacity.mappWeight,
     maxQueue: config.capacity.maxQueue,
   })
