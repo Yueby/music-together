@@ -1,7 +1,6 @@
 import type { ClientToServerEvents, ServerToClientEvents } from '@music-together/shared'
 import cors from 'cors'
 import express from 'express'
-import fs from 'node:fs'
 import { createServer } from 'node:http'
 import path from 'node:path'
 import { fileURLToPath } from 'node:url'
@@ -18,6 +17,7 @@ import { musicApiRateLimit, roomCheckRateLimit } from './middleware/httpRateLimi
 import { attachSocketIdentity } from './middleware/socketIdentity.js'
 import type { SocketData } from './middleware/types.js'
 import authRoutes from './routes/auth.js'
+import { mountFallbackRoutes } from './routes/fallback.js'
 import musicRoutes from './routes/music.js'
 import { createPlatformMediaRouter } from './routes/platformMedia.js'
 import { createPlatformMetadataRouter } from './routes/platformMetadata.js'
@@ -27,6 +27,7 @@ import { clearAllTimers } from './services/roomLifecycleService.js'
 import { admissionQueue } from './services/admissionQueueService.js'
 import { getPublicServerCapacity, startServerLoadMonitor, stopServerLoadMonitor } from './services/serverLoadService.js'
 import { logger } from './utils/logger.js'
+import { resolveSocketClientIp } from './utils/trustProxy.js'
 
 // Mini-app (Discourse) platform access is opt-in: with no MAPP_* variables nothing below is mounted.
 // A partial or invalid configuration throws here, so a misconfigured deployment never starts half-open.
@@ -108,33 +109,7 @@ app.get('/api/version', (_req, res) => {
 // --- Serve client SPA (条件挂载，仅当构建产物存在时) ---
 const __dirname = path.dirname(fileURLToPath(import.meta.url))
 const clientDist = path.resolve(__dirname, '../../client/dist')
-const indexHtml = path.join(clientDist, 'index.html')
-
-if (fs.existsSync(indexHtml)) {
-  // Vite 产物带 content hash -> 长缓存
-  app.use(
-    '/assets',
-    express.static(path.join(clientDist, 'assets'), {
-      maxAge: '1y',
-      immutable: true,
-    }),
-  )
-  // 其他静态文件 (favicon, manifest 等)。index.html 不缓存，确保部署后立即生效
-  app.use(
-    express.static(clientDist, {
-      maxAge: '1h',
-      setHeaders: (res, filePath) => {
-        if (filePath.endsWith('index.html')) {
-          res.setHeader('Cache-Control', 'no-cache, must-revalidate')
-        }
-      },
-    }),
-  )
-  // SPA fallback: 所有非 API 的 GET -> index.html
-  app.get('/{*splat}', (_req, res) => {
-    res.setHeader('Cache-Control', 'no-cache, must-revalidate')
-    res.sendFile(indexHtml)
-  })
+if (mountFallbackRoutes(app, clientDist)) {
   logger.info(`Serving client SPA from ${clientDist}`)
 } else {
   logger.info('Client dist not found, skipping static file serving (dev mode)')
@@ -151,6 +126,10 @@ const io = new Server<ClientToServerEvents, ServerToClientEvents, Record<string,
 
 // Platform tokens are verified by an Engine.IO middleware before the WebSocket upgrade; Web Cookies are unchanged.
 attachSocketIdentity(io, platform ? { resolvePlatformIdentity: platform.resolvers.roomSocket } : {})
+io.use((socket, next) => {
+  socket.data.clientIp = resolveSocketClientIp(app, socket.request)
+  next()
+})
 initializeSocket(io)
 startServerLoadMonitor(io)
 

@@ -53,7 +53,7 @@ interface Options {
 type ParsedRequest = MappMetadataRequest
 /** Handler for a JSON target: receives exactly the query type the shared schema produces for it. */
 type JsonHandlers = {
-  [K in Exclude<ParsedRequest['kind'], 'cover'>]: (
+  [K in Exclude<ParsedRequest['kind'], 'cover' | 'lyric'>]: (
     query: Extract<ParsedRequest, { kind: K }>['query'],
     /** The platform identity verified for this request, never anything from the query. */
     caller: { userId: string },
@@ -152,10 +152,9 @@ export function createPlatformMetadataRouter(options: Options): RouterType {
   const home = options.home ?? getHomeMetadata
   const radar = options.radar ?? getRadarMetadata
   const cover = options.cover ?? ((url: string) => fetchPlatformCover(url))
-  /** One entry per JSON target; the type forces every new target in the shared table to get a handler. */
+  /** JSON targets without their own response headers. */
   const handlers: JsonHandlers = {
     search: (query) => search(query),
-    lyric: (query) => lyric(query),
     ttml: async (query) => {
       const found = await ttml(query)
       if (!found.ok) throw new MetadataError(502, 'METADATA_FAILED')
@@ -255,17 +254,27 @@ export function createPlatformMetadataRouter(options: Options): RouterType {
         res.status(200).type(result.contentType).send(result.body)
         return
       }
-      const handler = handlers[parsed.kind] as (query: unknown, caller: { userId: string }) => Promise<unknown>
-      const caller = { userId: req.identityUserId as string } // set from the verified token by the first middleware
+      const timeout = new MetadataError(504, 'METADATA_TIMEOUT')
       const work = Promise.resolve()
-        .then(() => handler(parsed.query, caller))
+        .then(async () => {
+          if (parsed.kind === 'lyric') {
+            const body = await lyric(parsed.query)
+            return { body, cacheControl: body.cacheable ? 'private, max-age=1800' : 'no-store' }
+          }
+          const handler = handlers[parsed.kind] as (query: unknown, caller: { userId: string }) => Promise<unknown>
+          const caller = { userId: req.identityUserId as string } // set from the verified token by the first middleware
+          return { body: await handler(parsed.query, caller) }
+        })
         .catch((error: unknown) => {
           throw catalogError(error)
         })
-      const json = JSON.stringify(
-        await withTimeout(work, REQUEST_TIMEOUT_MS, new MetadataError(504, 'METADATA_TIMEOUT')),
-      )
+      const result = await withTimeout(work, REQUEST_TIMEOUT_MS, timeout)
+      const json = JSON.stringify(result.body)
       if (Buffer.byteLength(json) > MAPP_METADATA_MAX_BYTES) throw new MetadataError(502, 'METADATA_RESPONSE_TOO_LARGE')
+      if (result.cacheControl) {
+        res.setHeader('Vary', 'Origin, Authorization')
+        res.setHeader('Cache-Control', result.cacheControl)
+      }
       res.status(200).type('json').send(json)
     } catch (error) {
       sendError(res, error)

@@ -1,3 +1,6 @@
+import express, { type Application } from 'express'
+import type { IncomingMessage } from 'node:http'
+
 /**
  * The Express `trust proxy` setting, read from the `TRUST_PROXY` environment variable.
  *
@@ -20,4 +23,13 @@ export function parseTrustProxy(raw: string | undefined): TrustProxySetting {
   if (lowered === 'false') return false
   if (/^\d+$/.test(value)) return Number(value)
   return value
+}
+/** Apply Express's configured proxy trust to an Engine.IO handshake without mutating its request. */
+export function resolveSocketClientIp(app: Application, request: IncomingMessage): string | undefined {
+  return Reflect.get(express.request, 'ip', {
+    app,
+    headers: request.headers,
+    socket: request.socket,
+    connection: request.socket,
+  }) as string | undefined
 }

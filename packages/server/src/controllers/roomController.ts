@@ -316,7 +316,7 @@ export function registerRoomController(io: TypedServer, socket: TypedSocket) {
 
       // After too many wrong passwords, no password is evaluated any more (so a lucky guess cannot succeed), but a
       // join that needs none — rejoin ticket, already a member, creator, admin — still goes through untouched.
-      const passwordLocked = await isJoinPasswordLocked(socket, roomId)
+      const passwordLocked = isJoinPasswordLocked(socket, roomId)
 
       // Validate join request (password, rejoin scenarios) — pure business logic
       const validation = roomService.validateJoinRequest(
@@ -335,7 +335,7 @@ export function registerRoomController(io: TypedServer, socket: TypedSocket) {
             })
             return
           }
-          await recordJoinPasswordFailure(socket, roomId)
+          recordJoinPasswordFailure(socket, roomId)
         }
         socket.emit(EVENTS.ROOM_ERROR, {
           code: ERROR_CODE[validation.errorCode as keyof typeof ERROR_CODE] ?? ERROR_CODE.JOIN_FAILED,
@@ -343,9 +343,9 @@ export function registerRoomController(io: TypedServer, socket: TypedSocket) {
         })
         return
       }
-      // A password that was actually checked and accepted: forget earlier typos.
+      // A password that was actually checked and accepted: forget this identity's earlier typos.
       if (password && !passwordLocked && !validation.skipPassword) {
-        await clearJoinPasswordFailures(socket, roomId)
+        clearJoinPasswordFailures(socket, roomId)
       }
 
       const existingMapping = roomRepo.getSocketMapping(socket.id)

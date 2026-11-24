@@ -10,7 +10,7 @@ vi.mock('./kugouLyricService.js', async (importOriginal) => ({
 
 import { musicProvider } from './musicProvider.js'
 
-const EMPTY = { lyric: '', tlyric: '', romalrc: '', yrc: '' }
+const EMPTY = { lyric: '', tlyric: '', romalrc: '', yrc: '', cacheable: false }
 
 beforeEach(() => {
   mocks.lyricNew.mockReset()
@@ -34,12 +34,26 @@ describe('musicProvider.getLyric', () => {
         tlyric: '[00:01.00]b',
         romalrc: '[00:01.00]c',
         yrc: '[1000,500](1000,500,0)d',
+        cacheable: true,
       })
     })
 
     it('fills what the answer lacks with empty text', async () => {
       mocks.lyricNew.mockResolvedValue({ body: { lrc: { lyric: 'only' } } })
-      await expect(musicProvider.getLyric('netease', 'n-partial')).resolves.toEqual({ ...EMPTY, lyric: 'only' })
+      await expect(musicProvider.getLyric('netease', 'n-partial')).resolves.toEqual({
+        ...EMPTY,
+        lyric: 'only',
+        cacheable: true,
+      })
+    })
+
+    it('does not cache a successful response with empty lyrics', async () => {
+      mocks.lyricNew.mockResolvedValueOnce({ body: { code: 200 } }).mockResolvedValueOnce({
+        body: { code: 200, yrc: { lyric: '[1000,500](1000,500,0)a' } },
+      })
+      await expect(musicProvider.getLyric('netease', 'n-empty')).resolves.toEqual(EMPTY)
+      await expect(musicProvider.getLyric('netease', 'n-empty')).resolves.toMatchObject({ cacheable: true })
+      expect(mocks.lyricNew).toHaveBeenCalledTimes(2)
     })
 
     it('answers an empty lyric, and does not remember it, when there is no body', async () => {
@@ -63,7 +77,7 @@ describe('musicProvider.getLyric', () => {
 
     it('remembers a lyric it found', async () => {
       mocks.lyricNew.mockResolvedValue({ body: { lrc: { lyric: 'once' } } })
-      await musicProvider.getLyric('netease', 'n-cache')
+      await expect(musicProvider.getLyric('netease', 'n-cache')).resolves.toMatchObject({ cacheable: true })
       await musicProvider.getLyric('netease', 'n-cache')
       expect(mocks.lyricNew).toHaveBeenCalledOnce()
     })
@@ -78,6 +92,7 @@ describe('musicProvider.getLyric', () => {
         tlyric: 'T',
         romalrc: '',
         yrc: '',
+        cacheable: true,
       })
     })
 
@@ -126,10 +141,11 @@ describe('musicProvider.getLyric', () => {
         .mockRejectedValueOnce(new Error('krc down'))
         .mockResolvedValueOnce({ items: [[{ word: 'a', offset: 1, duration: 0.5 }]] })
       const degraded = await musicProvider.getLyric('kugou', 'kg-degraded')
-      expect(degraded).toMatchObject({ lyric: 'L' })
+      expect(degraded).toMatchObject({ lyric: 'L', cacheable: false })
       expect(degraded).not.toHaveProperty('wordByWord')
       const full = await musicProvider.getLyric('kugou', 'kg-degraded')
       expect(full.wordByWord).toHaveLength(1)
+      expect(full.cacheable).toBe(true)
       // The complete answer is remembered.
       await musicProvider.getLyric('kugou', 'kg-degraded')
       expect(spy).toHaveBeenCalledTimes(2)
@@ -144,7 +160,7 @@ describe('musicProvider.getLyric', () => {
         const pending = musicProvider.getLyric('kugou', 'kg-timeout')
         await vi.advanceTimersByTimeAsync(15_000)
         const degraded = await pending
-        expect(degraded).toMatchObject({ lyric: 'L' })
+        expect(degraded).toMatchObject({ lyric: 'L', cacheable: false })
         expect(degraded).not.toHaveProperty('wordByWord')
 
         mocks.getKrcByHash.mockResolvedValueOnce(null)

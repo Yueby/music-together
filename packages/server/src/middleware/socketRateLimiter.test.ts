@@ -15,9 +15,13 @@ let sequence = 0
 /** A fresh identity per test: the limiters keep their counters for the whole process. */
 const newIdentity = () => `identity-${++sequence}`
 
-function connection(identityUserId: string | undefined, id = `socket-${++sequence}`) {
+function connection(
+  identityUserId: string | undefined,
+  id = `socket-${++sequence}`,
+  address = `2001:db8::${sequence.toString(16)}`,
+) {
   const emit = vi.fn()
-  const socket = { id, data: { identityUserId }, emit } as unknown as TypedSocket
+  const socket = { id, data: { identityUserId }, handshake: { address }, emit } as unknown as TypedSocket
   return { socket, emit }
 }
 
@@ -119,8 +123,8 @@ describe('room password guessing limit', () => {
 
   it('stays locked however many more guesses arrive', async () => {
     const { socket } = connection(newIdentity())
-    await failTimes(socket, 'ROOM01', max + 10)
-    expect(await isJoinPasswordLocked(socket, 'ROOM01')).toBe(true)
+    await failTimes(socket, 'ROOM11', max + 10)
+    expect(await isJoinPasswordLocked(socket, 'ROOM11')).toBe(true)
   })
 
   it('counts per identity and room, across the identity connections', async () => {
@@ -153,5 +157,31 @@ describe('room password guessing limit', () => {
     } finally {
       vi.useRealTimers()
     }
+  })
+
+  it('locks the room after 30 failures across different identities and IPs', () => {
+    const roomId = 'ROOM30'
+    for (let i = 0; i < 30; i++) {
+      const { socket } = connection(newIdentity())
+      expect(isJoinPasswordLocked(socket, roomId)).toBe(false)
+      recordJoinPasswordFailure(socket, roomId)
+    }
+    const { socket } = connection(newIdentity())
+    expect(isJoinPasswordLocked(socket, roomId)).toBe(true)
+    expect(isJoinPasswordLocked(socket, 'ROOM31')).toBe(false)
+  })
+
+  it('locks the resolved IP after 15 failures across different identities and rooms', () => {
+    const clientIp = '198.51.100.17'
+    for (let i = 0; i < 15; i++) {
+      const { socket } = connection(newIdentity())
+      socket.data.clientIp = clientIp
+      expect(isJoinPasswordLocked(socket, 'ROOM15')).toBe(false)
+      recordJoinPasswordFailure(socket, 'ROOM15')
+    }
+    const { socket } = connection(newIdentity())
+    expect(isJoinPasswordLocked(socket, 'ROOM15')).toBe(false)
+    socket.data.clientIp = clientIp
+    expect(isJoinPasswordLocked(socket, 'ROOM16')).toBe(true)
   })
 })

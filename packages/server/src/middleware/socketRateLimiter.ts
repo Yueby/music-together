@@ -47,12 +47,6 @@ const roomEntryLimiter = new RateLimiterMemory({
   duration: 10,
 })
 
-/** Wrong room passwords per identity and room. Only failures consume a point, so a correct password costs nothing. */
-const joinPasswordFailureLimiter = new RateLimiterMemory({
-  points: LIMITS.ROOM_JOIN_PASSWORD_MAX_FAILURES,
-  duration: 60,
-})
-
 function identityKey(socket: TypedSocket): string {
   return socket.data.identityUserId ?? socket.id
 }
@@ -121,26 +115,55 @@ function joinFailureKey(socket: TypedSocket, roomId: string): string {
   return `${identityKey(socket)}:join-password:${roomId}`
 }
 
+const PASSWORD_FAILURE_WINDOW_MS = 60_000
+const ROOM_PASSWORD_MAX_FAILURES = 30
+const IP_PASSWORD_MAX_FAILURES = 15
+const passwordFailures = new Map<string, { count: number; expiresAt: number }>()
+
+setInterval(() => {
+  const now = Date.now()
+  for (const [key, entry] of passwordFailures) {
+    if (entry.expiresAt <= now) passwordFailures.delete(key)
+  }
+}, PASSWORD_FAILURE_WINDOW_MS).unref()
+
+function joinFailureBuckets(socket: TypedSocket, roomId: string) {
+  const address = socket.data.clientIp ?? socket.handshake.address
+  return [
+    { key: `identity:${joinFailureKey(socket, roomId)}`, limit: LIMITS.ROOM_JOIN_PASSWORD_MAX_FAILURES },
+    { key: `room:${roomId}`, limit: ROOM_PASSWORD_MAX_FAILURES },
+    { key: `ip:${address}`, limit: IP_PASSWORD_MAX_FAILURES },
+  ]
+}
+
 /**
- * True once this identity has sent too many wrong passwords to this room within the last minute.
+ * True when any password failure budget is spent. Checks and writes stay synchronous with password validation so
+ * simultaneous joins cannot all observe an open budget before recording their failures.
  * While locked, the caller must not let any password through (a correct guess would confirm the guess);
  * requests that need no password (rejoin ticket, already a member, creator, admin) are unaffected.
  */
-export async function isJoinPasswordLocked(socket: TypedSocket, roomId: string): Promise<boolean> {
-  const state = await joinPasswordFailureLimiter.get(joinFailureKey(socket, roomId))
-  return state !== null && state.consumedPoints >= LIMITS.ROOM_JOIN_PASSWORD_MAX_FAILURES
+export function isJoinPasswordLocked(socket: TypedSocket, roomId: string): boolean {
+  const now = Date.now()
+  return joinFailureBuckets(socket, roomId).some(({ key, limit }) => {
+    const entry = passwordFailures.get(key)
+    return entry !== undefined && entry.expiresAt > now && entry.count >= limit
+  })
 }
 
-/** Count one wrong password against this identity and room. */
-export async function recordJoinPasswordFailure(socket: TypedSocket, roomId: string): Promise<void> {
-  try {
-    await joinPasswordFailureLimiter.consume(joinFailureKey(socket, roomId))
-  } catch {
-    // Already over the limit: the lock is in place, nothing more to count.
+/** Count one wrong password in each applicable budget. */
+export function recordJoinPasswordFailure(socket: TypedSocket, roomId: string): void {
+  const now = Date.now()
+  for (const { key, limit } of joinFailureBuckets(socket, roomId)) {
+    const entry = passwordFailures.get(key)
+    if (!entry || entry.expiresAt <= now) {
+      passwordFailures.set(key, { count: 1, expiresAt: now + PASSWORD_FAILURE_WINDOW_MS })
+    } else if (entry.count < limit) {
+      entry.count++
+    }
   }
 }
 
-/** A correct password clears the count: success is never punished. */
-export async function clearJoinPasswordFailures(socket: TypedSocket, roomId: string): Promise<void> {
-  await joinPasswordFailureLimiter.delete(joinFailureKey(socket, roomId))
+/** A correct password clears this identity's typos. Shared budgets retain the other failures. */
+export function clearJoinPasswordFailures(socket: TypedSocket, roomId: string): void {
+  passwordFailures.delete(`identity:${joinFailureKey(socket, roomId)}`)
 }

@@ -36,6 +36,11 @@ export function identityHttpMiddleware(req: Request, res: Response, next: NextFu
   const identity = getIdentityFromRequest(req)
   if (identity) {
     req.identityUserId = identity.userId
+    // Match the cover route's case-insensitive path and optional trailing slash.
+    if (/^\/music\/cover-proxy\/?$/i.test(req.path)) {
+      next()
+      return
+    }
     const issued = issueIdentityCookie(req, res, identity.userId)
     if (shouldLogRenewal(identity.userId)) {
       logger.info('Identity cookie renewed', {

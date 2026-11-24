@@ -118,7 +118,7 @@ const MINUTE = 60 * 1000
 const COVER_PIC_TIMEOUT_MS = 4_000
 const COVER_BATCH_TIMEOUT_MS = 10_000
 
-const EMPTY_LYRIC: LyricResult = { lyric: '', tlyric: '', romalrc: '', yrc: '' }
+const EMPTY_LYRIC: LyricResult = { lyric: '', tlyric: '', romalrc: '', yrc: '', cacheable: false }
 
 /** Meting's providers do not share a useful maximum artwork request size. */
 const COVER_REQUEST_SIZES: Record<MusicSource, number> = {
@@ -547,8 +547,8 @@ class MusicProvider {
       // Only a lyric that was really read is remembered: an empty one may just be a bad moment upstream, and a degraded
       // one (Kugou's plain LRC after its KRC lookup failed) is served but not kept, so the next play can do better.
       if (!fetched) return { ...EMPTY_LYRIC }
-      if (fetched.cacheable) this.lyricCache.set(cacheKey, fetched.result)
-      return fetched.result
+      if (fetched.cacheable) this.lyricCache.set(cacheKey, fetched)
+      return fetched
     } catch (err) {
       logger.error(`Get lyric failed for ${source}:`, err)
       return { ...EMPTY_LYRIC }

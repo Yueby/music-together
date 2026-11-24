@@ -55,9 +55,9 @@ export function scheduleDeletion(roomId: string, io?: TypedServer): void {
   const timer = setTimeout(() => {
     const r = roomRepo.get(roomId)
     if (r && r.users.length === 0) {
+      cleanupPlayerRoom(roomId)
       roomRepo.delete(roomId)
       chatRepo.deleteRoom(roomId)
-      cleanupPlayerRoom(roomId)
       cleanupVoteRoom(roomId)
       cleanupAuthRoom(roomId)
       cleanupRoomRejoinTickets(roomId)

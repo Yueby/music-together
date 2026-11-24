@@ -48,6 +48,11 @@ describe('httpEnhancements', () => {
       expect(sanitizeUrlForLog('/api/rooms/ABCD12/check')).toBe('/api/rooms/ABCD12/check')
       expect(sanitizeUrlForLog(undefined)).toBe('/')
     })
+
+    it('redacts a cover URL that may contain embedded credentials', () => {
+      const url = '/api/music/cover-proxy?url=' + encodeURIComponent('https://user:password@p1.music.126.net/a.png')
+      expect(sanitizeUrlForLog(url)).toBe('/api/music/cover-proxy?url=%5BREDACTED%5D')
+    })
   })
 
   describe('helmet & compression middleware', () => {
@@ -69,6 +74,7 @@ describe('httpEnhancements', () => {
       expect(res.headers.get('x-content-type-options')).toBe('nosniff')
       expect(res.headers.get('cross-origin-resource-policy')).toBe('cross-origin')
       expect(res.headers.get('content-security-policy')).toBeNull()
+      expect(res.headers.get('strict-transport-security')).toMatch(/^max-age=\d+$/)
       // Compression active for >1KiB JSON responses
       expect(res.headers.get('vary')).toMatch(/accept-encoding/i)
     })

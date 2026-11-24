@@ -7,7 +7,9 @@ import { readBounded } from '../utils/readBounded.js'
  */
 export const ALLOWED_COVER_HOSTS: readonly string[] = COVER_HOST_ALLOWLIST
 
-export const MAX_WEB_COVER_BYTES = 10 * 1024 * 1024
+export const MAX_WEB_COVER_BYTES = 3 * 1024 * 1024
+
+const RASTER_IMAGE_TYPES = new Set(['image/jpeg', 'image/jpg', 'image/png', 'image/webp', 'image/gif', 'image/avif'])
 
 const NETEASE_COVER_HOST = /^p[1-4]\.music\.126\.net$/
 /** Player-sized artwork: ~0.5 MB instead of the multi-megabyte original. */
@@ -60,7 +62,7 @@ interface CoverProxyOptions {
 export function createCoverProxy({
   maxCacheBytes = 16 * 1024 * 1024,
   cacheTtlMs = 15 * 60_000,
-  maxConcurrent = 16,
+  maxConcurrent = 6,
   maxQueued = 64,
   queueTimeoutMs = 10_000,
 }: CoverProxyOptions = {}) {
@@ -175,11 +177,15 @@ async function fetchUpstreamCover(target: URL, maxBytes: number, fetcher: typeof
     return { ok: false, status: response.status, error: 'Upstream fetch failed', kind: 'upstream' }
   }
 
-  const contentType = response.headers.get('content-type') || ''
-  const contentLength = Number(response.headers.get('content-length') ?? 0)
-  if (!contentType.startsWith('image/') || contentLength > maxBytes) {
+  const contentType = (response.headers.get('content-type') ?? '').split(';', 1)[0].trim().toLowerCase()
+  if (!RASTER_IMAGE_TYPES.has(contentType)) {
     await discard(response)
-    return { ok: false, status: 413, error: 'Invalid or oversized image', kind: 'invalid' }
+    return { ok: false, status: 415, error: 'Unsupported image type', kind: 'invalid' }
+  }
+  const contentLength = Number(response.headers.get('content-length') ?? 0)
+  if (contentLength > maxBytes) {
+    await discard(response)
+    return IMAGE_TOO_LARGE
   }
 
   const body = await readBounded(response, maxBytes)

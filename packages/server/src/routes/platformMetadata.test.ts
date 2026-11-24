@@ -14,7 +14,7 @@ vi.mock('../services/musicProvider.js', () => ({
     search: vi.fn().mockResolvedValue([]),
     searchAlbum: vi.fn().mockResolvedValue([]),
     searchPlaylist: vi.fn().mockResolvedValue([]),
-    getLyric: vi.fn().mockResolvedValue({ lyric: '[00:01]fixture', tlyric: '', romalrc: '', yrc: '' }),
+    getLyric: vi.fn().mockResolvedValue({ lyric: '[00:01]fixture', tlyric: '', romalrc: '', yrc: '', cacheable: true }),
   },
 }))
 afterEach(() => {
@@ -96,7 +96,7 @@ function fixture(
   const res = new Reply()
   const verifyIdentity = vi.fn().mockResolvedValue({ userId: changes.userId ?? uid() })
   const search = vi.fn().mockResolvedValue({ tracks: [], page: 1, hasMore: false })
-  const lyric = vi.fn().mockResolvedValue({ lyric: '[00:01]fixture', tlyric: '', romalrc: '', yrc: '' })
+  const lyric = vi.fn().mockResolvedValue({ lyric: '[00:01]fixture', tlyric: '', romalrc: '', yrc: '', cacheable: true })
   const ttml = vi.fn().mockResolvedValue({ ok: true, lines: [{ words: [{ word: 'Hello' }] }] })
   const cover = vi.fn().mockResolvedValue({ ok: true, contentType: 'image/jpeg', body: Buffer.from([1, 2, 3]) })
   const artist = vi
@@ -644,7 +644,17 @@ describe('unmounted platform metadata router', () => {
     const f = fixture({ raw: '/api/music/lyric?source=tencent&lyricId=fixture', defaults: true })
     await f.run()
     expect(musicProvider.getLyric).toHaveBeenCalledExactlyOnceWith('tencent', 'fixture')
-    expect(f.res.body).toMatchObject({ lyric: '[00:01]fixture' })
+    expect(f.res.body).toMatchObject({ lyric: '[00:01]fixture', cacheable: true })
+    expect(f.res.headers['cache-control']).toBe('private, max-age=1800')
+    expect(f.res.headers.vary).toBe('Origin, Authorization')
+  })
+
+  it('serves a degraded lyric with no-store', async () => {
+    const f = fixture({ raw: '/api/music/lyric?source=kugou&lyricId=fixture' })
+    f.lyric.mockResolvedValueOnce({ lyric: '[00:01]fixture', tlyric: '', romalrc: '', yrc: '', cacheable: false })
+    expect(await f.run()).toBe('answered')
+    expect(f.res.body).toMatchObject({ lyric: '[00:01]fixture', cacheable: false })
+    expect(f.res.headers['cache-control']).toBe('no-store')
   })
 
   it('answers an exact GET preflight without authentication', async () => {

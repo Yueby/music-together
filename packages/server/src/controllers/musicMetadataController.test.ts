@@ -219,8 +219,8 @@ describe('public metadata controller shared by Web and platform', () => {
     expect(provider.search.mock.calls[0]).toHaveLength(4)
   })
 
-  it('returns the original lyric payload from the existing provider', async () => {
-    const lyric = { lyric: '[00:00.00]Fixture', tlyric: '', romalrc: '', yrc: '' }
+  it('returns the original lyric payload including the cache decision', async () => {
+    const lyric = { lyric: '[00:00.00]Fixture', tlyric: '', romalrc: '', yrc: '', cacheable: true }
     provider.getLyric.mockResolvedValueOnce(lyric)
     expect(await getMusicLyricMetadata({ source: 'tencent', lyricId: 'fixture-id' })).toBe(lyric)
     expect(provider.getLyric).toHaveBeenCalledExactlyOnceWith('tencent', 'fixture-id')

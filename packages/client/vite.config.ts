@@ -36,9 +36,27 @@ export default defineConfig({
         ],
       },
       workbox: {
-        navigateFallbackDenylist: [/^\/api\//, /^\/socket\.io\//],
+        cleanupOutdatedCaches: true,
+        navigateFallback: null,
         maximumFileSizeToCacheInBytes: 5 * 1024 * 1024,
-        globPatterns: ['**/*.{js,css,html,svg,png,woff2,wasm}'],
+        globPatterns: ['**/*.{js,css,svg,png,woff2,wasm}'],
+        runtimeCaching: [
+          {
+            urlPattern: ({ request, url }) =>
+              request.mode === 'navigate' &&
+              !url.pathname.startsWith('/api/') &&
+              !url.pathname.startsWith('/socket.io/'),
+            handler: 'NetworkFirst',
+            options: {
+              cacheName: 'app-navigation',
+              networkTimeoutSeconds: 5,
+              expiration: {
+                maxEntries: 10,
+                maxAgeSeconds: 24 * 60 * 60,
+              },
+            },
+          },
+        ],
       },
     }),
   ],

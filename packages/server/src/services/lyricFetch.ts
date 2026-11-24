@@ -4,13 +4,18 @@ import { logger } from '../utils/logger.js'
 import { withTimeout, withTimeoutOrNull } from '../utils/withTimeout.js'
 import { getKrcByHash, krcToAmllLines, type AmllLyricLine } from './kugouLyricService.js'
 
-export interface LyricResult {
+interface LyricData {
   lyric: string
   tlyric: string
   romalrc: string
   yrc: string
   /** Word-by-word lines (Kugou KRC), when the platform has them. */
   wordByWord?: AmllLyricLine[]
+}
+
+export interface LyricResult extends LyricData {
+  /** False for empty lyrics and degraded provider responses. */
+  cacheable: boolean
 }
 
 /** The part of a Meting instance a lyric needs. */
@@ -21,7 +26,7 @@ export interface LyricSource {
 const API_TIMEOUT_MS = 15_000
 
 /** Meting answers `{ lyric, tlyric }` as JSON text; `null` for no answer in time or an unreadable one. */
-async function metingLyric(meting: LyricSource, lyricId: string): Promise<LyricResult | null> {
+async function metingLyric(meting: LyricSource, lyricId: string): Promise<LyricData | null> {
   const raw = await withTimeoutOrNull(meting.lyric(lyricId), API_TIMEOUT_MS)
   if (raw === null || raw === undefined) return null
   try {
@@ -30,13 +35,6 @@ async function metingLyric(meting: LyricSource, lyricId: string): Promise<LyricR
   } catch {
     return null
   }
-}
-
-/** A lyric that was read, and whether it is complete enough to be remembered by the caller. */
-export interface FetchedLyric {
-  result: LyricResult
-  /** False for a degraded answer (e.g. Kugou's plain LRC after its KRC lookup failed): serve it, but do not cache it. */
-  cacheable: boolean
 }
 
 /**
@@ -49,7 +47,7 @@ export async function fetchLyric(
   source: MusicSource,
   lyricId: string,
   meting: () => LyricSource,
-): Promise<FetchedLyric | null> {
+): Promise<LyricResult | null> {
   if (source === 'netease') {
     // lyric_new carries the word-by-word lyric (YRC) as well
     const res = await withTimeoutOrNull(ncmApi.lyric_new({ id: lyricId }), API_TIMEOUT_MS)
@@ -63,14 +61,15 @@ export async function fetchLyric(
       logger.warn(`Lyric fetch for ${source}: ${lyricId} returned business code`, { code: body.code })
       return null
     }
-    const result: LyricResult = {
+    const result: LyricData = {
       lyric: (body.lrc?.lyric as string) || '',
       tlyric: (body.tlyric?.lyric as string) || '',
       romalrc: ((body.romalrc as Record<string, unknown> | undefined)?.lyric as string) || '',
       yrc: (body.yrc?.lyric as string) || '',
     }
     if (result.yrc) logger.info(`YRC lyric found for netease:${lyricId}`)
-    return { result, cacheable: true }
+    if (!result.lyric && !result.tlyric && !result.romalrc && !result.yrc) return null
+    return { ...result, cacheable: true }
   }
 
   const result = await metingLyric(meting(), lyricId)
@@ -96,7 +95,7 @@ export async function fetchLyric(
     }
   }
 
-  // Nothing readable at all (an empty LRC and no word-by-word lines) may just be a bad moment upstream.
-  if (!result.lyric && !result.wordByWord?.length) return null
-  return { result, cacheable }
+  // A response without any lyric text or word-by-word lines may be a transient provider failure.
+  if (!result.lyric && !result.tlyric && !result.wordByWord?.length) return null
+  return { ...result, cacheable }
 }

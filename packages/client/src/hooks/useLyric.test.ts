@@ -102,4 +102,29 @@ describe('useLyric', () => {
     expect(usePlayerStore.getState().ttmlLines).toEqual(ttmlLines)
     expect(usePlayerStore.getState().lyricLoading).toBe(false)
   })
+
+  it('does not cache empty lyric responses or responses marked cacheable: false', async () => {
+    useSettingsStore.setState({ ttmlEnabled: false })
+    fetchMock
+      .mockResolvedValueOnce(json({ lyric: '', tlyric: '', romalrc: '', yrc: '', cacheable: false }))
+      .mockResolvedValueOnce(json({ lyric: '[00:00.00]fallback lrc', tlyric: '', romalrc: '', yrc: '', cacheable: false }))
+      .mockResolvedValueOnce(json({ lyric: '[00:00.00]full lyric', tlyric: '', romalrc: '', yrc: '', cacheable: true }))
+
+    await act(() => fetchLyric(track))
+    expect(usePlayerStore.getState().lyric).toBe('')
+
+    // Second fetch must hit the network because empty/uncacheable result was not kept
+    await act(() => fetchLyric(track))
+    expect(fetchMock).toHaveBeenCalledTimes(2)
+    expect(usePlayerStore.getState().lyric).toBe('[00:00.00]fallback lrc')
+
+    // Third fetch must still hit the network because second response was cacheable: false
+    await act(() => fetchLyric(track))
+    expect(fetchMock).toHaveBeenCalledTimes(3)
+    expect(usePlayerStore.getState().lyric).toBe('[00:00.00]full lyric')
+
+    // Fourth fetch reuses the cached cacheable: true lyric
+    await act(() => fetchLyric(track))
+    expect(fetchMock).toHaveBeenCalledTimes(3)
+  })
 })

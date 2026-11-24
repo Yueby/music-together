@@ -32,7 +32,9 @@ export function sanitizeUrlForLog(rawUrl: string | undefined): string {
     const parsed = new URL(rawUrl, 'http://localhost')
     let changed = false
     for (const key of [...parsed.searchParams.keys()]) {
-      if (SENSITIVE_QUERY_KEYS.has(key.toLowerCase())) {
+      const normalizedKey = key.toLowerCase()
+      const coverUrl = normalizedKey === 'url' && /^\/api\/music\/cover-proxy\/?$/i.test(parsed.pathname)
+      if (SENSITIVE_QUERY_KEYS.has(normalizedKey) || coverUrl) {
         parsed.searchParams.set(key, '[REDACTED]')
         changed = true
       }
@@ -53,6 +55,7 @@ export function sanitizeUrlForLog(rawUrl: string | undefined): string {
 export function createHelmetMiddleware(): RequestHandler {
   return helmet({
     contentSecurityPolicy: false,
+    strictTransportSecurity: { includeSubDomains: false },
     crossOriginEmbedderPolicy: false,
     crossOriginResourcePolicy: { policy: 'cross-origin' },
   })
