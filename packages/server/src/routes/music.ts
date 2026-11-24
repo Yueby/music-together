@@ -15,7 +15,7 @@ import {
 import { Router, type Router as RouterType, type Request, type Response } from 'express'
 import type { ZodSchema } from 'zod'
 import { musicProvider } from '../services/musicProvider.js'
-import { fetchCoverImage } from '../services/coverProxy.js'
+import { fetchCoverImage, limitCoverSize } from '../services/coverProxy.js'
 import { logger } from '../utils/logger.js'
 import { coverProxyRateLimit } from '../middleware/httpRateLimiter.js'
 import { CatalogError } from '../services/catalogUtils.js'
@@ -72,7 +72,10 @@ router.get(
 router.get(
   '/lyric',
   validated(lyricQuerySchema, 'Get lyric', async (data, _req, res) => {
-    res.json(await getMusicLyricMetadata(data))
+    const result = await getMusicLyricMetadata(data)
+    res.vary('Authorization')
+    res.setHeader('Cache-Control', result.cacheable ? 'private, max-age=1800' : 'no-store')
+    res.json(result)
   }),
 )
 
@@ -167,14 +170,14 @@ router.get(
 // AMLL 的 BackgroundRender 用 WebGL 纹理加载图片，需要同源或 CORS 允许
 // ---------------------------------------------------------------------------
 router.get('/cover-proxy', coverProxyRateLimit, async (req: Request, res: Response) => {
-  const imageUrl = req.query.url as string | undefined
-  if (!imageUrl) {
+  const imageUrl = req.query.url
+  if (typeof imageUrl !== 'string' || !imageUrl) {
     res.status(400).json({ error: 'Missing url parameter' })
     return
   }
 
   try {
-    const cover = await fetchCoverImage(imageUrl)
+    const cover = await fetchCoverImage(limitCoverSize(imageUrl))
     if (!cover.ok) {
       res.status(cover.status).json({ error: cover.error })
       return
@@ -182,12 +185,13 @@ router.get('/cover-proxy', coverProxyRateLimit, async (req: Request, res: Respon
 
     // 透传 content-type，设置缓存（封面图不会频繁变化）
     res.setHeader('Content-Type', cover.contentType)
+    res.setHeader('Content-Security-Policy', "default-src 'none'; sandbox")
     res.setHeader('Content-Length', String(cover.body.length))
     res.setHeader('Cache-Control', 'public, max-age=86400') // 24h 缓存
     res.setHeader('Access-Control-Allow-Origin', '*')
     res.status(200).end(cover.body)
-  } catch (err) {
-    logger.error('Cover proxy failed', err, { imageUrl })
+  } catch {
+    logger.error('Cover proxy failed')
     if (!res.headersSent) {
       res.status(504).json({ error: 'Cover proxy failed' })
     } else {

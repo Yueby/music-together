@@ -66,7 +66,7 @@ QQ 音乐搜索使用腾讯 `zzc` 签名访问 `musics.fcg`，避免未签名 `m
 | TypeScript ~6.0.2 | all | `typescript` 使用 `@typescript/typescript6` 别名，提供类型检查和构建 |
 | TypeScript ~7.0.2 | all | `@typescript/native` 使用 `typescript` 别名，供原生编译器使用 |
 | Vite ^8.3.8 | client | 前端构建 |
-| vite-plugin-pwa ^2.0.0 | client | 仅 Web SPA 构建生成 Manifest 与 Service Worker（跳过 `/api/*` 与 `/socket.io/*`，不影响 `mapp`） |
+| vite-plugin-pwa ^2.0.0 | client | 仅 Web SPA 构建生成 Manifest 与 Service Worker（不预缓存 HTML、导航走 `NetworkFirst` 并跳过 `/api/*` 与 `/socket.io/*`，配合 `vite:preloadError` 自动刷新与 `/assets` 404，不影响 `mapp`） |
 | ESLint ^10.14.0 | client | 代码检查 |
 | Vitest ^5.0.5 | root | Node/jsdom 单元与组件测试 |
 | Testing Library | client | React 组件行为测试 |

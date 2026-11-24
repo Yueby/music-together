@@ -6,6 +6,7 @@ import type { User } from '@music-together/shared'
 export interface SocketData {
   identityUserId: string
   clientKind?: ClientKind
+  clientIp?: string
 }
 
 export type TypedServer = Server<ClientToServerEvents, ServerToClientEvents, Record<string, never>, SocketData>

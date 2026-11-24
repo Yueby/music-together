@@ -8,6 +8,10 @@ import type { RoomState, Track } from '@music-together/shared'
 const dndState = vi.hoisted(() => ({
   onDragStart: undefined as ((event: DragStartEvent) => void) | undefined,
   onDragEnd: undefined as ((event: DragEndEvent) => void) | undefined,
+  onDragCancel: undefined as (() => void) | undefined,
+  rangeExtractor: undefined as
+    | ((range: { startIndex: number; endIndex: number; overscan: number; count: number }) => number[])
+    | undefined,
 }))
 
 const socketMock = vi.hoisted(() => ({
@@ -24,13 +28,31 @@ vi.mock('@dnd-kit/core', async () => {
     DndContext: (props: Parameters<typeof actual.DndContext>[0]) => {
       dndState.onDragStart = props.onDragStart
       dndState.onDragEnd = props.onDragEnd
+      dndState.onDragCancel = props.onDragCancel as (() => void) | undefined
       return <actual.DndContext {...props} />
     },
+    DragOverlay: ({ children }: { children?: ReactNode }) => <div data-testid="dnd-overlay-portal">{children}</div>,
   }
 })
 
 vi.mock('@tanstack/react-virtual', () => ({
-  useVirtualizer: ({ count, estimateSize }: { count: number; estimateSize: () => number }) => {
+  defaultRangeExtractor: (range: { startIndex: number; endIndex: number; overscan: number; count: number }) => {
+    const start = Math.max(range.startIndex - range.overscan, 0)
+    const end = Math.min(range.endIndex + range.overscan, range.count - 1)
+    const out: number[] = []
+    for (let i = start; i <= end; i++) out.push(i)
+    return out
+  },
+  useVirtualizer: ({
+    count,
+    estimateSize,
+    rangeExtractor,
+  }: {
+    count: number
+    estimateSize: () => number
+    rangeExtractor?: (range: { startIndex: number; endIndex: number; overscan: number; count: number }) => number[]
+  }) => {
+    dndState.rangeExtractor = rangeExtractor
     const size = estimateSize()
     return {
       getTotalSize: () => count * size,
@@ -152,6 +174,8 @@ describe('QueueDrawer', () => {
     vi.clearAllMocks()
     dndState.onDragStart = undefined
     dndState.onDragEnd = undefined
+    dndState.onDragCancel = undefined
+    dndState.rangeExtractor = undefined
     useRoomStore.getState().reset()
     usePlayerStore.getState().reset()
 
@@ -263,5 +287,25 @@ describe('QueueDrawer', () => {
 
     act(() => removeBtn!.click())
     expect(onRemoveFromQueue).toHaveBeenCalledExactlyOnceWith('t2')
+  })
+
+  it('keeps the actively dragged row in virtualizer rangeExtractor and renders DragOverlay', () => {
+    const tracks = Array.from({ length: 20 }, (_, i) => makeTrack(`t${i}`, `Song ${i}`))
+    setRoomState(tracks, 'owner')
+    renderDrawer()
+
+    act(() => {
+      dndState.onDragStart?.({ active: { id: 't1' } } as unknown as DragStartEvent)
+    })
+
+    // Viewport scrolled far down (indices 10..15) — index 1 must stay mounted while dragging
+    const indices = dndState.rangeExtractor?.({ startIndex: 12, endIndex: 15, overscan: 2, count: 20 })
+    expect(indices).toContain(1)
+    expect(container.querySelector('[data-testid="queue-drag-overlay"]')?.textContent).toContain('Song 1')
+
+    act(() => {
+      dndState.onDragCancel?.()
+    })
+    expect(container.querySelector('[data-testid="queue-drag-overlay"]')).toBeNull()
   })
 })

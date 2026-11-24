@@ -1,7 +1,7 @@
 import { SERVER_URL } from '@/lib/config'
 import { metadataFetch } from '@/lib/metadataFetch'
 import { findClosestLyricLine } from '@/lib/lyricMatching'
-import { fetchAppQuery, queryKeys } from '@/lib/queryClient'
+import { appQueryClient, fetchAppQuery, queryKeys } from '@/lib/queryClient'
 import { usePlayerStore } from '@/stores/playerStore'
 import { useSettingsStore } from '@/stores/settingsStore'
 import type { LyricLine } from '@applemusic-like-lyrics/core'
@@ -71,11 +71,17 @@ export function useLyric() {
         romalrc: string
         yrc: string
         wordByWord?: LyricLine[]
+        cacheable?: boolean
+      }
+      const isCacheableServerLyric = (data: ServerLyric): boolean => {
+        if (data.cacheable === false) return false
+        return Boolean(data.lyric?.trim() || data.yrc?.trim() || data.wordByWord?.length)
       }
       const { lyricId } = track
-      const lyricRequest: Promise<ServerLyric | null> = lyricId
+      const lyricQueryKey = lyricId ? queryKeys.lyric(track.source, lyricId) : null
+      const lyricRequest: Promise<ServerLyric | null> = lyricId && lyricQueryKey
         ? fetchAppQuery(
-            queryKeys.lyric(track.source, lyricId),
+            lyricQueryKey,
             LYRIC_STALE_TIME,
             async (signal) => {
               const res = await metadataFetch(
@@ -87,7 +93,15 @@ export function useLyric() {
             },
             controller.signal,
             { gcTime: LYRIC_STALE_TIME },
-          ).catch(() => null)
+          )
+            .then((data) => {
+              // Never keep empty or degraded/uncacheable lyric responses in the 30-minute client cache.
+              if (!isCacheableServerLyric(data)) {
+                appQueryClient.removeQueries({ queryKey: lyricQueryKey, exact: true })
+              }
+              return data
+            })
+            .catch(() => null)
         : Promise.resolve(null)
 
       // ========================================

@@ -13,15 +13,17 @@ import { EVENTS } from '@music-together/shared'
 import { useHasHover } from '@/hooks/useHasHover'
 import { useIsMobile } from '@/hooks/useIsMobile'
 import { useCallback, useEffect, useMemo, useRef, useState, type MouseEvent } from 'react'
-import { useVirtualizer } from '@tanstack/react-virtual'
+import { defaultRangeExtractor, useVirtualizer, type Range } from '@tanstack/react-virtual'
 import {
   DndContext,
+  DragOverlay,
   KeyboardSensor,
   PointerSensor,
   closestCenter,
   useSensor,
   useSensors,
   type DragEndEvent,
+  type DragStartEvent,
 } from '@dnd-kit/core'
 import {
   SortableContext,
@@ -139,7 +141,7 @@ function SortableQueueRow({
         className={cn(
           'group relative flex h-full items-center gap-2 rounded-lg px-2 transition-colors hover:bg-accent/50',
           isCurrent && 'bg-primary/10',
-          isDragging && 'bg-popover/95 shadow-lg ring-1 ring-primary/30',
+          isDragging && 'opacity-40 ring-1 ring-primary/30',
         )}
         onClick={() => {
           if (isTouch) {
@@ -328,6 +330,12 @@ export function QueueDrawer({ open, onOpenChange, onRemoveFromQueue, onReorderQu
   const [dismissedHoverTrackId, setDismissedHoverTrackId] = useState<string | null>(null)
 
   const queueIds = useMemo(() => queue.map((t) => t.id), [queue])
+  const [activeDragId, setActiveDragId] = useState<string | null>(null)
+  const activeDragIndex = useMemo(
+    () => (activeDragId ? queueIds.indexOf(activeDragId) : -1),
+    [activeDragId, queueIds],
+  )
+  const activeDragTrack = activeDragIndex >= 0 ? queue[activeDragIndex] ?? null : null
 
   const sensors = useSensors(
     useSensor(PointerSensor, {
@@ -338,12 +346,18 @@ export function QueueDrawer({ open, onOpenChange, onRemoveFromQueue, onReorderQu
     }),
   )
 
-  const handleDragStart = useCallback(() => {
+  const handleDragStart = useCallback((event: DragStartEvent) => {
     setActiveTrackId(null)
+    setActiveDragId(String(event.active.id))
+  }, [])
+
+  const handleDragCancel = useCallback(() => {
+    setActiveDragId(null)
   }, [])
 
   const handleDragEnd = useCallback(
     (event: DragEndEvent) => {
+      setActiveDragId(null)
       const { active, over } = event
       if (!over || active.id === over.id) return
       const oldIndex = queueIds.indexOf(String(active.id))
@@ -362,12 +376,24 @@ export function QueueDrawer({ open, onOpenChange, onRemoveFromQueue, onReorderQu
     setDismissedHoverTrackId((prev) => (prev === trackId ? null : prev))
   }, [])
 
+  const rangeExtractor = useCallback(
+    (range: Range) => {
+      const indices = defaultRangeExtractor(range)
+      if (activeDragIndex >= 0 && activeDragIndex < queue.length && !indices.includes(activeDragIndex)) {
+        return [...indices, activeDragIndex].sort((a, b) => a - b)
+      }
+      return indices
+    },
+    [activeDragIndex, queue.length],
+  )
+
   const [scrollElement, setScrollElement] = useState<HTMLDivElement | null>(null)
   const virtualizer = useVirtualizer({
     count: queue.length,
     getScrollElement: () => scrollElement,
     estimateSize: () => 56,
     overscan: 5,
+    rangeExtractor,
   })
 
   // Clear the confirm-dismiss timer on unmount
@@ -524,6 +550,7 @@ export function QueueDrawer({ open, onOpenChange, onRemoveFromQueue, onReorderQu
               collisionDetection={closestCenter}
               onDragStart={handleDragStart}
               onDragEnd={handleDragEnd}
+              onDragCancel={handleDragCancel}
             >
               <SortableContext items={queueIds} strategy={verticalListSortingStrategy}>
                 <div className="w-full" style={{ height: `${virtualizer.getTotalSize()}px`, position: 'relative' }}>
@@ -560,6 +587,30 @@ export function QueueDrawer({ open, onOpenChange, onRemoveFromQueue, onReorderQu
                   })}
                 </div>
               </SortableContext>
+              <DragOverlay dropAnimation={null}>
+                {activeDragTrack && (
+                  <div
+                    data-testid="queue-drag-overlay"
+                    className="flex h-12 items-center gap-2 rounded-lg border border-primary/30 bg-popover/95 px-2 shadow-xl backdrop-blur-md"
+                  >
+                    <span className="-ml-1 flex h-8 w-5 shrink-0 items-center justify-center text-muted-foreground">
+                      <GripVertical className="h-3.5 w-3.5" />
+                    </span>
+                    <span className="w-5 shrink-0 text-center text-xs tabular-nums text-muted-foreground">
+                      {activeDragIndex + 1}
+                    </span>
+                    <div className="relative shrink-0">
+                      <QueueCover track={activeDragTrack} />
+                    </div>
+                    <div className="min-w-0 flex-1">
+                      <div className="truncate text-sm font-medium">{activeDragTrack.title}</div>
+                      <div className="truncate text-xs text-muted-foreground">
+                        <ArtistNames track={activeDragTrack} />
+                      </div>
+                    </div>
+                  </div>
+                )}
+              </DragOverlay>
             </DndContext>
           )}
         </div>

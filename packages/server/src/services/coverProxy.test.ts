@@ -70,6 +70,24 @@ describe('createCoverProxy', () => {
     await expect(queued).resolves.toMatchObject({ ok: true })
   })
 
+  it('starts at most six concurrent upstream transfers by default', async () => {
+    let release!: () => void
+    const hold = new Promise<void>((resolve) => { release = resolve })
+    const fetch = vi.fn(async () => {
+      await hold
+      return image()
+    })
+    vi.stubGlobal('fetch', fetch)
+    const proxy = createCoverProxy()
+    const covers = Array.from({ length: 7 }, (_, id) => proxy.fetchCoverImage(`${url}?id=${id}`))
+    await Promise.resolve()
+
+    expect(fetch).toHaveBeenCalledTimes(6)
+    release()
+    await Promise.all(covers)
+    expect(fetch).toHaveBeenCalledTimes(7)
+  })
+
   it('returns 503 when the cover transfer queue times out', async () => {
     vi.useFakeTimers()
     let finish!: (response: Response) => void
@@ -190,13 +208,27 @@ describe('fetchCoverImage', () => {
     })
   })
 
-  it.each([{ 'content-type': 'text/html' }, {}])('rejects a non-image response %#', async (headers) => {
-    await expect(fetchCoverImage(url, undefined, fetcher(image('<html>', headers)))).resolves.toEqual({
+  it.each(['text/html', 'image/svg+xml', 'image/tiff', undefined])('rejects unsupported MIME type %s', async (mime) => {
+    const response = image(png, mime ? { 'content-type': mime } : {})
+    await expect(fetchCoverImage(url, undefined, fetcher(response))).resolves.toEqual({
       ok: false,
-      status: 413,
-      error: 'Invalid or oversized image',
+      status: 415,
+      error: 'Unsupported image type',
       kind: 'invalid',
     })
+  })
+
+  it('normalizes a supported raster MIME type and strips parameters', async () => {
+    const response = image(png, { 'content-type': 'Image/PNG; charset=binary' })
+    await expect(fetchCoverImage(url, undefined, fetcher(response))).resolves.toMatchObject({
+      ok: true,
+      contentType: 'image/png',
+    })
+  })
+
+  it('rejects an undeclared Web body over 3 MiB', async () => {
+    const response = image(Buffer.alloc(3 * 1024 * 1024 + 1))
+    await expect(fetchCoverImage(url, undefined, fetcher(response))).resolves.toMatchObject({ ok: false, status: 413 })
   })
 
   it('rejects a declared length above the limit before reading the body', async () => {

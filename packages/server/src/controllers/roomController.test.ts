@@ -43,7 +43,7 @@ function connect(identityUserId: string) {
   const socket = {
     id: `socket-${++sequence}`,
     connected: true,
-    data: { identityUserId },
+    data: { identityUserId, clientIp: `2001:db8::${sequence.toString(16)}` },
     emit,
     on: (event: string, handler: Handler) => handlers.set(event, handler),
     join: vi.fn(),
@@ -297,6 +297,21 @@ describe('guessing a room password', () => {
       message: '密码错误次数过多，请稍后再试',
     })
     expect(isMember(roomId, guest.identityUserId)).toBe(false)
+  })
+
+  it('enforces the room-wide limit when joins arrive concurrently across identities and IPs', async () => {
+    const roomId = await createRoom(connect(newIdentity('owner')), 'secret')
+    const guests = Array.from({ length: 35 }, () => connect(newIdentity('guest')))
+    await Promise.all(guests.map((guest) => guessWrong(guest, roomId, 1)))
+
+    const messages = guests.map((guest) => lastError(guest)?.message)
+    expect(messages.filter((message) => message === '密码错误')).toHaveLength(30)
+    expect(messages.filter((message) => message === '密码错误次数过多，请稍后再试')).toHaveLength(5)
+
+    const lateGuest = connect(newIdentity('late-guest'))
+    await send(lateGuest, EVENTS.ROOM_JOIN, { roomId, nickname: 'Late guest', password: 'secret' })
+    expect(lastError(lateGuest)).toMatchObject({ message: '密码错误次数过多，请稍后再试' })
+    expect(isMember(roomId, lateGuest.identityUserId)).toBe(false)
   })
 
   it('only locks out the identity (and the room) that guessed', async () => {
