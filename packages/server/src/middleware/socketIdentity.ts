@@ -1,5 +1,6 @@
 import { ServerResponse, type IncomingMessage } from 'node:http'
 import type { TypedServer, TypedSocket } from './types.js'
+import { config } from '../config.js'
 import { getIdentityFromCookieHeader } from '../services/identityService.js'
 import { logger } from '../utils/logger.js'
 import { withTimeout } from '../utils/withTimeout.js'
@@ -12,6 +13,8 @@ const PLATFORM_ROOM_EVENTS = new Set<string>([
   EVENTS.ROOM_JOIN,
   EVENTS.ROOM_LEAVE,
   EVENTS.ROOM_LIST,
+  EVENTS.SERVER_CAPACITY_GET,
+  EVENTS.ADMISSION_CANCEL,
   EVENTS.ROOM_SETTINGS,
   EVENTS.ROOM_SET_ROLE,
   EVENTS.PLAYER_PLAY,
@@ -133,6 +136,19 @@ export function attachSocketIdentity(io: TypedServer, options: SocketIdentityOpt
     })
   }
   io.use((socket: TypedSocket, next: (err?: Error) => void) => {
+    // Outer hard cap on total concurrent connections (protects FD/memory against idle socket floods).
+    // Normal capacity control lives at room entry so users can still reach the lobby and wait in queue.
+    const currentSockets = io.sockets?.sockets?.size ?? 0
+    if (config.capacity.enabled && currentSockets >= config.capacity.maxSockets) {
+      logger.warn('Rejected socket connection: outer socket cap reached', {
+        socketId: socket.id,
+        currentSockets,
+        maxSockets: config.capacity.maxSockets,
+      })
+      next(new Error('SERVER_OVERLOADED'))
+      return
+    }
+
     const rawUrl = socket.request?.url ?? socket.handshake.url
     if (platformTokenState(rawUrl) !== 'absent') {
       // A platform handshake must have been verified before the upgrade; never fall back to the Cookie.
@@ -142,6 +158,7 @@ export function attachSocketIdentity(io: TypedServer, options: SocketIdentityOpt
         return
       }
       socket.data.identityUserId = userId
+      socket.data.clientKind = 'mapp'
       restrictPlatformEvents(socket)
       verifiedPlatformSockets.add(socket)
       next()
@@ -158,6 +175,7 @@ export function attachSocketIdentity(io: TypedServer, options: SocketIdentityOpt
       return
     }
     socket.data.identityUserId = identity.userId
+    socket.data.clientKind = 'web'
     logger.info('Socket identity verified', {
       socketId: socket.id,
       userId: identity.userId,

@@ -26,6 +26,8 @@ import { cleanupRoom as cleanupAuthRoom } from './authService.js'
 import { cleanupRoom as cleanupPlayerRoom } from './playerService.js'
 import { cleanupRoom as cleanupVoteRoom } from './voteService.js'
 import { cleanupRoomRejoinTickets } from './rejoinTicketService.js'
+import { admissionQueue } from './admissionQueueService.js'
+import { getPublicServerCapacity, notifyCapacityChanged } from './serverLoadService.js'
 
 // ---------------------------------------------------------------------------
 // Module-level state
@@ -61,8 +63,12 @@ export function scheduleDeletion(roomId: string, io?: TypedServer): void {
       cleanupRoomRejoinTickets(roomId)
       roomDeletionTimers.delete(roomId)
       logger.info(`Room ${roomId} deleted after grace period`, { roomId })
-      // Notify lobby users that the room is gone
-      if (io) broadcastRoomList(io)
+      // Notify lobby users & queued joiners that the room is gone
+      if (io) {
+        admissionQueue.cancelForRoom(io, roomId)
+        broadcastRoomList(io)
+      }
+      notifyCapacityChanged()
     }
   }, config.room.gracePeriodMs)
   roomDeletionTimers.set(roomId, timer)
@@ -82,20 +88,21 @@ export function cancelDeletionTimer(roomId: string): void {
 // ---------------------------------------------------------------------------
 
 /**
- * 向 lobby 频道广播房间列表变更（100ms trailing 防抖）。
+ * 向 lobby 频道广播房间列表变更（正常 100ms trailing 防抖；高负载下自动放缓至 1500ms 软降级）。
  * 多次快速调用（如 create+join、多人同时 leave）会合并为一次广播，
  * 避免重复执行 getAllAsList() 遍历和序列化。
  */
 export function broadcastRoomList(io: TypedServer): void {
   pendingIO = io
   if (broadcastTimer) return
+  const delayMs = getPublicServerCapacity().level === 'normal' ? 100 : 1_500
   broadcastTimer = setTimeout(() => {
     broadcastTimer = null
     if (pendingIO) {
       const rooms: RoomListItem[] = roomRepo.getAllAsList()
       pendingIO.to('lobby').emit(EVENTS.ROOM_LIST_UPDATE, rooms)
     }
-  }, 100)
+  }, delayMs)
 }
 
 // ---------------------------------------------------------------------------

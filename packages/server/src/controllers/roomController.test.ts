@@ -3,8 +3,10 @@ import { afterEach, describe, expect, it, vi } from 'vitest'
 import type { TypedServer, TypedSocket } from '../middleware/types.js'
 import { chatRepo } from '../repositories/chatRepository.js'
 import { roomRepo } from '../repositories/roomRepository.js'
+import { admissionQueue } from '../services/admissionQueueService.js'
 import { clearAllTimers } from '../services/roomLifecycleService.js'
 import { cleanupRoomRejoinTickets } from '../services/rejoinTicketService.js'
+import { canAdmitClient } from '../services/serverLoadService.js'
 import { registerRoomController } from './roomController.js'
 
 vi.mock('../services/playerService.js', () => ({
@@ -15,6 +17,10 @@ vi.mock('../services/playerService.js', () => ({
   stopSafe: vi.fn(),
 }))
 vi.mock('../utils/logger.js', () => ({ logger: { info: vi.fn(), warn: vi.fn(), error: vi.fn(), debug: vi.fn() } }))
+vi.mock('../services/serverLoadService.js', async (importOriginal) => ({
+  ...await importOriginal<typeof import('../services/serverLoadService.js')>(),
+  canAdmitClient: vi.fn(() => ({ allowed: true })),
+}))
 
 type Handler = (payload?: unknown) => void | Promise<void>
 type Peer = ReturnType<typeof connect>
@@ -24,7 +30,9 @@ let sequence = 0
 /** Every test uses its own identities: the rate limiters keep their counters for the whole process. */
 const newIdentity = (label: string) => `${label}-${++sequence}`
 
+const sockets = new Map<string, TypedSocket>()
 const io = {
+  sockets: { sockets },
   to: () => ({ emit: vi.fn(), except: () => ({ emit: vi.fn() }) }),
   emit: vi.fn(),
 } as unknown as TypedServer
@@ -34,6 +42,7 @@ function connect(identityUserId: string) {
   const emit = vi.fn()
   const socket = {
     id: `socket-${++sequence}`,
+    connected: true,
     data: { identityUserId },
     emit,
     on: (event: string, handler: Handler) => handlers.set(event, handler),
@@ -41,7 +50,9 @@ function connect(identityUserId: string) {
     leave: vi.fn(),
     to: () => ({ emit: vi.fn() }),
   }
-  registerRoomController(io, socket as unknown as TypedSocket)
+  const typedSocket = socket as unknown as TypedSocket
+  sockets.set(socket.id, typedSocket)
+  registerRoomController(io, typedSocket)
   const peer = { socket, handlers, emit, identityUserId }
   peers.push(peer)
   return peer
@@ -70,8 +81,72 @@ afterEach(() => {
   }
   for (const peer of peers) roomRepo.deleteSocketMapping(peer.socket.id)
   peers.length = 0
+  sockets.clear()
+  admissionQueue.clear()
   clearAllTimers()
   vi.clearAllMocks()
+  vi.mocked(canAdmitClient).mockReturnValue({ allowed: true })
+})
+
+describe('room admission', () => {
+  it.each([
+    [EVENTS.ROOM_JOIN, 'join'],
+    [EVENTS.ROOM_CREATE, 'create'],
+  ] as const)('queues %s at capacity and keeps later requests behind it', async (event, action) => {
+    const roomId = await createRoom(connect(newIdentity('owner')))
+    const first = connect(newIdentity('first'))
+    const second = connect(newIdentity('second'))
+    const payload = { nickname: 'Guest', ...(action === 'join' ? { roomId } : {}) }
+    vi.mocked(canAdmitClient).mockReturnValueOnce({ allowed: false, reason: 'capacity' })
+
+    await send(first, event, payload)
+    await send(second, event, payload)
+
+    expect(lastEmitted(first, EVENTS.ADMISSION_QUEUED)).toMatchObject({ position: 1, action, reason: 'capacity' })
+    expect(lastEmitted(second, EVENTS.ADMISSION_QUEUED)).toMatchObject({ position: 2, action, reason: 'capacity' })
+    expect(roomRepo.getAllIds()).toEqual([roomId])
+    expect(roomRepo.getSocketMapping(first.socket.id)).toBeFalsy()
+    expect(roomRepo.getSocketMapping(second.socket.id)).toBeFalsy()
+  })
+
+  it('allows a Web join when only the mini-app stream pool has waiters', async () => {
+    const roomId = await createRoom(connect(newIdentity('owner')))
+    const mapp = connect(`mapp_${newIdentity('guest')}`)
+    const web = connect(newIdentity('web'))
+    vi.mocked(canAdmitClient).mockReturnValueOnce({ allowed: false, reason: 'mapp_stream' })
+
+    await send(mapp, EVENTS.ROOM_JOIN, { roomId, nickname: 'Mini-app guest' })
+    await send(web, EVENTS.ROOM_JOIN, { roomId, nickname: 'Web guest' })
+
+    expect(lastEmitted(mapp, EVENTS.ADMISSION_QUEUED)).toMatchObject({ reason: 'mapp_stream' })
+    expect(isMember(roomId, web.identityUserId)).toBe(true)
+    expect(emitted(web, EVENTS.ADMISSION_QUEUED)).toHaveLength(0)
+  })
+
+  it('allows an existing member and a valid rejoin ticket to bypass a full server and its queue', async () => {
+    const roomId = await createRoom(connect(newIdentity('owner')), 'secret')
+    const identity = newIdentity('member')
+    const member = connect(identity)
+    await send(member, EVENTS.ROOM_JOIN, { roomId, nickname: 'Guest', password: 'secret' })
+    const { token } = lastEmitted(member, EVENTS.ROOM_REJOIN_TOKEN) as { token: string }
+    const waiting = connect(newIdentity('waiting'))
+    vi.mocked(canAdmitClient).mockReturnValue({ allowed: false, reason: 'capacity' })
+    await send(waiting, EVENTS.ROOM_JOIN, { roomId, nickname: 'Waiting', password: 'secret' })
+
+    const otherTab = connect(identity)
+    await send(otherTab, EVENTS.ROOM_JOIN, { roomId, nickname: 'Guest' })
+    expect(lastEmitted(otherTab, EVENTS.ROOM_STATE)).toMatchObject({ id: roomId })
+    expect(emitted(otherTab, EVENTS.ADMISSION_QUEUED)).toHaveLength(0)
+    await send(member, 'disconnect', 'transport close')
+    await send(otherTab, 'disconnect', 'transport close')
+    expect(isMember(roomId, identity)).toBe(false)
+
+    const returning = connect(identity)
+    await send(returning, EVENTS.ROOM_JOIN, { roomId, nickname: 'Guest', rejoinToken: token })
+    expect(lastEmitted(returning, EVENTS.ROOM_STATE)).toMatchObject({ id: roomId })
+    expect(emitted(returning, EVENTS.ADMISSION_QUEUED)).toHaveLength(0)
+    expect(admissionQueue.length).toBe(1)
+  })
 })
 
 describe('reading the room list is rate limited', () => {

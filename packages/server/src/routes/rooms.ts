@@ -1,6 +1,7 @@
 import { ROOM_ID_PATTERN } from '@music-together/shared'
 import { Router, type Router as RouterType } from 'express'
 import { roomRepo } from '../repositories/roomRepository.js'
+import { getPublicServerCapacity } from '../services/serverLoadService.js'
 
 const router: RouterType = Router()
 
@@ -33,6 +34,7 @@ router.get('/:roomId/check', (req, res) => {
     hasPassword: room.password !== null,
     name: room.name,
     userCount: room.users.length,
+    capacity: getPublicServerCapacity(),
   })
 })
 

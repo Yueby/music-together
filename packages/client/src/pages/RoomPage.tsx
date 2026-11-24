@@ -4,6 +4,7 @@ import { EVENTS, ERROR_CODE } from '@music-together/shared'
 import { motion } from 'motion/react'
 import { toast } from 'sonner'
 import { Loader2 } from 'lucide-react'
+import { AdmissionQueueCard } from '@/components/AdmissionQueuePanel'
 import { InteractionGate } from '@/components/InteractionGate'
 import { AudioPlayer } from '@/components/Player/AudioPlayer'
 import { ChatPanel } from '@/components/Chat/ChatPanel'
@@ -21,10 +22,12 @@ import { roomCheck } from '@/lib/roomCheck'
 import { wrongPasswordText } from '@/lib/passwordErrorText'
 import type { RoomCheckInfo } from '@/lib/RoomCheckReader'
 import { useRoom } from '@/hooks/useRoom'
+import { useServerCapacity } from '@/hooks/useServerCapacity'
 import { usePlayer } from '@/hooks/usePlayer'
 import { useQueue } from '@/hooks/useQueue'
 import { useIsMobile } from '@/hooks/useIsMobile'
 import { useRoomStore } from '@/stores/roomStore'
+import { useServerStatusStore } from '@/stores/serverStatusStore'
 import { useChatStore } from '@/stores/chatStore'
 import { useSocketContext } from '@/providers/SocketProvider'
 import { AbilityProvider } from '@/providers/AbilityProvider'
@@ -43,6 +46,7 @@ export default function RoomPage() {
   const navigate = useNavigate()
   const { socket, isConnected, requiresManualJoin } = useSocketContext()
   const { leaveRoom, updateSettings, setUserRole } = useRoom()
+  const { admissionQueue, cancelQueue } = useServerCapacity()
   const { play, pause, seek, next, prev } = usePlayer()
   const { addTrack, insertAfterCurrent, removeTrack, reorderTracks, clearQueue } = useQueue()
 
@@ -228,13 +232,28 @@ export default function RoomPage() {
       setGatePasswordError(null)
     }
 
+    const onAdmissionCancelled = (data: { reason: string; message?: string }) => {
+      joiningRef.current = false
+      if (data.reason === 'password_changed') {
+        setPasswordNeeded(true)
+        setPasswordError(data.message ?? '房间密码已变更，请重新输入密码')
+        setPasswordLoading(false)
+        return
+      }
+      if (data.reason === 'room_closed') {
+        navigate('/', { replace: true })
+      }
+    }
+
     socket.on(EVENTS.ROOM_ERROR, onRoomError)
     socket.on(EVENTS.ROOM_STATE, onRoomState)
+    socket.on(EVENTS.ADMISSION_CANCELLED, onAdmissionCancelled)
     return () => {
       socket.off(EVENTS.ROOM_ERROR, onRoomError)
       socket.off(EVENTS.ROOM_STATE, onRoomState)
+      socket.off(EVENTS.ADMISSION_CANCELLED, onAdmissionCancelled)
     }
-  }, [socket, passwordNeeded, gateOpen])
+  }, [socket, passwordNeeded, gateOpen, navigate])
 
   // Leave the room when the page unmounts without an explicit leave (browser /
   // phone back button, route change, error-boundary reset). Otherwise the server
@@ -258,6 +277,11 @@ export default function RoomPage() {
         // Disconnected: the server already dropped us and the connection guard
         // reset the stores. Emitting now would be buffered and replayed after reconnect.
         if (!socket.connected) return
+        if (!useRoomStore.getState().room && useServerStatusStore.getState().admissionQueue) {
+          socket.emit(EVENTS.ADMISSION_CANCEL)
+          useServerStatusStore.getState().clearAdmissionQueue()
+          return
+        }
         // Nothing to leave if we never joined and no join is in flight.
         if (!useRoomStore.getState().room && !joiningRef.current) return
         leaveRoomRef.current()
@@ -314,6 +338,21 @@ export default function RoomPage() {
           <p className="text-sm text-muted-foreground">正在检查房间...</p>
         </motion.div>
       </div>
+    )
+  }
+
+  // --- Waiting in server admission queue (direct room link while server is full) ---
+  if (!room && admissionQueue) {
+    return (
+      <AdmissionQueueCard
+        queued={admissionQueue}
+        onCancel={() => {
+          isLeavingRef.current = true
+          joiningRef.current = false
+          cancelQueue()
+          navigate('/', { replace: true })
+        }}
+      />
     )
   }
 

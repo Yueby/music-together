@@ -15,6 +15,8 @@ export const ERROR_CODE = {
   RATE_LIMITED: 'RATE_LIMITED',
   /** Create/join refused by the room-entry rate limit or the per-identity room cap (unlike RATE_LIMITED, which is in-room). */
   ROOM_ENTRY_LIMITED: 'ROOM_ENTRY_LIMITED',
+  /** Server capacity or admission queue is full; user cannot enter or queue right now. */
+  SERVER_FULL: 'SERVER_FULL',
   NO_VOTE_NEEDED: 'NO_VOTE_NEEDED',
   VOTE_IN_PROGRESS: 'VOTE_IN_PROGRESS',
   ALREADY_VOTED: 'ALREADY_VOTED',
@@ -230,4 +232,62 @@ export interface DiscoverHome {
   albums: Playlist[]
   /** Blocks that could not be loaded (their list is empty): the client offers a retry instead of "nothing here". */
   failed: DiscoverHomeBlock[]
+}
+
+/** 服务端实时负载档位 */
+export type ServerLoadLevel = 'normal' | 'busy' | 'full'
+
+/** 客户端接入形态（网页端直连 CDN，微应用端需经服务端中转音频与封面） */
+export type ClientKind = 'web' | 'mapp'
+
+/** 对外公开的服务端承载状态快照（不含宿主机细节或敏感配置） */
+export interface ServerCapacityStatus {
+  /** 网页端适用的综合负载档位 */
+  level: ServerLoadLevel
+  /** 微应用端适用的负载档位（音频中转拥塞时会单独收紧，不误伤网页端） */
+  mappLevel: ServerLoadLevel
+  /** 当前在房间内的在线人数（Web + Mapp） */
+  onlineUsers: number
+  /** 当前活跃房间数 */
+  activeRooms: number
+  /** 当前已占用的加权负载单位 */
+  usedUnits: number
+  /** 当前动态计算的有效容量上限（加权负载单位） */
+  effectiveCap: number
+  /** 预计当前还可新加入的网页端人数 */
+  estimatedWebRemaining: number
+  /** 预计当前还可新加入的微应用人数 */
+  estimatedMappRemaining: number
+  /** 当前排队等候人数 */
+  queueLength: number
+  /** 最大允许排队人数 */
+  maxQueueLength: number
+  /** 综合负载压力百分比（0–100） */
+  pressurePercent: number
+  /** 高水位软保护：是否暂时限制新建房间（仍允许加入现有房间） */
+  createRestricted: boolean
+  /** 快照时间戳（ms） */
+  updatedAt: number
+}
+
+/** 服务端推送给排队中用户的状态更新 */
+export interface AdmissionQueuedEvent {
+  /** 当前排队位次（从 1 开始） */
+  position: number
+  /** 队列总人数 */
+  queueLength: number
+  /** 排队等待执行的目标动作 */
+  action: 'create' | 'join'
+  /** 加入房间时的目标房间号 */
+  roomId?: string
+  /** 触发排队的原因：综合承载满载 或 微应用音频中转拥塞 */
+  reason: 'capacity' | 'mapp_stream'
+  /** 最新服务端承载状态 */
+  capacity: ServerCapacityStatus
+}
+
+/** 服务端通知客户端已离开排队队列 */
+export interface AdmissionCancelledEvent {
+  reason: 'user' | 'room_closed' | 'password_changed' | 'expired' | 'replaced'
+  message?: string
 }

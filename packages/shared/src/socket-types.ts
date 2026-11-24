@@ -1,5 +1,7 @@
 import type { EVENTS } from './events.js'
 import type {
+  AdmissionCancelledEvent,
+  AdmissionQueuedEvent,
   AudioQuality,
   ChatMessage,
   MusicSource,
@@ -12,6 +14,7 @@ import type {
   RoomSettingsUpdate,
   RoomState,
   ScheduledPlayState,
+  ServerCapacityStatus,
   Track,
   User,
   UserRole,
@@ -40,6 +43,11 @@ export interface ServerToClientEvents {
   }) => void
   [EVENTS.ROOM_LIST_UPDATE]: (rooms: RoomListItem[]) => void
   [EVENTS.ROOM_ROLE_CHANGED]: (data: { userId: string; role: UserRole }) => void
+
+  // Server capacity & admission queue
+  [EVENTS.SERVER_CAPACITY_UPDATE]: (status: ServerCapacityStatus) => void
+  [EVENTS.ADMISSION_QUEUED]: (data: AdmissionQueuedEvent) => void
+  [EVENTS.ADMISSION_CANCELLED]: (data: AdmissionCancelledEvent) => void
 
   [EVENTS.PLAYER_PLAY]: (data: { track: Track; playState: ScheduledPlayState }) => void
   [EVENTS.PLAYER_PRELOAD]: (data: { track: Track }) => void
@@ -88,6 +96,8 @@ export interface ClientToServerEvents {
   [EVENTS.ROOM_JOIN]: (data: { roomId: string; nickname: string; password?: string; rejoinToken?: string }) => void
   [EVENTS.ROOM_LEAVE]: () => void
   [EVENTS.ROOM_LIST]: () => void
+  [EVENTS.SERVER_CAPACITY_GET]: () => void
+  [EVENTS.ADMISSION_CANCEL]: () => void
   [EVENTS.ROOM_SETTINGS]: (data: RoomSettingsUpdate) => void
   [EVENTS.ROOM_SET_ROLE]: (data: { userId: string; role: 'admin' | 'member' }) => void
 
