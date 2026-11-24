@@ -81,7 +81,7 @@ describe('Mapp memory storage backend', () => {
     expect(storageBackend.getItem('mt-nickname')).toBe('nickname-fixture')
   })
 
-  describe('persisted music-platform logins', () => {
+  describe('SDK preference persistence', () => {
     function store(initial: Record<string, string> = {}) {
       const data = new Map(Object.entries(initial))
       return {
@@ -97,18 +97,95 @@ describe('Mapp memory storage backend', () => {
       expect(storageBackend.getItem('mt-auth-cookies')).toBe('[{"platform":"netease"}]')
     })
 
-    it('restores saved logins into the synchronous store and writes changes through', async () => {
+    it('falls back to restoring saved logins when snapshot export is unavailable', async () => {
       const sdk = store({ 'mt-auth-cookies': '[{"platform":"qq"}]', 'mt-nickname': 'never-read' })
       const module = await import('./storageBackend')
       await module.hydratePersistentStorage(sdk)
       expect(storageBackend.getItem('mt-auth-cookies')).toBe('[{"platform":"qq"}]')
-      // Only the login key is restored; everything else stays memory-only.
+      expect(sdk.getItem).toHaveBeenCalledExactlyOnceWith('mt-auth-cookies')
       expect(storageBackend.getItem('mt-nickname')).toBeNull()
       storageBackend.setItem('mt-auth-cookies', '[]')
-      storageBackend.setItem('mt-nickname', 'memory-only')
       expect(sdk.setItem).toHaveBeenCalledExactlyOnceWith('mt-auth-cookies', '[]')
       storageBackend.removeItem('mt-auth-cookies')
       expect(sdk.removeItem).toHaveBeenCalledExactlyOnceWith('mt-auth-cookies')
+    })
+
+    it('restores valid preferences and writes changes through without persisting canonical identity or rejoin tickets', async () => {
+      const sdk = store()
+      const entries = [
+        ['mt-auth-cookies', 'saved-login'],
+        ['mt-nickname', 'saved-nickname'],
+        ['mt-volume', '0.35'],
+        ['mt-lyricFontSize', '90'],
+        ['mt-bgRenderer', 'mesh'],
+        ['mt-ttmlEnabled', 'false'],
+        ['mt-empty-setting', ''],
+      ]
+      const exportData = vi.fn(async () => ({
+        format: 1,
+        entries: [
+          ...entries,
+          ['mt-userId', 'stale-id'],
+          ['mt-rejoin-token', 'stale-ticket'],
+          ['outside-app', 'ignore'],
+          ['mt-invalid', 42],
+          ['mt-incomplete'],
+          ['mt-extra', 'value', 'extra'],
+          null,
+        ],
+      }))
+      const module = await import('./storageBackend')
+      storageBackend.setItem('mt-nickname', 'current-nickname')
+      await module.hydratePersistentStorage({ ...sdk, exportData })
+
+      for (const [key, value] of entries) {
+        expect(storageBackend.getItem(key)).toBe(key === 'mt-nickname' ? 'current-nickname' : value)
+      }
+      expect(sdk.getItem).not.toHaveBeenCalled()
+      for (const key of ['mt-userId', 'mt-rejoin-token', 'outside-app', 'mt-invalid', 'mt-incomplete', 'mt-extra']) {
+        expect(storageBackend.getItem(key)).toBeNull()
+      }
+
+      storageBackend.setItem('mt-userId', 'current-id')
+      expect(storageBackend.getItem('mt-userId')).toBe('current-id')
+      storageBackend.removeItem('mt-userId')
+      expect(storageBackend.getItem('mt-userId')).toBeNull()
+      storageBackend.setItem('mt-rejoin-token', 'new-ticket')
+      expect(storageBackend.getItem('mt-rejoin-token')).toBeNull()
+      storageBackend.removeItem('mt-rejoin-token')
+      storageBackend.setItem('mt-volume', '0.5')
+      storageBackend.removeItem('mt-bgRenderer')
+      expect(sdk.setItem).toHaveBeenCalledExactlyOnceWith('mt-volume', '0.5')
+      expect(sdk.removeItem).toHaveBeenCalledExactlyOnceWith('mt-bgRenderer')
+    })
+
+    it.each([
+      () => Promise.reject(new Error('export unavailable')),
+      async () => ({ format: 2, entries: [] }),
+      async () => ({ format: 1, entries: {} }),
+    ])('falls back to the saved login if export fails or the snapshot is malformed', async (exportData) => {
+      const sdk = store({ 'mt-auth-cookies': 'saved' })
+      const module = await import('./storageBackend')
+      await module.hydratePersistentStorage({ ...sdk, exportData })
+      expect(sdk.getItem).toHaveBeenCalledExactlyOnceWith('mt-auth-cookies')
+      expect(storageBackend.getItem('mt-auth-cookies')).toBe('saved')
+    })
+
+    it('ignores a pending snapshot after memory is cleared', async () => {
+      const sdk = store()
+      let resolveSnapshot!: (value: { format: number; entries: [string, string][] }) => void
+      const snapshot = new Promise<{ format: number; entries: [string, string][] }>((resolve) => {
+        resolveSnapshot = resolve
+      })
+      const module = await import('./storageBackend')
+      const hydrate = module.hydratePersistentStorage({ ...sdk, exportData: () => snapshot })
+      clearMemoryStorage()
+      resolveSnapshot({ format: 1, entries: [['mt-volume', '0.35']] })
+      await hydrate
+
+      expect(storageBackend.getItem('mt-volume')).toBeNull()
+      storageBackend.setItem('mt-volume', '0.5')
+      expect(sdk.setItem).not.toHaveBeenCalled()
     })
 
     it('does not let a failing SDK store break reads or writes', async () => {

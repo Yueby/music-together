@@ -78,7 +78,7 @@ SDK 0.3 的受控动态字节读取和 Web Audio 已在早期探针中实测（�
 
 ### 设置存储与房间命令
 
-既有 `storage` API 通过 `StorageAdapter` 访问后端，默认 `storageBackend` 保留浏览器 localStorage 的键、持久化和异常降级行为；模块导入时不访问原生存储。Mapp 对应 backend 以本 realm Map 为主，接受 `mt-` 设置键；其中仅音乐平台登录 Cookie（`mt-auth-cookies`）会写入 SDK 的应用级持久存储以便下次恢复，rejoin ticket 不持久化，也不写入原生存储；应用卸载时提供 clear。昵称、服务器确认 ID 与外观/音量设置可复用原 facade，票据仍只由 RoomSession 管理。
+既有 `storage` API 通过 `StorageAdapter` 访问后端，默认 `storageBackend` 保留浏览器 localStorage 的键、持久化和异常降级行为；模块导入时不访问原生存储。Mapp 对应 backend 以本 realm Map 为主，接受 `mt-` 设置键（明确拒收 `mt-rejoin-token`）；除会话级服务端规范身份 `mt-userId` 仅驻留内存外，其余 `mt-*` 用户偏好（昵称、音量、歌词/背景设置与音乐平台登录 Cookie `mt-auth-cookies`）均会写穿到 SDK 的应用级持久存储以便下次恢复，也不写入原生存储；应用卸载时提供 clear。启动恢复优先调用 `sdk.localStorage.exportData({ signal, timeoutMs: 3000 })`，旧运行时或快照异常时回退到 `getItem('mt-auth-cookies')`。票据仍只由 RoomSession 管理。
 
 `client/lib/RoomCommands.ts` 保留 Web 原事件及 payload；大厅建房/加入、RoomPage 自动或密码加入、离房均通过这个入口。`MappRoomCommands` 只接受对应 session 的 socket，过滤客户端身份与重入票据，委托原 session API；自动加入在权威 joining/creating 或同房已加入时合并，避免与 RoomSession 恢复重复发送。未连接时大厅不缓存 room-list 请求，而由连接事件发起。
 
@@ -130,7 +130,7 @@ TTML 逐词歌词走第四个只读端点 `musicTtml`（`GET /api/music/ttml?sou
 
 `MappHost.ts` 将同一 SDK 的 RoomSession、媒体 factory、房间命令、metadata fetch 和内存身份组合为单个宿主。构造不自动连接或创建 AudioContext；调用方先等待 SDK ready，显式 connect 和用户手势 unlock。一个 realm 仅保留一个活动宿主；失去连接、身份或房间、或切换房间时卸载当前媒体。宿主 dispose 取消 metadata 请求、关闭会话与音频、清内存，收尾后释放单宿主 guard。React Provider 仍仅订阅该外部所有者。`MappApp` 使用 MemoryRouter 和原 AppSurface（同一大厅、房间页面、弹窗与样式）；未选择 Mapp host modules 时以固定错误拒绝挂载，错误重置只离房、清状态并在内存导航，不刷新论坛页面。
 
-`bootstrapClient` 在 SDK ready 后创建并绑定宿主，等待 React commit 再 connect，最后 best-effort lifecycle.ready。20 秒启动期限、退出/pagehide 取消、晚到 mount 立即卸载、解绑和 Host dispose 均有离线回归；隐藏/失焦不当作退出。`hostBinding` 与 hostModules 只委托同一个外部所有者，不创建原生网络回退。
+`bootstrapClient` 在 SDK ready 后先在授权允许时预读应用持久存储，创建并绑定宿主；若未显式传入 `initialRoomId` 且具备 `launch.read` 权限，则限时（2 秒）尽力读取 `sdk.launch.getParameters()` 并按 `ROOM_ID_PATTERN` 校验提取房间号（支持 `?room=`/`?roomId=` 及 `#/room/`/`#room=`，异常或超时降级进入大厅）；随后等待 React commit 再 connect，最后 best-effort lifecycle.ready。20 秒启动期限、退出/pagehide 取消、晚到 mount 立即卸载、解绑和 Host dispose 均有离线回归；隐藏/失焦不当作退出。`hostBinding` 与 hostModules 只委托同一个外部所有者，不创建原生网络回退。
 
 房间预检通过 RoomCheckReader 入口：Web 保留原 HTTP；Mapp 等待可信会话与连接后单次 ROOM_LIST，从同一公开列表取 name/hasPassword/userCount。5 秒期限、调用方及 Host lifetime abort、断线与独立监听清理覆盖了并行和同步响应，不增加动态 path HTTP 权限；信任服务端列表载荷，不再重复校验房间 ID 格式与载荷形状。
 
@@ -138,23 +138,23 @@ TTML 逐词歌词走第四个只读端点 `musicTtml`（`GET /api/music/ttml?sou
 
 ## 宿主能力与独立产物
 
-Web hostRuntime 保留全部原能力。`hostRuntime` 只记录**宿主确实做不到的事**，不是功能开关："一次制作，到处打包"，功能不得因宿主而被隐藏。Mapp 现在关闭的只有：系统 MediaSession、版本轮询、剪贴板（无法复制房间号，只能显示）、外链、PixiJS 背景（禁止 eval）。搜索、歌手、专辑/歌单详情和音乐账号登录（`platformAccounts` 为 true）已与网页端一致。封面不直连 CDN，而是经 `musicCover` 读字节转 Blob URL（所有列表、歌手头像都走同一个 `useArtworkUrl`）；封面读取失败时回退本地图标占位。
+Web hostRuntime 保留全部原能力。`hostRuntime` 只记录**宿主确实做不到的事**，不是功能开关："一次制作，到处打包"，功能不得因宿主而被隐藏。Mapp 现在关闭的只有：系统 MediaSession、版本轮询、外链、PixiJS 背景（禁止 eval）。剪贴板已通过 `@/lib/clipboard` 桥接到 `sdk.clipboard.writeText()`（需 `clipboard.write`，未授权时隐藏复制入口，取消或失败不误报成功；房间分享链接使用审定服务域名 `${serverOrigin}/room/${roomId}`）。搜索、歌手、专辑/歌单详情和音乐账号登录（`platformAccounts` 为 true）已与网页端一致。封面不直连 CDN，而是经 `musicCover` 读字节转 Blob URL（所有列表、歌手头像都走同一个 `useArtworkUrl`）；封面读取失败时回退本地图标占位。
 
 **音乐平台账号**（二维码/Cookie 登录、VIP 状态、个人歌单）在微应用里与网页端是同一套界面（房间顶栏的"音乐账号"，`AccountDialog`）。登录本来就在服务端完成（服务端调用网易云/QQ/酷狗，前端只显示二维码），因此走已有的 Socket.IO `auth:*` 事件，不新增 REST；个人歌单曲目走 `musicMyPlaylist`（`GET /api/music/playlist/mine`，必须带 `roomId`，服务端从验证过的身份查该用户在该房间账号池里的登录，没有登录则匿名读取；响应 `private, no-store`，缓存键按凭据隔离），公开歌单和专辑走匿名的 `musicPlaylist`。
 
-- **登录态保存**：网页端把 `mt-auth-cookies` 存在 localStorage 并在重开后自动恢复。微应用的存储适配器是同步接口，所以 `bootstrapClient` 在宿主创建前用 SDK 的异步 `localStorage`（IndexedDB，按应用与沙箱/正式隔离）把这一个键预读进内存，之后写入同步落盘；其余设置和重连票据仍只在内存。manifest 因此新增 `storage.read` / `storage.write` 两项权限（需要平台审核），没有授予权限时退化为只在本次会话内有效。
+- **偏好与登录态保存**：网页端把用户偏好与 `mt-auth-cookies` 存在 localStorage 并在重开后自动恢复。微应用的存储适配器是同步接口，所以 `bootstrapClient` 在宿主创建前用 SDK 的异步 `localStorage`（IndexedDB，按应用与沙箱/正式隔离）通过 `exportData()` 一次性预读全部允许持久化的 `mt-*` 键进内存，之后写入同步写穿落盘；`mt-userId` 仅驻留内存，重连票据（`mt-rejoin-token`）明确拒收。没有授予 `storage.read` / `storage.write` 权限时退化为只在本次会话内有效。
 - **二维码图片**：服务端返回 base64 `data:` 图片，沙箱 CSP 拦截 `data:` 图片，所以界面统一把它转成 Blob URL（`dataUrlToBlob` 只接受 png/jpeg/gif/webp 的 base64，不接受 SVG）显示，网页端同样使用。
 
-### `storage.read` / `storage.write` 权限审查（公开发布前）
+### `storage.read` / `storage.write`、`clipboard.write`、`launch.read` 权限审查（公开发布前）
 
-结论：用途收敛、没有需要收紧的地方，不改代码；公开发布时在应用说明里写明即可。
+结论：用途收敛、没有需要收紧的地方，公开发布时在应用说明里写明即可。
 
-- **写入范围**：`storageBackend` 只把 `mt-auth-cookies` 一个键写穿到 SDK 的持久存储；其余 `mt-` 设置只在内存，重连票据（`mt-rejoin-token`）明确不接受，也不写任何原生存储
-- **隔离**：`sdk.localStorage` 按应用与沙箱/正式环境隔离；内容与网页端放在 localStorage 里的一致（音乐平台登录 Cookie 明文），没有比网页端更宽
-- **读出时校验**：`getAuthCookies` 校验数组形状与每项字段（平台在 `MUSIC_SOURCES` 内、Cookie 是字符串），畸形数据返回 `[]`，不会让账号弹窗崩溃
-- **清除**：用户在"音乐账号"里登出某个平台会走 `removeAuthCookie`，同步写穿删除持久副本；卸载应用只清内存、不删持久副本（登录态是为下次打开保留的）
-- **降级**：平台没批准权限时 `bootstrapClient` 不预读，退化为只在本次会话内有效
-- **仍要知道的**：Cookie 是明文放在应用私有的 IndexedDB 里，设备上能读到该存储的人能拿到登录态，与网页端 localStorage 同级。应用说明里应写明"登录态保存在本地"
+- **存储写入范围**：`storageBackend` 将除 `mt-userId`（会话级服务端身份，仅内存）和 `mt-rejoin-token`（明确拒收）外的 `mt-*` 偏好与 `mt-auth-cookies` 写穿到 SDK 持久存储，不写任何原生存储
+- **存储隔离与换号说明**：`sdk.localStorage` 按应用与沙箱/正式环境隔离，但按官方 SDK 行为不会随社区切换账号自动切换本地存储（与网页端 `localStorage` 同级）；`mt-userId` 不落盘，不会产生跨账号身份混淆
+- **读出时校验**：`storage.ts` 各 getter 对所有读出值做枚举/范围/JSON 校验，`getAuthCookies` 校验数组形状与每项字段（平台在 `MUSIC_SOURCES` 内、Cookie 是字符串），畸形数据安全回退默认值或 `[]`
+- **清除与降级**：用户在"音乐账号"里登出某个平台会走 `removeAuthCookie`，同步写穿删除持久副本；卸载应用只清内存、不删持久副本。平台没批准存储权限时 `bootstrapClient` 不预读，退化为仅本次会话有效
+- **剪贴板与启动参数**：仅申请 `clipboard.write`（不申请 `clipboard.read`），由用户点击复制房间链接或密码直接触发；`launch.read` 仅在启动时尽力读取 `?room=` / `#/room/` 房间号并经 `ROOM_ID_PATTERN` 严格校验，不作为身份凭据，失败或超时回退大厅
+- **仍要知道的**：Cookie 是明文放在应用私有的 IndexedDB 里，设备上能读到该存储的人能拿到登录态，与网页端 localStorage 同级。应用说明里应写明"偏好设置与音乐平台登录态保存在本地"
 
 ### 平台运行环境限制与兜底
 
@@ -169,7 +169,7 @@ Web hostRuntime 保留全部原能力。`hostRuntime` 只记录**宿主确实做
 
 真实 JS 产物另经离线 DOM／模拟 SDK 冒烟：大厅成功挂载，原样 Engine.IO/Socket.IO 握手后请求房间列表，lifecycle.ready 只在 UI commit 后通知，pagehide 关闭 SDK 连接。在该测试中禁止原生网络发送、音频创建、Cookie/原生存储、eval/Function 与 innerHTML 写入，未触发这些调用；Socket.IO 的空 XHR 特性探测与请求发送分开处理。此测试不替代官方平台 VM、真实 JWT、设备音频或跨端同房现场验收。
 
-产物为 `dist/client-web`、`dist/client-package`。client manifest 仅 `user.read`、`audio.webAudio`、`network.websocket`、`network.request`、`storage.read`、`storage.write`，声明 roomSocket、roomAudio、musicSearch、musicLyric、musicTtml、musicCover、musicArtist、musicArtistSongs、musicArtistAlbums、musicPlaylist、musicMyPlaylist、musicRadar、musicDaily、musicHome；不含 remote_assets 或额外权限。打包继续由官方 SDK 校验（ZIP/单文件 32MiB、展开 128MiB）。共享纯 target 数据与 manifest 解析均独立于 CLI，避免打包入口循环加载。
+产物为 `dist/client-web`、`dist/client-package`。client manifest 仅 `user.read`、`audio.webAudio`、`network.websocket`、`network.request`、`storage.read`、`storage.write`、`clipboard.write`、`launch.read`，声明 roomSocket、roomAudio、musicSearch、musicLyric、musicTtml、musicCover、musicArtist、musicArtistSongs、musicArtistAlbums、musicPlaylist、musicMyPlaylist、musicRadar、musicDaily、musicHome；不含 remote_assets 或额外权限。打包继续由官方 SDK 校验（ZIP/单文件 32MiB、展开 128MiB）。共享纯 target 数据与 manifest 解析均独立于 CLI，避免打包入口循环加载。
 
 ## 验证与发布门禁
 

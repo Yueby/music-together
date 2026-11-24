@@ -17,6 +17,7 @@ export function createMappClientConfig(roomUrl: string | undefined, version: str
     ['@/lib/RoomCommands', `${compat}hostModules/RoomCommands.ts`],
     ['@/lib/roomCheck', `${compat}hostModules/roomCheck.ts`],
     ['@/lib/audioUnlock', `${compat}hostModules/audioUnlock.ts`],
+    ['@/lib/clipboard', `${compat}hostModules/clipboard.ts`],
     ['@/lib/hostRuntime', `${compat}hostModules/hostRuntime.ts`],
     ['@/lib/storageBackend', `${compat}storageBackend.ts`],
     ['@', clientSource],

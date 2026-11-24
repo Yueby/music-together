@@ -33,8 +33,10 @@ export function resolveClientManifest(template: MiniAppManifest, options: Client
     entry: 'index.html',
     script: 'app.js',
     style: 'app.css',
-    // storage.* keeps the music-platform logins between sessions (the Web client uses localStorage for the same).
-    permissions: ['user.read', 'audio.webAudio', 'network.websocket', 'network.request', 'storage.read', 'storage.write'],
+    permissions: [
+      'user.read', 'audio.webAudio', 'network.websocket', 'network.request', 'storage.read', 'storage.write',
+      'clipboard.write', 'launch.read',
+    ],
     websockets: { roomSocket: { url: target.roomUrl, auth: 'platform' } },
     endpoints: {
       roomAudio: {

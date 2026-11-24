@@ -4,6 +4,7 @@ import { createMappHost, type MappHost } from './compat/MappHost.ts'
 import { hydratePersistentStorage } from './compat/storageBackend.ts'
 import { installFormSubmitFallback } from './compat/formSubmitFallback.ts'
 import { installMappHost } from './compat/hostBinding.ts'
+import { extractLaunchRoomId } from './compat/launchRoom.ts'
 import { installTrustedTypesFallback } from './compat/trustedTypesFallback.ts'
 
 export interface MappClientOptions {
@@ -14,6 +15,7 @@ export interface MappClientOptions {
 }
 
 const START_TIMEOUT_MS = 20_000
+const LAUNCH_TIMEOUT_MS = 2_000
 const LIFECYCLE_TIMEOUT_MS = 1_000
 const startError = () => new Error('MAPP_CLIENT_START_FAILED')
 const disposeError = () => new Error('MAPP_CLIENT_DISPOSE_FAILED')
@@ -132,13 +134,30 @@ export function startMappClient(options: MappClientOptions): {
       assertActive()
       await bounded(() => sdk!.ready, deadline - Date.now())
       assertActive()
-      // Restore the saved music-platform logins into the synchronous store before anything reads it.
+      // Restore saved preferences before loading the client modules that read them.
       if (sdk.permissions.has('storage.read') && sdk.permissions.has('storage.write')) {
-        await bounded(() => hydratePersistentStorage(sdk!.localStorage), deadline - Date.now())
+        const hydration = new AbortController()
+        try {
+          await bounded(() => hydratePersistentStorage(sdk!.localStorage, hydration.signal), deadline - Date.now())
+        } finally {
+          hydration.abort()
+        }
         assertActive()
       }
       host = createMappHost({ endpoint: options.endpoint, reviewedEndpointUrl: options.reviewedEndpointUrl })
       assertActive()
+      let initialRoomId = options.initialRoomId
+      if (initialRoomId === undefined && sdk.permissions.has('launch.read') && typeof sdk.launch?.getParameters === 'function') {
+        const launch = sdk.launch
+        let parameters: unknown
+        try {
+          parameters = await bounded(() => launch.getParameters(), Math.min(LAUNCH_TIMEOUT_MS, deadline - Date.now()))
+        } catch {
+          // The app can still open its lobby without launch parameters.
+        }
+        assertActive()
+        initialRoomId = extractLaunchRoomId(parameters)
+      }
       const releaseHost = installMappHost(host)
       const releaseForms = installFormSubmitFallback()
       const releaseTrustedTypes = installTrustedTypesFallback()
@@ -154,7 +173,7 @@ export function startMappClient(options: MappClientOptions): {
       )
       assertActive()
       await bounded(
-        () => Promise.resolve(mountMappClient(root!, host!, options.initialRoomId)).then((detach) => {
+        () => Promise.resolve(mountMappClient(root!, host!, initialRoomId)).then((detach) => {
           if (stopped) {
             // A cancelled React commit may still finish. It must never acquire a new host.
             try {

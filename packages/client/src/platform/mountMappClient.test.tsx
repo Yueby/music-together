@@ -67,6 +67,8 @@ function createFakeMappHost(): FakeHostBundle {
     metadataFetch: vi.fn() as unknown as MetadataFetch,
     artworkLoader: { direct: false, load: vi.fn() },
     roomCheck: vi.fn() as unknown as RoomCheckReader,
+    canCopyText: vi.fn(() => false),
+    copyText: vi.fn().mockResolvedValue(false),
     isAudioUnlocked: vi.fn(() => true),
     unlockAudio: vi.fn().mockResolvedValue(undefined),
     connect: connectMock,

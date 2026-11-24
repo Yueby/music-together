@@ -2,36 +2,56 @@ import type { StorageAdapter } from '../../../client/src/lib/StorageAdapter'
 
 const memoryStorage = new Map<string, string>()
 
-/**
- * Everything is held in memory. Only these keys are also written through to the SDK's persistent, app-scoped storage:
- * the music-platform logins, so the mini-app can restore them like the Web client does with localStorage. The rejoin
- * ticket is deliberately never persisted (it expires within a minute), and nothing is ever written to native storage.
- */
-const PERSISTED_KEYS: ReadonlySet<string> = new Set(['mt-auth-cookies'])
-
 /** The slice of `sdk.localStorage` used here (async, IndexedDB-backed, scoped to this app and environment). */
 export interface PersistentStore {
   getItem(key: string): Promise<string | null>
   setItem(key: string, value: string): Promise<unknown>
   removeItem(key: string): Promise<unknown>
+  exportData?(options?: { signal?: AbortSignal; timeoutMs?: number }): Promise<{ format: number; entries: unknown }>
 }
+const EXPORT_TIMEOUT_MS = 3_000
 let persistent: PersistentStore | null = null
+let hydrationGeneration = 0
 
 function acceptsKey(key: string): boolean {
   return key.startsWith('mt-') && key !== 'mt-rejoin-token'
 }
 
+function isPersistedKey(key: string): boolean {
+  return acceptsKey(key) && key !== 'mt-userId'
+}
+
+async function readPersistedEntries(store: PersistentStore, signal?: AbortSignal): Promise<unknown[]> {
+  if (typeof store.exportData === 'function') {
+    try {
+      const snapshot = await store.exportData({ signal, timeoutMs: EXPORT_TIMEOUT_MS })
+      if (snapshot?.format === 1 && Array.isArray(snapshot.entries)) return snapshot.entries
+    } catch {
+      // Older runtimes may only support reading a known key, or exportData may time out.
+    }
+  }
+  if (signal?.aborted) return []
+  try {
+    return [['mt-auth-cookies', await store.getItem('mt-auth-cookies')]]
+  } catch {
+    return []
+  }
+}
+
 /**
  * Load the persisted keys into memory and start writing changes through. Call once after the SDK is ready and before
- * the UI reads any storage: the adapter the client uses is synchronous. Failures leave a working memory-only store.
+ * the UI reads any storage: the adapter the client uses is synchronous.
  */
-export async function hydratePersistentStorage(store: PersistentStore): Promise<void> {
-  for (const key of PERSISTED_KEYS) {
-    try {
-      const value = await store.getItem(key)
-      if (typeof value === 'string' && !memoryStorage.has(key)) memoryStorage.set(key, value)
-    } catch {
-      // Unreadable storage must not stop the app; the user simply logs in again.
+export async function hydratePersistentStorage(store: PersistentStore, signal?: AbortSignal): Promise<void> {
+  const generation = ++hydrationGeneration
+  const entries = await readPersistedEntries(store, signal)
+  if (generation !== hydrationGeneration || signal?.aborted) return
+
+  for (const entry of entries) {
+    if (!Array.isArray(entry) || entry.length !== 2) continue
+    const [key, value] = entry
+    if (typeof key === 'string' && typeof value === 'string' && isPersistedKey(key) && !memoryStorage.has(key)) {
+      memoryStorage.set(key, value)
     }
   }
   persistent = store
@@ -42,17 +62,18 @@ export const storageBackend: StorageAdapter = {
   setItem: (key, value) => {
     if (!acceptsKey(key)) return
     memoryStorage.set(key, value)
-    if (PERSISTED_KEYS.has(key)) void persistent?.setItem(key, value).catch(() => {})
+    if (isPersistedKey(key)) void persistent?.setItem(key, value).catch(() => {})
   },
   removeItem: (key) => {
     if (!acceptsKey(key)) return
     memoryStorage.delete(key)
-    if (PERSISTED_KEYS.has(key)) void persistent?.removeItem(key).catch(() => {})
+    if (isPersistedKey(key)) void persistent?.removeItem(key).catch(() => {})
   },
 }
 
 /** Forget everything held in memory and stop writing through. The persisted copy is left untouched. */
 export function clearMemoryStorage(): void {
+  hydrationGeneration++
   persistent = null
   memoryStorage.clear()
 }

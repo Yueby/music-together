@@ -13,6 +13,6 @@ export const hostRuntime: HostRuntime = Object.freeze({
   versionCheck: false,
   // The platform CSP forbids eval, which PixiJS needs; the mesh renderer is plain WebGL.
   pixiBackground: false,
-  clipboard: false,
+  clipboard: true,
   externalLinks: false,
 })

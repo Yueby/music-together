@@ -18,6 +18,7 @@ describe('explicit client build configuration', () => {
       '@/lib/RoomCommands',
       '@/lib/roomCheck',
       '@/lib/audioUnlock',
+      '@/lib/clipboard',
       '@/lib/hostRuntime',
       '@/lib/storageBackend',
       '@',
