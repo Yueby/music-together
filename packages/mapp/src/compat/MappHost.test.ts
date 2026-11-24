@@ -6,6 +6,8 @@ import type { PlaybackSound, PlaybackSoundOptions } from '../../../client/src/li
 import type { MappPlaybackSoundFactoryOptions } from './MappPlaybackSoundFactory.ts'
 import type { MappRoomSession, MappRoomSessionOptions, MappRoomSessionSnapshot } from './RoomSession.ts'
 import { anySignal, createMappHost, type MappHost, type MappHostOptions } from './MappHost.ts'
+import { installMappHost } from './hostBinding.ts'
+import { canCopyText, copyText, getRoomShareUrl } from './hostModules/clipboard.ts'
 import { clearMemoryStorage, storageBackend } from './storageBackend.ts'
 
 const mocks = vi.hoisted(() => ({
@@ -63,11 +65,13 @@ function fixture() {
   const has = vi.fn(() => true)
   const request = vi.fn()
   const sdkConnect = vi.fn()
+  const writeText = vi.fn<(text: string) => Promise<null>>().mockResolvedValue(null)
   const sdk = {
     ready: Promise.resolve(),
     permissions: { has },
     http: { request },
     webSocket: { connect: sdkConnect },
+    clipboard: { writeText },
   } as unknown as MiniAppSDK
   for (const name of ['cookies', 'localStorage', 'user'] as const) {
     Object.defineProperty(sdk, name, { get: nativeAccess })
@@ -132,6 +136,7 @@ function fixture() {
     has,
     request,
     sdkConnect,
+    writeText,
     session,
     emit,
     audio,
@@ -156,6 +161,7 @@ beforeEach(() => {
       return nativeAccess()
     },
   })
+  vi.stubGlobal('navigator', Object.defineProperty({}, 'clipboard', { get: nativeAccess }))
 })
 afterEach(async () => {
   for (const host of hosts.splice(0)) await host.dispose().catch(() => {})
@@ -164,6 +170,46 @@ afterEach(async () => {
   vi.unstubAllGlobals()
   vi.restoreAllMocks()
   clearMemoryStorage()
+})
+
+describe('Mapp clipboard', () => {
+  it('copies the canonical room URL through the SDK and treats denial or cancellation as failure', async () => {
+    const f = fixture()
+    f.has.mockImplementation((...args: unknown[]) => args[0] !== 'clipboard.write')
+    const host = f.make()
+    const unbind = installMappHost(host)
+    try {
+      const url = getRoomShareUrl('room-1')
+      expect(url).toBe('https://music.example/room/room-1')
+      expect(canCopyText()).toBe(false)
+      await expect(copyText(url)).resolves.toBe(false)
+      expect(f.writeText).not.toHaveBeenCalled()
+
+      f.has.mockReturnValue(true)
+      expect(canCopyText()).toBe(true)
+      await expect(copyText(url)).resolves.toBe(true)
+      expect(f.writeText).toHaveBeenCalledExactlyOnceWith(url)
+
+      f.writeText.mockRejectedValueOnce(new Error('USER_CANCELLED'))
+      await expect(copyText(url)).resolves.toBe(false)
+    } finally {
+      unbind()
+    }
+  })
+
+  it('rejects new writes and ignores a late write confirmation after disposal', async () => {
+    const f = fixture()
+    const confirmation = deferred<null>()
+    f.writeText.mockReturnValueOnce(confirmation.promise)
+    const host = f.make()
+    const pending = host.copyText('before disposal')
+    await host.dispose()
+    confirmation.resolve(null)
+    expect(host.canCopyText()).toBe(false)
+    await expect(pending).resolves.toBe(false)
+    await expect(host.copyText('after disposal')).resolves.toBe(false)
+    expect(f.writeText).toHaveBeenCalledExactlyOnceWith('before disposal')
+  })
 })
 
 describe('MappHost thin composition', () => {

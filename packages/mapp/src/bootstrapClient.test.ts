@@ -8,7 +8,8 @@ const fixtures = vi.hoisted(() => {
   const sdk = {
     ready: Promise.resolve(),
     lifecycle: { ready: vi.fn() },
-    // Storage permissions are off by default; individual tests grant them.
+    launch: { getParameters: vi.fn<() => Promise<unknown>>() },
+    // Optional permissions are off by default; individual tests grant them.
     permissions: { has: vi.fn((_permission: string) => false) },
     localStorage: {
       getItem: vi.fn(async (_key: string): Promise<string | null> => null),
@@ -51,8 +52,8 @@ let root: HTMLElement
 let listeners: Set<EventListenerOrEventListenerObject>
 let clients: ReturnType<typeof startMappClient>[]
 
-function start() {
-  const client = startMappClient({ ...config, root, initialRoomId: 'initial-room' })
+function start(room: { initialRoomId?: string } = { initialRoomId: 'initial-room' }) {
+  const client = startMappClient({ ...config, root, ...room })
   clients.push(client)
   // Tests deliberately cancel startup; observe rejection as the production entry does.
   void client.ready.catch(() => {})
@@ -151,6 +152,40 @@ describe('formal Mapp client startup', () => {
     await client.dispose()
   })
 
+  it('prefers an explicit room ID even with launch permission', async () => {
+    fixtures.sdk.permissions.has.mockImplementation((permission) => permission === 'launch.read')
+    await start().ready
+    expect(fixtures.sdk.launch.getParameters).not.toHaveBeenCalled()
+    expect(fixtures.mount).toHaveBeenCalledWith(root, fixtures.host, 'initial-room')
+  })
+
+  it('reads permitted launch parameters after SDK readiness', async () => {
+    const sdkReady = deferred<void>()
+    fixtures.sdk.ready = sdkReady.promise
+    fixtures.sdk.permissions.has.mockImplementation((permission) => permission === 'launch.read')
+    fixtures.sdk.launch.getParameters.mockResolvedValue({ query: { room: [' linked-room '] } })
+    const client = start({})
+    expect(fixtures.sdk.launch.getParameters).not.toHaveBeenCalled()
+    sdkReady.resolve()
+    await client.ready
+    expect(fixtures.sdk.launch.getParameters).toHaveBeenCalledOnce()
+    expect(fixtures.mount).toHaveBeenCalledWith(root, fixtures.host, 'linked-room')
+  })
+
+  it('opens the lobby without requesting launch parameters if permission is absent', async () => {
+    await start({}).ready
+    expect(fixtures.sdk.launch.getParameters).not.toHaveBeenCalled()
+    expect(fixtures.mount).toHaveBeenCalledWith(root, fixtures.host, undefined)
+  })
+
+  it('opens the lobby when the launch request rejects', async () => {
+    fixtures.sdk.permissions.has.mockImplementation((permission) => permission === 'launch.read')
+    fixtures.sdk.launch.getParameters.mockRejectedValue(privateError())
+    await start({}).ready
+    expect(fixtures.sdk.launch.getParameters).toHaveBeenCalledOnce()
+    expect(fixtures.mount).toHaveBeenCalledWith(root, fixtures.host, undefined)
+  })
+
   it('uses the existing default root and safely creates one when absent', async () => {
     const first = startMappClient(config)
     clients.push(first)
@@ -217,6 +252,28 @@ describe('formal Mapp client startup', () => {
 })
 
 describe('exit and late completion', () => {
+  it('ignores late storage hydration after an exit before host creation', async () => {
+    const { storageBackend, clearMemoryStorage } = await import('./compat/storageBackend.ts')
+    const saved = deferred<string>()
+    fixtures.sdk.permissions.has.mockImplementation((permission) => permission.startsWith('storage.'))
+    fixtures.sdk.localStorage.getItem.mockReturnValue(saved.promise)
+    try {
+      const client = start()
+      await flush()
+      expect(fixtures.sdk.localStorage.getItem).toHaveBeenCalledOnce()
+      await client.dispose()
+      await expect(client.ready).rejects.toThrow(/^MAPP_CLIENT_START_FAILED$/)
+      saved.resolve('saved-login')
+      await flush()
+      expect(fixtures.createHost).not.toHaveBeenCalled()
+      expect(storageBackend.getItem('mt-auth-cookies')).toBeNull()
+      storageBackend.setItem('mt-volume', '0.5')
+      expect(fixtures.sdk.localStorage.setItem).not.toHaveBeenCalled()
+    } finally {
+      clearMemoryStorage()
+    }
+  })
+
   it.each(['explicit', 'pagehide'] as const)('cancels SDK wait on %s without waiting for SDK', async (exit) => {
     const sdkReady = deferred<void>()
     fixtures.sdk.ready = sdkReady.promise
@@ -351,6 +408,24 @@ describe('exit and late completion', () => {
 })
 
 describe('bounded startup and timer cleanup', () => {
+  it('opens the lobby after a 2 second launch timeout and ignores the late room ID', async () => {
+    vi.useFakeTimers()
+    const launch = deferred<unknown>()
+    fixtures.sdk.permissions.has.mockImplementation((permission) => permission === 'launch.read')
+    fixtures.sdk.launch.getParameters.mockReturnValue(launch.promise)
+    const client = start({})
+    await vi.advanceTimersByTimeAsync(1_999)
+    expect(fixtures.sdk.launch.getParameters).toHaveBeenCalledOnce()
+    expect(fixtures.mount).not.toHaveBeenCalled()
+    await vi.advanceTimersByTimeAsync(1)
+    await client.ready
+    expect(fixtures.mount).toHaveBeenCalledExactlyOnceWith(root, fixtures.host, undefined)
+    launch.resolve({ hash: '/room/late-room' })
+    await flush()
+    expect(fixtures.mount).toHaveBeenCalledOnce()
+    expect(vi.getTimerCount()).toBe(0)
+  })
+
   it('times out SDK wait and ignores late SDK readiness', async () => {
     vi.useFakeTimers()
     const sdkReady = deferred<void>()

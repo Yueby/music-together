@@ -19,7 +19,10 @@ const template: MiniAppManifest = {
   style: 'app.css',
   permissions: [],
 }
-const permissions = ['user.read', 'audio.webAudio', 'network.websocket', 'network.request', 'storage.read', 'storage.write']
+const permissions = [
+  'user.read', 'audio.webAudio', 'network.websocket', 'network.request', 'storage.read', 'storage.write',
+  'clipboard.write', 'launch.read',
+]
 const endpoints = {
   roomAudio: {
     url: 'https://rooms.example.com/api/mapp/audio',

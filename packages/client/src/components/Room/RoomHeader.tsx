@@ -10,6 +10,7 @@ import {
 } from '@/components/ui/dropdown-menu'
 import { Tooltip, TooltipContent, TooltipTrigger } from '@/components/ui/tooltip'
 import { getMedianRTT } from '@/lib/clockSync'
+import { canCopyText, copyText, getRoomShareUrl } from '@/lib/clipboard'
 import { hostRuntime } from '@/lib/hostRuntime'
 import { cn } from '@/lib/utils'
 import { useRoomStore } from '@/stores/roomStore'
@@ -30,6 +31,7 @@ export function RoomHeader({ onOpenSearch, onOpenSettings, onOpenAccount, onOpen
   const roomId = useRoomStore((s) => s.room?.id)
   const userCount = useRoomStore((s) => s.room?.users.length ?? 0)
   const { isConnected } = useSocketContext()
+  const clipboardAvailable = canCopyText()
 
   // Poll RTT from clockSync module every 3s
   const [rtt, setRtt] = useState(0)
@@ -51,10 +53,8 @@ export function RoomHeader({ onOpenSearch, onOpenSettings, onOpenAccount, onOpen
         ? 'text-yellow-500/60'
         : 'text-destructive/60'
 
-  const copyRoomLink = () => {
-    if (!hostRuntime.clipboard) return
-    if (roomId) {
-      navigator.clipboard.writeText(window.location.href)
+  const copyRoomLink = async () => {
+    if (roomId && await copyText(getRoomShareUrl(roomId))) {
       toast.success('房间链接已复制')
     }
   }
@@ -67,13 +67,13 @@ export function RoomHeader({ onOpenSearch, onOpenSettings, onOpenAccount, onOpen
             <span
               className={cn(
                 'max-w-[120px] truncate text-sm font-semibold text-foreground sm:max-w-[200px] sm:cursor-default',
-                hostRuntime.clipboard ? 'cursor-pointer active:opacity-70' : 'cursor-default',
+                clipboardAvailable ? 'cursor-pointer active:opacity-70' : 'cursor-default',
               )}
-              onClick={hostRuntime.clipboard ? copyRoomLink : undefined}
+              onClick={clipboardAvailable ? copyRoomLink : undefined}
             >
               {roomName}
             </span>
-            {hostRuntime.clipboard && (
+            {clipboardAvailable && (
               <Tooltip>
                 <TooltipTrigger asChild>
                   <Button
@@ -217,7 +217,7 @@ export function RoomHeader({ onOpenSearch, onOpenSettings, onOpenAccount, onOpen
               <Settings className="mr-2 h-4 w-4" />
               设置
             </DropdownMenuItem>
-            {hostRuntime.clipboard && (
+            {clipboardAvailable && (
               <>
                 <DropdownMenuSeparator />
                 <DropdownMenuItem onClick={copyRoomLink}>

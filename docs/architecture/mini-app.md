@@ -11,7 +11,7 @@
 | `packages/mapp/scripts/`                       | 客户端 manifest 生成与官方 SDK 打包校验                                 |
 | `packages/client/src/platform/`                | 复用网页界面的微应用外壳（MemoryRouter + 原 AppSurface）                |
 | `packages/server`                              | 同一个后端；启用后额外接受平台 JWT 身份与受控媒体/元数据入口           |
-| `vendor/discourse-mini-app-sdk`                | 官方 SDK 0.3.0 原始发行文件，本地 `file:` 依赖及固定提交来源记录        |
+| `vendor/discourse-mini-app-sdk`                | 官方 SDK 0.4.0 原始发行文件，本地 `file:` 依赖及固定提交来源记录        |
 
 ## 能力验证记录（探针已退役）
 
@@ -26,9 +26,9 @@
 
 ## SDK 版本与官方能力核查
 
-开发树固定官方 SDK **0.3.0**，原样来源为平台已登录开发者页面所链接的 `linux-do/mapp-developer-guide` 提交 `ae0b523297a8c25314304f2cd92270badc0ac629`，来源记录见 `vendor/README.md`。该提交的版本号仍为 0.3.0，相对此前固定的 `f22f6e52` 仅增量新增应用间跳转 `app.call/return`、通知申请 `notifications.request` 及其 `app.call`/`notifications` 权限，manifest 新增 `calls`、`notifications`、`tags`；运行时入口（`index.mjs`、`server.mjs`、媒体与网络工具）逐字未变，仅打包器 `pack.mjs` 随之更新，本项目均未使用新增能力。类型和版本号不能代替现场能力检查。
+开发树固定官方 SDK **0.4.0**，原样来源为平台已登录开发者页面所链接的 `linux-do/mapp-developer-guide` 提交 `44141fbee68fd5f783f5c2bd0e662fad28cf3556`，来源记录见 `vendor/README.md`。该提交相对此前固定的 `ae0b5232`（0.3.0）新增 HTTP/WS 端点的 `auth: "auto"` 认证模式（匿名运行不携带平台 JWT、登录运行时携带 JWT，同样要求声明 `user.read` 权限）；运行时入口（`index.mjs`、`server.mjs`、媒体与网络工具）逐字未变，仅打包器 `pack.mjs`、`pack.d.ts` 与 `package.json` 随之更新，本项目暂未使用 `auth: "auto"`。类型和版本号不能代替现场能力检查。
 
-| 边界 | 官方 SDK 0.3.0 的公开契约 | 集成要求 |
+| 边界 | 官方 SDK 0.4.0 的公开契约 | 集成要求 |
 | --- | --- | --- |
 | 业务响应字节 | `http.request` 支持 `responseType: "bytes"`；`http.stream` 返回 `ReadableStream<Uint8Array>`，需 `network.request` | 受控媒体端点读取字节后 Web Audio 解码；读取字节流不等于边下边播 |
 | 网络配额与取消 | 平台不设小额字节配额或默认总超时，支持 signal、`timeoutMs`、下载进度 | 应用自己限制读取量和并发，并传播取消 |
@@ -37,4 +37,4 @@
 | 身份与鉴权 | 平台 JWT 须服务端验证，身份取 `(iss, sub)`；受保护端点不得回退 Cookie；WS 须在 upgrade 前验证 | 主站后端验签并映射为稳定 `mapp_` 身份，不复制网页 Cookie |
 | 音频 | `audio.webAudio` 提供原生 `AudioContext`；用户进入时选择声音状态，静音不暂停音频时钟 | 使用 `WebAudioPlayer`（单 context、单活动 source）并在用户手势内解锁 |
 
-官方依据：[SDK 说明](https://github.com/linux-do/mapp-developer-guide/blob/7792ce37b3/sdk/README.md)、[HTTP/WS 契约](https://github.com/linux-do/mapp-developer-guide/blob/7792ce37b3/docs/sdk-network.md)、[服务端鉴权](https://github.com/linux-do/mapp-developer-guide/blob/7792ce37b3/docs/server-auth.md)、[提审说明](https://github.com/linux-do/mapp-developer-guide/blob/7792ce37b3/docs/submission-review.md)。
+官方依据：[SDK 说明](https://github.com/linux-do/mapp-developer-guide/blob/44141fbee6/sdk/README.md)、[HTTP/WS 契约](https://github.com/linux-do/mapp-developer-guide/blob/44141fbee6/docs/sdk-network.md)、[服务端鉴权](https://github.com/linux-do/mapp-developer-guide/blob/44141fbee6/docs/server-auth.md)、[提审说明](https://github.com/linux-do/mapp-developer-guide/blob/44141fbee6/docs/submission-review.md)。

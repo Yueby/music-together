@@ -30,6 +30,8 @@ export interface MappHost {
   readonly metadataFetch: MetadataFetch
   readonly artworkLoader: ArtworkLoader
   readonly roomCheck: RoomCheckReader
+  canCopyText(): boolean
+  copyText(text: string): Promise<boolean>
   isAudioUnlocked(): boolean
   unlockAudio(): Promise<void>
   connect(): void
@@ -171,6 +173,7 @@ export function createMappHost(options: MappHostOptions): MappHost {
     const metadata = createMappMetadataFetch({ sdk, reviewedOrigin: serverOrigin })
     const coverLoader = createMappCoverLoader({ sdk })
     covers = coverLoader
+    const canCopyText = () => !disposed && sdk.permissions.has('clipboard.write')
 
     return Object.freeze<MappHost>({
       serverOrigin,
@@ -189,6 +192,16 @@ export function createMappHost(options: MappHostOptions): MappHost {
       },
       artworkLoader: coverLoader,
       roomCheck: createMappRoomCheck(roomSession, lifetime.signal),
+      canCopyText,
+      async copyText(text) {
+        if (!canCopyText()) return false
+        try {
+          await sdk.clipboard.writeText(text)
+          return !disposed
+        } catch {
+          return false
+        }
+      },
       playbackSoundFactory: {
         allowLoadRetry: audio.allowLoadRetry,
         supportsHtml5Analysis: audio.supportsHtml5Analysis,

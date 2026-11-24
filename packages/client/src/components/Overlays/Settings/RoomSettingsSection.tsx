@@ -5,7 +5,7 @@ import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@
 import { Tooltip, TooltipContent, TooltipTrigger } from '@/components/ui/tooltip'
 import { Separator } from '@/components/ui/separator'
 import { Switch } from '@/components/ui/switch'
-import { hostRuntime } from '@/lib/hostRuntime'
+import { canCopyText, copyText, getRoomShareUrl } from '@/lib/clipboard'
 import { storage } from '@/lib/storage'
 import { usePlayerStore } from '@/stores/playerStore'
 import { useRoomStore } from '@/stores/roomStore'
@@ -46,6 +46,7 @@ export function RoomSettingsSection({ onUpdateSettings }: RoomSettingsSectionPro
   const roomPassword = useRoomStore((s) => s.roomPassword)
   const syncDrift = usePlayerStore((s) => s.syncDrift)
   const isOwner = currentUser?.role === 'owner'
+  const clipboardAvailable = canCopyText()
 
   const driftDisplay = useMemo(() => {
     const ms = Math.round(syncDrift * 1000)
@@ -75,11 +76,10 @@ export function RoomSettingsSection({ onUpdateSettings }: RoomSettingsSectionPro
     setPasswordInput('')
   }, [room?.hasPassword])
 
-  const copyRoomLink = () => {
-    if (!hostRuntime.clipboard) return
-    const url = `${window.location.origin}/room/${room?.id}`
-    navigator.clipboard.writeText(url)
-    toast.success('房间链接已复制')
+  const copyRoomLink = async () => {
+    if (room && await copyText(getRoomShareUrl(room.id))) {
+      toast.success('房间链接已复制')
+    }
   }
 
   const handlePasswordToggle = (checked: boolean) => {
@@ -175,7 +175,7 @@ export function RoomSettingsSection({ onUpdateSettings }: RoomSettingsSectionPro
         <SettingRow label="房间号" description="把房间号或房间链接发给朋友，对方即可加入">
           <div className="flex items-center gap-2">
             <code className="rounded bg-muted px-2 py-0.5 text-sm">{room?.id}</code>
-            {hostRuntime.clipboard && (
+            {clipboardAvailable && (
               <Tooltip>
                 <TooltipTrigger asChild>
                   <Button
@@ -273,15 +273,13 @@ export function RoomSettingsSection({ onUpdateSettings }: RoomSettingsSectionPro
                 <Lock className="h-3 w-3" /> 已设置
               </Badge>
               {roomPassword && (
-                hostRuntime.clipboard ? (
+                clipboardAvailable ? (
                   <Tooltip>
                     <TooltipTrigger asChild>
                       <code
                         className="cursor-pointer rounded bg-muted px-2 py-0.5 text-xs transition-colors hover:bg-muted/80"
-                        onClick={() => {
-                          if (!hostRuntime.clipboard) return
-                          navigator.clipboard.writeText(roomPassword)
-                          toast.success('密码已复制')
+                        onClick={async () => {
+                          if (await copyText(roomPassword)) toast.success('密码已复制')
                         }}
                       >
                         {roomPassword}
