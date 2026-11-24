@@ -25,7 +25,7 @@
     "concurrently": "^10.0.7",
     "kill-port": "^2.0.1",
     "prettier": "^3.10.1",
-    "vitest": "^5.1.0"
+    "vitest": "^5.1.1"
   },
   "workspaces": [
     "packages/*"
