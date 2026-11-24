@@ -9,6 +9,7 @@ interface ActionCardsProps {
   onCreateClick: () => void
   onDirectJoin: () => void
   actionLoading: boolean
+  createRestricted?: boolean
 }
 
 export function ActionCards({
@@ -17,6 +18,7 @@ export function ActionCards({
   onCreateClick,
   onDirectJoin,
   actionLoading,
+  createRestricted = false,
 }: ActionCardsProps) {
   return (
     <motion.div
@@ -34,11 +36,15 @@ export function ActionCards({
             </div>
             <h2 className="text-base font-semibold text-foreground">创建房间</h2>
           </div>
-          <p className="text-xs text-muted-foreground">新建一个房间，分享房间号邀请朋友加入</p>
+          <p className="text-xs text-muted-foreground">
+            {createRestricted
+              ? '当前服务器较繁忙，暂限新建房间，可先加入下方活跃房间'
+              : '新建一个房间，分享房间号邀请朋友加入'}
+          </p>
         </div>
-        <Button onClick={onCreateClick} className="w-full">
+        <Button onClick={onCreateClick} disabled={actionLoading || createRestricted} className="w-full">
           <Home className="mr-2 h-4 w-4" />
-          创建房间
+          {createRestricted ? '高负载暂限新建' : '创建房间'}
         </Button>
       </div>
 

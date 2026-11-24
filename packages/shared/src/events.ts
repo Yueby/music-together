@@ -19,6 +19,13 @@ export const EVENTS = {
   ROOM_LIST: 'room:list',
   ROOM_LIST_UPDATE: 'room:list_update',
 
+  // Server capacity & admission queue
+  SERVER_CAPACITY_GET: 'server:capacity_get',
+  SERVER_CAPACITY_UPDATE: 'server:capacity_update',
+  ADMISSION_QUEUED: 'admission:queued',
+  ADMISSION_CANCEL: 'admission:cancel',
+  ADMISSION_CANCELLED: 'admission:cancelled',
+
   // Player controls
   PLAYER_PLAY: 'player:play',
   /** Server → clients: the track that will most likely play next, with a resolved stream URL, to fetch ahead of time. */

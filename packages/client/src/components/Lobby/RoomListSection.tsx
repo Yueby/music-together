@@ -1,6 +1,7 @@
 import { Music } from 'lucide-react'
 import { motion } from 'motion/react'
 import type { RoomListItem } from '@music-together/shared'
+import { ServerLoadBadge } from '@/components/ServerLoadBadge'
 import { RoomCard } from './RoomCard'
 import { Skeleton } from '@/components/ui/skeleton'
 
@@ -13,13 +14,14 @@ interface RoomListSectionProps {
 export function RoomListSection({ rooms, isLoading, onRoomClick }: RoomListSectionProps) {
   return (
     <>
-      <div className="mb-4">
-        <h2 className="text-lg font-semibold text-foreground/80">
+      <div className="mb-4 flex items-center justify-between gap-2">
+        <h2 className="min-w-0 truncate text-lg font-semibold text-foreground/80">
           活跃房间
           {!isLoading && rooms.length > 0 && (
-            <span className="ml-2 text-sm font-normal text-muted-foreground">({rooms.length})</span>
+            <span className="ml-2 text-sm font-normal tabular-nums text-muted-foreground">({rooms.length})</span>
           )}
         </h2>
+        <ServerLoadBadge />
       </div>
 
       {isLoading ? (

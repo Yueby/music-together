@@ -38,6 +38,8 @@ src/
 │   └── NotFoundPage.tsx        #   404 页面
 │
 ├── components/                 # UI 组件
+│   ├── ServerLoadBadge.tsx      #   服务器负载与预计剩余容量
+│   ├── AdmissionQueuePanel.tsx  #   准入排队位次与取消入口
 │   ├── Chat/
 │   │   ├── ChatMessage.tsx     #     单条消息（用户/系统）
 │   │   └── ChatPanel.tsx       #     聊天面板（消息列表 + 输入框）
@@ -123,6 +125,7 @@ src/
 │       └── tooltip.tsx
 │
 ├── hooks/                      # 自定义 Hooks
+│   ├── useServerCapacity.ts    #   订阅服务器容量和准入排队事件
 │   ├── useSocketEvent.ts       #   通用 Socket 事件订阅工具 Hook（自动 on/off，ref 稳定）
 │   ├── usePlayer.ts            #   播放器主 hook（组合 useHowl + useLyric + usePlayerSync）
 │   ├── useHowl.ts              #   Howler.js 音频实例管理
@@ -160,6 +163,7 @@ src/
 │   └── useCoverWidth.ts        #   封面容器最小尺寸测量（约束信息栏/控件宽度与封面对齐）
 │
 ├── stores/                     # Zustand 状态仓库
+│   ├── serverStatusStore.ts    #   服务器容量快照与当前准入排队状态
 │   ├── playerStore.ts          #   播放状态（currentTrack, isPlaying, volume 等）
 │   ├── roomStore.ts            #   房间状态（room, currentUser, users）
 │   ├── chatStore.ts            #   聊天（messages, unreadCount, isChatOpen）
@@ -217,6 +221,9 @@ src/
 │   └── playlistController.ts   #   歌单管理（获取用户歌单列表 via Socket，使用 getUserCookie 取请求者自己的 cookie，歌单私有）
 │
 ├── services/                   # 服务层：业务逻辑
+│   ├── containerMetrics.ts    #   cgroup 内存、CPU 配额与节流采样
+│   ├── serverLoadService.ts    #   加权负载、动态容量控制与状态广播
+│   ├── admissionQueueService.ts #  创建/加入房间的准入队列、断线处理与过期清理
 │   ├── roomService.ts          #   房间 CRUD + 角色管理 + 加入校验（validateJoinRequest）
 │   ├── roomLifecycleService.ts #   房间生命周期定时器（空置删除）+ 防抖广播
 │   ├── playerService.ts        #   已提交/待执行播放状态 + revision 边界 + 流 URL 解析/过期刷新 + 切歌防抖 + 加入播放同步

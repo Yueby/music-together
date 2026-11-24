@@ -252,6 +252,15 @@ export function createMappRoomSession(options: MappRoomSessionOptions): MappRoom
     // just left says nothing about the create/join in flight, so only errors that can belong to it end it.
     if (pending && !IN_ROOM_ACTION_ERRORS.has(code)) failRequest()
   }
+  const onAdmissionCancelled: ServerToClientEvents[typeof EVENTS.ADMISSION_CANCELLED] = ({ reason }) => {
+    if (!pending) return
+    if (reason === 'user' || reason === 'replaced') {
+      pending = undefined
+      publish({ status: restingStatus(), errorCode: null })
+      return
+    }
+    failRequest()
+  }
 
   socket.on('connect', reconcile)
   socket.on('disconnect', onDisconnect)
@@ -261,6 +270,7 @@ export function createMappRoomSession(options: MappRoomSessionOptions): MappRoom
   socket.on(EVENTS.ROOM_STATE, onState)
   socket.on(EVENTS.ROOM_REJOIN_TOKEN, onTicket)
   socket.on(EVENTS.ROOM_ERROR, onRoomError)
+  socket.on(EVENTS.ADMISSION_CANCELLED, onAdmissionCancelled)
 
   /** Starts a manual request, which supersedes any automatic re-entry. */
   function beginRequest(next: Pending, status: 'creating' | 'joining'): boolean {
@@ -335,6 +345,7 @@ export function createMappRoomSession(options: MappRoomSessionOptions): MappRoom
       socket.off(EVENTS.ROOM_STATE, onState)
       socket.off(EVENTS.ROOM_REJOIN_TOKEN, onTicket)
       socket.off(EVENTS.ROOM_ERROR, onRoomError)
+      socket.off(EVENTS.ADMISSION_CANCELLED, onAdmissionCancelled)
       snapshot = Object.freeze({ ...IDLE, status: 'disposed' })
       socket.disconnect()
       onChange?.(snapshot)

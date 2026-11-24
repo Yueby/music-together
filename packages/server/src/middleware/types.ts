@@ -1,10 +1,11 @@
 import type { Server, Socket } from 'socket.io'
-import type { ClientToServerEvents, ServerToClientEvents } from '@music-together/shared'
+import type { ClientKind, ClientToServerEvents, ServerToClientEvents } from '@music-together/shared'
 import type { RoomData } from '../repositories/types.js'
 import type { User } from '@music-together/shared'
 
 export interface SocketData {
   identityUserId: string
+  clientKind?: ClientKind
 }
 
 export type TypedServer = Server<ClientToServerEvents, ServerToClientEvents, Record<string, never>, SocketData>

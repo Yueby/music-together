@@ -53,6 +53,43 @@ const envSchema = z.object({
     (value) => (value === '' ? undefined : value),
     z.url({ protocol: /^https$/ }).default('https://amlldb.bikonoo.com'),
   ),
+  /** Enable dynamic capacity & admission queue protection. */
+  CAPACITY_ENABLED: z.enum(['true', 'false']).default('true'),
+  /** Minimum dynamic capacity ceiling in weighted load units (never shrinks below this). */
+  CAPACITY_MIN_UNITS: z.preprocess(
+    (value) => (value === '' ? undefined : value),
+    z.coerce.number().int().min(1).max(2000).default(12),
+  ),
+  /** Maximum dynamic capacity ceiling in weighted load units (hard upper bound). */
+  CAPACITY_MAX_UNITS: z.preprocess(
+    (value) => (value === '' ? undefined : value),
+    z.coerce.number().int().min(1).max(5000).default(300),
+  ),
+  /** Optional explicit initial baseline in weighted load units (defaults to container cgroup-derived estimate). */
+  CAPACITY_BASE_UNITS: z.preprocess(
+    (value) => (value === '' ? undefined : value),
+    z.coerce.number().int().min(1).max(5000).optional(),
+  ),
+  /** Weighted load cost of one mini-app user relative to one web user (1.0). */
+  CAPACITY_MAPP_WEIGHT: z.preprocess(
+    (value) => (value === '' ? undefined : value),
+    z.coerce.number().min(1).max(10).default(3),
+  ),
+  /** Maximum number of users allowed in the admission waiting queue. */
+  CAPACITY_MAX_QUEUE: z.preprocess(
+    (value) => (value === '' ? undefined : value),
+    z.coerce.number().int().min(0).max(1000).default(100),
+  ),
+  /** Outer hard cap on total concurrent Socket.IO connections (protects FD/memory against idle socket floods). */
+  CAPACITY_MAX_SOCKETS: z.preprocess(
+    (value) => (value === '' ? undefined : value),
+    z.coerce.number().int().min(20).max(10000).default(500),
+  ),
+  /** Optional memory ceiling (MiB) override for non-cgroup hosts; Docker containers auto-read cgroup memory limits. */
+  CAPACITY_MEMORY_LIMIT_MB: z.preprocess(
+    (value) => (value === '' ? undefined : value),
+    z.coerce.number().int().min(64).max(131072).optional(),
+  ),
 })
 
 const env = envSchema.parse(process.env)
@@ -90,5 +127,15 @@ export const config = {
   },
   ttml: {
     dbBaseUrl: env.TTML_DB_BASE_URL.replace(/\/+$/, ''),
+  },
+  capacity: {
+    enabled: env.CAPACITY_ENABLED === 'true',
+    minUnits: env.CAPACITY_MIN_UNITS,
+    maxUnits: Math.max(env.CAPACITY_MIN_UNITS, env.CAPACITY_MAX_UNITS),
+    baseUnits: env.CAPACITY_BASE_UNITS,
+    mappWeight: env.CAPACITY_MAPP_WEIGHT,
+    maxQueue: env.CAPACITY_MAX_QUEUE,
+    maxSockets: env.CAPACITY_MAX_SOCKETS,
+    memoryLimitMb: env.CAPACITY_MEMORY_LIMIT_MB,
   },
 } as const

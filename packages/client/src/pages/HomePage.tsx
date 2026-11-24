@@ -1,3 +1,4 @@
+import { AdmissionQueueDialog } from '@/components/AdmissionQueuePanel'
 import { ActionCards } from '@/components/Lobby/ActionCards'
 import { CreateRoomDialog } from '@/components/Lobby/CreateRoomDialog'
 import { HeroSection } from '@/components/Lobby/HeroSection'
@@ -7,6 +8,7 @@ import { RoomListSection } from '@/components/Lobby/RoomListSection'
 import { UserPopover } from '@/components/Lobby/UserPopover'
 import { Separator } from '@/components/ui/separator'
 import { useLobby } from '@/hooks/useLobby'
+import { useServerCapacity } from '@/hooks/useServerCapacity'
 import { unlockAudio } from '@/lib/audioUnlock'
 import { ACTION_LOADING_TIMEOUT_MS } from '@/lib/constants'
 import { wrongPasswordText } from '@/lib/passwordErrorText'
@@ -27,6 +29,7 @@ export default function HomePage() {
   const navigate = useNavigate()
   const { socket } = useSocketContext()
   const { rooms, isLoading, createRoom, joinRoom } = useLobby()
+  const { capacity, admissionQueue, cancelQueue } = useServerCapacity()
   const hasUpdate = useVersionCheck()
 
   const [createDialogOpen, setCreateDialogOpen] = useState(false)
@@ -149,11 +152,27 @@ export default function HomePage() {
       }
     }
 
+    const onAdmissionQueued = () => {
+      // Resume waiting for room state even when this is a restored queue position after reconnecting.
+      awaitingRoomStateRef.current = true
+      setActionLoading(false)
+      setCreateDialogOpen(false)
+      setPasswordDialog({ open: false, room: null })
+      setPasswordError(null)
+    }
+
+    const onAdmissionCancelled = () => {
+      awaitingRoomStateRef.current = false
+      setActionLoading(false)
+    }
+
     socket.on(EVENTS.ROOM_CREATED, onCreated)
     socket.on(EVENTS.ROOM_STATE, onState)
     socket.on(EVENTS.ROOM_REJOIN_TOKEN, onRejoinToken)
     socket.on(EVENTS.CHAT_HISTORY, onChatHistory)
     socket.on(EVENTS.ROOM_ERROR, onError)
+    socket.on(EVENTS.ADMISSION_QUEUED, onAdmissionQueued)
+    socket.on(EVENTS.ADMISSION_CANCELLED, onAdmissionCancelled)
 
     return () => {
       socket.off(EVENTS.ROOM_CREATED, onCreated)
@@ -161,6 +180,8 @@ export default function HomePage() {
       socket.off(EVENTS.ROOM_REJOIN_TOKEN, onRejoinToken)
       socket.off(EVENTS.CHAT_HISTORY, onChatHistory)
       socket.off(EVENTS.ROOM_ERROR, onError)
+      socket.off(EVENTS.ADMISSION_QUEUED, onAdmissionQueued)
+      socket.off(EVENTS.ADMISSION_CANCELLED, onAdmissionCancelled)
     }
   }, [socket, navigate, setRoom])
 
@@ -253,7 +274,7 @@ export default function HomePage() {
     >
       {/* Header */}
       <header className="border-b border-border/50 bg-background/95 backdrop-blur-sm">
-        <div className="mx-auto flex max-w-5xl items-center justify-between px-4 py-3">
+        <div className="mx-auto flex max-w-5xl items-center justify-between gap-2 px-4 py-3">
           <div className="flex items-center gap-2.5">
             <Headphones className="h-5 w-5 text-primary" />
             <span className="text-base font-semibold tracking-tight text-foreground">Music Together</span>
@@ -273,6 +294,7 @@ export default function HomePage() {
             onCreateClick={() => setCreateDialogOpen(true)}
             onDirectJoin={handleDirectJoin}
             actionLoading={actionLoading}
+            createRestricted={capacity?.createRestricted ?? false}
           />
 
           <Separator className="mb-8" />
@@ -353,6 +375,17 @@ export default function HomePage() {
         error={passwordError}
         isLoading={actionLoading}
       />
+
+      {admissionQueue && (
+        <AdmissionQueueDialog
+          queued={admissionQueue}
+          onCancel={() => {
+            awaitingRoomStateRef.current = false
+            setActionLoading(false)
+            cancelQueue()
+          }}
+        />
+      )}
     </motion.div>
   )
 }

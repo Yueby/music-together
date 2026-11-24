@@ -7,6 +7,7 @@ import {
   roomJoinSchema,
   roomSettingsSchema,
   setRoleSchema,
+  type ClientKind,
 } from '@music-together/shared'
 import type { TypedServer, TypedSocket } from '../middleware/types.js'
 import type { RoomData } from '../repositories/types.js'
@@ -19,10 +20,12 @@ import {
   recordJoinPasswordFailure,
 } from '../middleware/socketRateLimiter.js'
 import { roomRepo } from '../repositories/roomRepository.js'
+import { admissionQueue, type QueuedAdmissionEntry } from '../services/admissionQueueService.js'
 import * as chatService from '../services/chatService.js'
 import * as playerService from '../services/playerService.js'
 import { issueRejoinTicket, revokeRejoinTickets } from '../services/rejoinTicketService.js'
 import * as roomService from '../services/roomService.js'
+import { canAdmitClient, getPublicServerCapacity, notifyCapacityChanged } from '../services/serverLoadService.js'
 import * as voteService from '../services/voteService.js'
 import { executeVoteAction } from '../services/voteActionService.js'
 import { logger } from '../utils/logger.js'
@@ -60,6 +63,153 @@ function countRoomsCreatedBy(identityUserId: string | undefined): number {
   return count
 }
 
+function resolveClientKind(socket: TypedSocket): ClientKind {
+  return socket.data.clientKind ?? (socket.data.identityUserId?.startsWith('mapp_') ? 'mapp' : 'web')
+}
+
+function executeRoomCreate(
+  io: TypedServer,
+  socket: TypedSocket,
+  input: { nickname: string; roomName?: string; password?: string },
+): void {
+  const { nickname, roomName, password } = input
+
+  // Auto-leave any previous room before creating a new one
+  handleLeave(io, socket, 'auto-leave before create', true)
+
+  const { room, user } = roomService.createRoom(
+    socket.id,
+    nickname.trim(),
+    roomName,
+    password,
+    socket.data.identityUserId,
+  )
+
+  socket.leave('lobby')
+  socket.join(room.id)
+  socket.emit(EVENTS.ROOM_CREATED, { roomId: room.id, userId: user.id })
+  // 创建者是 owner，发送含密码的完整状态
+  socket.emit(EVENTS.ROOM_STATE, roomService.toPublicRoomStateForOwner(room))
+  const rejoin = issueRejoinTicket(room.id, user.id)
+  socket.emit(EVENTS.ROOM_REJOIN_TOKEN, {
+    roomId: room.id,
+    token: rejoin.token,
+    expiresAt: rejoin.expiresAt,
+    ttlMs: rejoin.ttlMs,
+  })
+
+  // 广播房间列表给大厅用户 & 刷新承载指标
+  roomService.broadcastRoomList(io)
+  notifyCapacityChanged()
+}
+
+async function executeRoomJoin(
+  io: TypedServer,
+  socket: TypedSocket,
+  input: { roomId: string; nickname: string },
+  validation: roomService.JoinValidationResult,
+): Promise<void> {
+  const { roomId, nickname } = input
+
+  // Auto-leave any previous room (different from target) before joining
+  const existingMapping = roomRepo.getSocketMapping(socket.id)
+  if (existingMapping && existingMapping.roomId !== roomId) {
+    handleLeave(io, socket, 'auto-leave before join', true)
+  }
+
+  const result = roomService.joinRoom(socket.id, roomId, nickname.trim(), socket.data.identityUserId)
+  if (!result) {
+    socket.emit(EVENTS.ROOM_ERROR, { code: ERROR_CODE.JOIN_FAILED, message: '加入房间失败' })
+    return
+  }
+
+  const { room: updatedRoom, user, hostChanged, roleChanged } = result
+  const rejoin = issueRejoinTicket(roomId, user.id)
+
+  socket.leave('lobby')
+  socket.join(roomId)
+
+  // Send full room state + chat history
+  // Owner 收到含密码版本，其他成员收到不含密码版本
+  const isOwner = user.role === 'owner'
+  const stateForJoiner = isOwner
+    ? roomService.toPublicRoomStateForOwner(updatedRoom)
+    : roomService.toPublicRoomState(updatedRoom)
+  socket.emit(EVENTS.ROOM_STATE, stateForJoiner)
+
+  // If conductor or roles changed (owner/admin returned, temporary admin cleared),
+  // broadcast to ALL OTHER clients so permissions stay in sync.
+  if (hostChanged || roleChanged) {
+    socket.to(roomId).emit(EVENTS.ROOM_STATE, roomService.toPublicRoomState(updatedRoom))
+  }
+  socket.emit(EVENTS.ROOM_REJOIN_TOKEN, {
+    roomId,
+    token: rejoin.token,
+    expiresAt: rejoin.expiresAt,
+    ttlMs: rejoin.ttlMs,
+  })
+  socket.emit(EVENTS.CHAT_HISTORY, chatService.getHistory(roomId))
+
+  // Sync playback state to the joining client (auto-resume, auto-play)
+  playerService.syncPlaybackToSocket(io, socket, roomId, updatedRoom).catch((err) => {
+    logger.error('syncPlaybackToSocket failed', err, { roomId })
+  })
+
+  // Reconcile an active vote with the current online membership and host.
+  await reconcileAndBroadcastVote(io, roomId, updatedRoom)
+
+  // Notify others (skip for rejoin — they already know the user is in the room)
+  if (!validation.isRejoin) {
+    socket.to(roomId).emit(EVENTS.ROOM_USER_JOINED, user)
+    // System message for user joined (server-authoritative)
+    const joinMsg = chatService.createSystemMessage(roomId, `${user.nickname} 加入了房间`)
+    io.to(roomId).emit(EVENTS.CHAT_MESSAGE, joinMsg)
+  }
+
+  // 更新大厅房间列表（人数变了）& 刷新承载指标
+  roomService.broadcastRoomList(io)
+  notifyCapacityChanged()
+}
+
+/** Execute a previously queued create/join once a capacity slot opens up. */
+export async function executeQueuedAdmission(
+  io: TypedServer,
+  socket: TypedSocket,
+  entry: QueuedAdmissionEntry,
+): Promise<void> {
+  if (entry.payload.action === 'create') {
+    if (countRoomsCreatedBy(socket.data.identityUserId) >= LIMITS.ROOM_MAX_CREATED_PER_IDENTITY) {
+      socket.emit(EVENTS.ADMISSION_CANCELLED, {
+        reason: 'expired',
+        message: `你创建的房间已达上限（${LIMITS.ROOM_MAX_CREATED_PER_IDENTITY} 个），请先关闭不用的房间`,
+      })
+      return
+    }
+    executeRoomCreate(io, socket, entry.payload)
+    return
+  }
+
+  const { roomId, nickname, password, rejoinToken } = entry.payload
+  const validation = roomService.validateJoinRequest(
+    roomId,
+    socket.id,
+    socket.data.identityUserId,
+    password,
+    rejoinToken,
+  )
+  if (!validation.valid) {
+    socket.emit(EVENTS.ADMISSION_CANCELLED, {
+      reason: validation.errorCode === 'WRONG_PASSWORD' ? 'password_changed' : 'room_closed',
+      message:
+        validation.errorCode === 'WRONG_PASSWORD'
+          ? '房间密码已变更，请重新输入密码'
+          : (validation.errorMessage ?? '目标房间已关闭'),
+    })
+    return
+  }
+  await executeRoomJoin(io, socket, { roomId, nickname }, validation)
+}
+
 export function registerRoomController(io: TypedServer, socket: TypedSocket) {
   const withOwnerOnly = createWithOwnerOnly(io)
 
@@ -70,6 +220,24 @@ export function registerRoomController(io: TypedServer, socket: TypedSocket) {
       socket.emit(EVENTS.ROOM_LIST_UPDATE, roomService.listRooms())
     } catch (err) {
       logger.error('ROOM_LIST handler error', err, { socketId: socket.id })
+    }
+  })
+
+  // ---- Server capacity status (大厅与房间均可用) ----
+  socket.on(EVENTS.SERVER_CAPACITY_GET, () => {
+    try {
+      socket.emit(EVENTS.SERVER_CAPACITY_UPDATE, getPublicServerCapacity())
+    } catch (err) {
+      logger.error('SERVER_CAPACITY_GET handler error', err, { socketId: socket.id })
+    }
+  })
+
+  // ---- Cancel waiting in admission queue ----
+  socket.on(EVENTS.ADMISSION_CANCEL, () => {
+    try {
+      admissionQueue.cancelByIdentity(io, socket.data.identityUserId, 'user')
+    } catch (err) {
+      logger.error('ADMISSION_CANCEL handler error', err, { socketId: socket.id })
     }
   })
 
@@ -97,32 +265,33 @@ export function registerRoomController(io: TypedServer, socket: TypedSocket) {
         return
       }
 
-      // Auto-leave any previous room before creating a new one
-      handleLeave(io, socket, 'auto-leave before create', true)
+      const isAlreadyInRoom = Boolean(roomRepo.getSocketMapping(socket.id))
+      const admission = canAdmitClient(resolveClientKind(socket), { isCreate: true })
+      if (!admission.allowed && admission.reason === 'create_restricted') {
+        socket.emit(EVENTS.ROOM_ERROR, {
+          code: ERROR_CODE.SERVER_FULL,
+          message: '服务器当前较繁忙，暂不支持新建房间，可加入现有房间',
+        })
+        return
+      }
+      if (!isAlreadyInRoom && (!admission.allowed || admissionQueue.hasWaitingForCapacity())) {
+        const queued = admissionQueue.enqueue(
+          io,
+          socket,
+          { action: 'create', nickname, roomName, password },
+          admission.reason === 'mapp_stream' ? 'mapp_stream' : 'capacity',
+        )
+        if (!queued.ok) {
+          socket.emit(EVENTS.ROOM_ERROR, {
+            code: ERROR_CODE.SERVER_FULL,
+            message: '当前服务器人数和排队名额均已满，请稍后再试',
+          })
+        }
+        return
+      }
 
-      const { room, user } = roomService.createRoom(
-        socket.id,
-        nickname.trim(),
-        roomName,
-        password,
-        socket.data.identityUserId,
-      )
-
-      socket.leave('lobby')
-      socket.join(room.id)
-      socket.emit(EVENTS.ROOM_CREATED, { roomId: room.id, userId: user.id })
-      // 创建者是 owner，发送含密码的完整状态
-      socket.emit(EVENTS.ROOM_STATE, roomService.toPublicRoomStateForOwner(room))
-      const rejoin = issueRejoinTicket(room.id, user.id)
-      socket.emit(EVENTS.ROOM_REJOIN_TOKEN, {
-        roomId: room.id,
-        token: rejoin.token,
-        expiresAt: rejoin.expiresAt,
-        ttlMs: rejoin.ttlMs,
-      })
-
-      // 广播房间列表给大厅用户
-      roomService.broadcastRoomList(io)
+      admissionQueue.dropByIdentity(io, socket.data.identityUserId, socket.id)
+      executeRoomCreate(io, socket, { nickname, roomName, password })
     } catch (err) {
       logger.error('ROOM_CREATE handler error', err, { socketId: socket.id })
       socket.emit(EVENTS.ROOM_ERROR, { code: ERROR_CODE.INTERNAL, message: '服务器内部错误' })
@@ -177,63 +346,31 @@ export function registerRoomController(io: TypedServer, socket: TypedSocket) {
         await clearJoinPasswordFailures(socket, roomId)
       }
 
-      // Auto-leave any previous room (different from target) before joining
+      // Whitelist bypass: existing members, valid rejoin tickets, returning owners/admins, and room switches
+      // (net load delta <= 0) must never be diverted to the waiting queue.
       const existingMapping = roomRepo.getSocketMapping(socket.id)
-      if (existingMapping && existingMapping.roomId !== roomId) {
-        handleLeave(io, socket, 'auto-leave before join', true)
+      const bypass = validation.skipPassword || Boolean(existingMapping)
+      if (!bypass) {
+        const admission = canAdmitClient(resolveClientKind(socket), { isCreate: false })
+        if (!admission.allowed || admissionQueue.hasWaitingForCapacity()) {
+          const queued = admissionQueue.enqueue(
+            io,
+            socket,
+            { action: 'join', roomId, nickname, password, rejoinToken },
+            admission.reason === 'mapp_stream' ? 'mapp_stream' : 'capacity',
+          )
+          if (!queued.ok) {
+            socket.emit(EVENTS.ROOM_ERROR, {
+              code: ERROR_CODE.SERVER_FULL,
+              message: '当前服务器人数和排队名额均已满，请稍后再试',
+            })
+          }
+          return
+        }
       }
 
-      const result = roomService.joinRoom(socket.id, roomId, nickname.trim(), socket.data.identityUserId)
-      if (!result) {
-        socket.emit(EVENTS.ROOM_ERROR, { code: ERROR_CODE.JOIN_FAILED, message: '加入房间失败' })
-        return
-      }
-
-      const { room: updatedRoom, user, hostChanged, roleChanged } = result
-      const rejoin = issueRejoinTicket(roomId, user.id)
-
-      socket.leave('lobby')
-      socket.join(roomId)
-
-      // Send full room state + chat history
-      // Owner 收到含密码版本，其他成员收到不含密码版本
-      const isOwner = user.role === 'owner'
-      const stateForJoiner = isOwner
-        ? roomService.toPublicRoomStateForOwner(updatedRoom)
-        : roomService.toPublicRoomState(updatedRoom)
-      socket.emit(EVENTS.ROOM_STATE, stateForJoiner)
-
-      // If conductor or roles changed (owner/admin returned, temporary admin cleared),
-      // broadcast to ALL OTHER clients so permissions stay in sync.
-      if (hostChanged || roleChanged) {
-        socket.to(roomId).emit(EVENTS.ROOM_STATE, roomService.toPublicRoomState(updatedRoom))
-      }
-      socket.emit(EVENTS.ROOM_REJOIN_TOKEN, {
-        roomId,
-        token: rejoin.token,
-        expiresAt: rejoin.expiresAt,
-        ttlMs: rejoin.ttlMs,
-      })
-      socket.emit(EVENTS.CHAT_HISTORY, chatService.getHistory(roomId))
-
-      // Sync playback state to the joining client (auto-resume, auto-play)
-      playerService.syncPlaybackToSocket(io, socket, roomId, updatedRoom).catch((err) => {
-        logger.error('syncPlaybackToSocket failed', err, { roomId })
-      })
-
-      // Reconcile an active vote with the current online membership and host.
-      await reconcileAndBroadcastVote(io, roomId, updatedRoom)
-
-      // Notify others (skip for rejoin — they already know the user is in the room)
-      if (!validation.isRejoin) {
-        socket.to(roomId).emit(EVENTS.ROOM_USER_JOINED, user)
-        // System message for user joined (server-authoritative)
-        const joinMsg = chatService.createSystemMessage(roomId, `${user.nickname} 加入了房间`)
-        io.to(roomId).emit(EVENTS.CHAT_MESSAGE, joinMsg)
-      }
-
-      // 更新大厅房间列表（人数变了）
-      roomService.broadcastRoomList(io)
+      admissionQueue.dropByIdentity(io, socket.data.identityUserId, socket.id)
+      await executeRoomJoin(io, socket, { roomId, nickname }, validation)
     } catch (err) {
       logger.error('ROOM_JOIN handler error', err, { socketId: socket.id })
       socket.emit(EVENTS.ROOM_ERROR, { code: ERROR_CODE.INTERNAL, message: '服务器内部错误' })
@@ -336,6 +473,7 @@ export function registerRoomController(io: TypedServer, socket: TypedSocket) {
   socket.on('disconnect', (reason) => {
     try {
       logger.info(`Client disconnected: ${socket.id}, reason: ${reason}`, { socketId: socket.id })
+      admissionQueue.handleDisconnect(io, socket.id, socket.data.identityUserId)
       handleLeave(io, socket)
       // Safety net: always clean up socket mapping and RTT data.
       // handleLeave only cleans up if the socket was in a room, but
@@ -404,8 +542,10 @@ function handleLeave(io: TypedServer, socket: TypedSocket, reason?: string, revo
     })
   }
 
-  // 更新大厅房间列表
+  // 更新大厅房间列表 & 释放名额后尝试放行排队用户
   roomService.broadcastRoomList(io)
+  notifyCapacityChanged()
+  void admissionQueue.drain(io)
 
   if (reason) {
     logger.info(`${reason}: left room ${roomId} for socket ${socket.id}`, { roomId, socketId: socket.id })

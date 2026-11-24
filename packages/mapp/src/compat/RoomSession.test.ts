@@ -113,6 +113,31 @@ afterEach(() => {
 })
 
 describe('Mapp room session', () => {
+  it('clears a pending create when the user cancels admission', () => {
+    ready()
+    expect(session.createRoom({ nickname })).toBe(true)
+    expect(session.snapshot.status).toBe('creating')
+
+    fake.server(EVENTS.ADMISSION_CANCELLED, { reason: 'user' })
+    fake.server(EVENTS.ROOM_CREATED, { roomId: 'room-a', userId: 'platform-user' })
+    fake.server(EVENTS.ROOM_STATE, room())
+
+    expect(session.snapshot).toMatchObject({ status: 'ready', roomId: null, errorCode: null })
+    expect(session.createRoom({ nickname })).toBe(true)
+  })
+
+  it('clears a pending join with JOIN_FAILED when the queued room closes', () => {
+    ready()
+    expect(session.joinRoom({ roomId: 'room-a', nickname })).toBe(true)
+    expect(session.snapshot.status).toBe('joining')
+
+    fake.server(EVENTS.ADMISSION_CANCELLED, { reason: 'room_closed' })
+    fake.server(EVENTS.ROOM_STATE, room())
+
+    expect(session.snapshot).toMatchObject({ status: 'ready', roomId: null, errorCode: 'JOIN_FAILED' })
+    expect(session.joinRoom({ roomId: 'room-a', nickname })).toBe(true)
+  })
+
   it('creates an opt-in socket and requires connection plus server identity for explicit requests', () => {
     expect(createMappRoomSocket).toHaveBeenCalledExactlyOnceWith({ ...options, timeoutMs: 5000 })
     expect(session.socket).toBe(fake)

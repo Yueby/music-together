@@ -1,5 +1,7 @@
 import { CircleUserRound, Copy, Ellipsis, LogOut, Search, Settings, Users, Wifi, WifiOff } from 'lucide-react'
+import { useReducedMotion } from 'motion/react'
 import { useEffect, useState } from 'react'
+import { ServerStatusPopoverContent, getEffectiveServerLoad, useHoverPopover } from '@/components/ServerLoadBadge'
 import { Button } from '@/components/ui/button'
 import {
   DropdownMenu,
@@ -8,12 +10,15 @@ import {
   DropdownMenuSeparator,
   DropdownMenuTrigger,
 } from '@/components/ui/dropdown-menu'
+import { Popover, PopoverContent, PopoverTrigger } from '@/components/ui/popover'
+import { Separator } from '@/components/ui/separator'
 import { Tooltip, TooltipContent, TooltipTrigger } from '@/components/ui/tooltip'
 import { getMedianRTT } from '@/lib/clockSync'
 import { canCopyText, copyText, getRoomShareUrl } from '@/lib/clipboard'
 import { hostRuntime } from '@/lib/hostRuntime'
 import { cn } from '@/lib/utils'
 import { useRoomStore } from '@/stores/roomStore'
+import { useServerStatusStore } from '@/stores/serverStatusStore'
 import { useSocketContext } from '@/providers/SocketProvider'
 import { toast } from 'sonner'
 
@@ -30,6 +35,9 @@ export function RoomHeader({ onOpenSearch, onOpenSettings, onOpenAccount, onOpen
   const roomName = useRoomStore((s) => s.room?.name)
   const roomId = useRoomStore((s) => s.room?.id)
   const userCount = useRoomStore((s) => s.room?.users.length ?? 0)
+  const capacity = useServerStatusStore((s) => s.capacity)
+  const prefersReducedMotion = useReducedMotion()
+  const statusPopover = useHoverPopover()
   const { isConnected } = useSocketContext()
   const clipboardAvailable = canCopyText()
 
@@ -52,6 +60,15 @@ export function RoomHeader({ onOpenSearch, onOpenSettings, onOpenAccount, onOpen
       : rtt < 300
         ? 'text-yellow-500/60'
         : 'text-destructive/60'
+
+  const roundedRtt = Math.round(rtt)
+  const serverLoad = isConnected && capacity ? getEffectiveServerLoad(capacity) : null
+  const showLoadDot = serverLoad !== null && serverLoad.level !== 'normal'
+  const statusAriaLabel = !isConnected
+    ? '连接断开，正在重连'
+    : serverLoad
+      ? `已连接 · 延迟 ${roundedRtt}ms · ${serverLoad.titleText}`
+      : `已连接 · 延迟 ${roundedRtt}ms`
 
   const copyRoomLink = async () => {
     if (roomId && await copyText(getRoomShareUrl(roomId))) {
@@ -107,27 +124,72 @@ export function RoomHeader({ onOpenSearch, onOpenSettings, onOpenAccount, onOpen
             </Tooltip>
           </>
         )}
-        {/* Connection status + RTT indicator */}
-        <Tooltip>
-          <TooltipTrigger asChild>
-            <span
-              className="flex items-center gap-1"
-              role="status"
-              aria-live="polite"
-              aria-label={isConnected ? `已连接 · 延迟 ${Math.round(rtt)}ms` : '连接断开，正在重连'}
+        {/* Unified connection + RTT + server capacity indicator */}
+        <Popover open={statusPopover.open} onOpenChange={statusPopover.handleOpenChange}>
+          <PopoverTrigger asChild>
+            <button
+              type="button"
+              data-testid="room-connection-status"
+              data-load-level={serverLoad?.level}
+              aria-label={statusAriaLabel}
+              onPointerEnter={statusPopover.hasHover ? statusPopover.handlePointerEnter : undefined}
+              onPointerLeave={statusPopover.hasHover ? statusPopover.handlePointerLeave : undefined}
+              onClick={statusPopover.handleTriggerClick}
+              className="-my-1.5 inline-flex min-h-11 shrink-0 cursor-pointer items-center gap-1 rounded-md px-1.5 text-xs transition-colors hover:bg-accent/50 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring sm:my-0 sm:h-7 sm:min-h-0"
             >
               {isConnected ? (
-                <Wifi className={`h-4 w-4 ${rttColor}`} />
+                <Wifi className={cn('h-4 w-4 shrink-0', rttColor)} />
               ) : (
-                <WifiOff className="h-4 w-4 animate-pulse text-destructive" />
+                <WifiOff className="h-4 w-4 shrink-0 animate-pulse text-destructive motion-reduce:animate-none" />
               )}
-              {isConnected && <span className={`font-mono text-xs tabular-nums ${rttColor}`}>{Math.round(rtt)}ms</span>}
-            </span>
-          </TooltipTrigger>
-          <TooltipContent>
-            {isConnected ? `已连接 · 延迟 ${Math.round(rtt)}ms` : '连接断开，正在重连...'}
-          </TooltipContent>
-        </Tooltip>
+              {isConnected && <span className={cn('font-mono text-xs tabular-nums', rttColor)}>{roundedRtt}ms</span>}
+              {showLoadDot && (
+                <span
+                  aria-hidden
+                  data-testid="room-server-load-dot"
+                  className={cn(
+                    'h-1.5 w-1.5 shrink-0 rounded-full',
+                    serverLoad.meta.dotClass,
+                    serverLoad.meta.pulse && !prefersReducedMotion && 'animate-pulse motion-reduce:animate-none',
+                  )}
+                />
+              )}
+            </button>
+          </PopoverTrigger>
+
+          <PopoverContent
+            side="bottom"
+            align="start"
+            sideOffset={8}
+            collisionPadding={12}
+            onPointerEnter={statusPopover.hasHover ? statusPopover.handlePointerEnter : undefined}
+            onPointerLeave={statusPopover.hasHover ? statusPopover.handlePointerLeave : undefined}
+            className="w-64"
+          >
+            <div className="space-y-3">
+              <div className="flex items-center justify-between gap-3">
+                <span className="flex min-w-0 items-center gap-2 text-xs font-medium text-foreground">
+                  {isConnected ? (
+                    <Wifi className={cn('h-3.5 w-3.5 shrink-0', rttColor)} />
+                  ) : (
+                    <WifiOff className="h-3.5 w-3.5 shrink-0 text-destructive" />
+                  )}
+                  <span className="truncate">{isConnected ? '已连接' : '连接断开，正在重连...'}</span>
+                </span>
+                {isConnected && (
+                  <span className={cn('shrink-0 font-mono text-xs tabular-nums', rttColor)}>{roundedRtt}ms</span>
+                )}
+              </div>
+
+              {isConnected && capacity && (
+                <>
+                  <Separator />
+                  <ServerStatusPopoverContent capacity={capacity} />
+                </>
+              )}
+            </div>
+          </PopoverContent>
+        </Popover>
       </div>
 
       <div className="flex items-center gap-0.5 sm:gap-1">

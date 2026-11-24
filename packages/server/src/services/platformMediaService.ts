@@ -27,6 +27,18 @@ interface SlotOptions {
   queueTimeoutMs?: number
 }
 
+export interface StreamSlotsSnapshot {
+  activeStreams: number
+  maxStreams: number
+  waitingCount: number
+  maxQueued: number
+  recentWaitP95Ms: number
+  recentBusyCount: number
+}
+
+const METRICS_WINDOW_MS = 30_000
+const MAX_WAIT_SAMPLES = 20
+
 /**
  * Concurrent-stream cap with a FIFO line. A whole room starts the same track at the same moment, so a full house is
  * the normal case rather than abuse: the overflow waits briefly for a free slot instead of being rejected. A user's
@@ -36,6 +48,8 @@ export class StreamSlots {
   private total = 0
   private perUser = new Map<string, number>()
   private waiting: Array<() => void> = []
+  private waitSamples: Array<{ at: number; ms: number }> = []
+  private busyEvents: number[] = []
   private readonly maxStreams: number
   private readonly maxQueued: number
   private readonly queueTimeoutMs: number
@@ -44,6 +58,43 @@ export class StreamSlots {
     this.maxStreams = options.maxStreams ?? config.mapp.maxStreams
     this.maxQueued = options.maxQueued ?? MAX_QUEUED
     this.queueTimeoutMs = options.queueTimeoutMs ?? QUEUE_TIMEOUT_MS
+  }
+
+  private pruneMetrics(now: number): void {
+    const cutoff = now - METRICS_WINDOW_MS
+    while (this.waitSamples.length > 0 && this.waitSamples[0]!.at < cutoff) this.waitSamples.shift()
+    while (this.busyEvents.length > 0 && this.busyEvents[0]! < cutoff) this.busyEvents.shift()
+  }
+
+  private recordWait(ms: number): void {
+    const now = Date.now()
+    this.pruneMetrics(now)
+    this.waitSamples.push({ at: now, ms })
+    if (this.waitSamples.length > MAX_WAIT_SAMPLES) this.waitSamples.shift()
+  }
+
+  private recordBusy(): void {
+    const now = Date.now()
+    this.pruneMetrics(now)
+    this.busyEvents.push(now)
+  }
+
+  getSnapshot(): StreamSlotsSnapshot {
+    this.pruneMetrics(Date.now())
+    let recentWaitP95Ms = 0
+    if (this.waitSamples.length > 0) {
+      const sorted = this.waitSamples.map((s) => s.ms).sort((a, b) => a - b)
+      const idx = Math.min(sorted.length - 1, Math.floor(sorted.length * 0.95))
+      recentWaitP95Ms = sorted[idx]!
+    }
+    return {
+      activeStreams: this.total,
+      maxStreams: this.maxStreams,
+      waitingCount: this.waiting.length,
+      maxQueued: this.maxQueued,
+      recentWaitP95Ms,
+      recentBusyCount: this.busyEvents.length,
+    }
   }
 
   async acquire(userId: string, signal?: AbortSignal): Promise<() => void> {
@@ -59,9 +110,12 @@ export class StreamSlots {
     if (this.total < this.maxStreams) {
       this.total++
     } else {
+      const waitedFrom = Date.now()
       try {
         await this.wait(signal)
+        this.recordWait(Date.now() - waitedFrom)
       } catch (error) {
+        if (error instanceof MediaError && error.code === 'MEDIA_BUSY') this.recordBusy()
         forgetUser()
         throw error
       }
@@ -108,6 +162,11 @@ export class StreamSlots {
   }
 }
 const sharedSlots = new StreamSlots()
+
+/** Snapshot of mini-app audio relay concurrency and recent waiting pressure. */
+export function getStreamSlotsSnapshot(): StreamSlotsSnapshot {
+  return sharedSlots.getSnapshot()
+}
 
 /** Legacy provider promises cannot be cancelled: stop waiting for them, and ignore their late result. */
 function abortable<T>(work: Promise<T>, signal: AbortSignal): Promise<T> {

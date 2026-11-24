@@ -19,6 +19,8 @@ import { createPlatformMetadataRouter } from './routes/platformMetadata.js'
 import roomRoutes from './routes/rooms.js'
 import { createPlatformResolvers, PlatformAuth, readPlatformConfig } from './services/platformAuth.js'
 import { clearAllTimers } from './services/roomLifecycleService.js'
+import { admissionQueue } from './services/admissionQueueService.js'
+import { getPublicServerCapacity, startServerLoadMonitor, stopServerLoadMonitor } from './services/serverLoadService.js'
 import { logger } from './utils/logger.js'
 
 // Mini-app (Discourse) platform access is opt-in: with no MAPP_* variables nothing below is mounted.
@@ -71,7 +73,20 @@ app.use('/api/rooms', roomCheckRateLimit, roomRoutes)
 
 // Health check
 app.get('/api/health', (_req, res) => {
-  res.json({ status: 'ok', timestamp: Date.now() })
+  const capacity = getPublicServerCapacity()
+  res.json({
+    status: 'ok',
+    timestamp: Date.now(),
+    load: {
+      level: capacity.level,
+      mappLevel: capacity.mappLevel,
+      onlineUsers: capacity.onlineUsers,
+      activeRooms: capacity.activeRooms,
+      usedUnits: capacity.usedUnits,
+      effectiveCap: capacity.effectiveCap,
+      queueLength: capacity.queueLength,
+    },
+  })
 })
 
 // Version check (client polls on startup to detect updates)
@@ -126,6 +141,7 @@ const io = new Server<ClientToServerEvents, ServerToClientEvents, Record<string,
 // Platform tokens are verified by an Engine.IO middleware before the WebSocket upgrade; Web Cookies are unchanged.
 attachSocketIdentity(io, platform ? { resolvePlatformIdentity: platform.resolvers.roomSocket } : {})
 initializeSocket(io)
+startServerLoadMonitor(io)
 
 httpServer.on('error', (err: NodeJS.ErrnoException) => {
   if (err.code === 'EADDRINUSE') {
@@ -154,6 +170,8 @@ httpServer.listen(config.port, () => {
 // Graceful shutdown
 function shutdown(signal: string) {
   logger.info(`Received ${signal}, shutting down gracefully...`)
+  stopServerLoadMonitor()
+  admissionQueue.clear()
   clearAllTimers()
   io.close(() => {
     httpServer.close(() => {

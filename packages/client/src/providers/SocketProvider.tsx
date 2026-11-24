@@ -34,6 +34,8 @@ export function SocketStateProvider({
 
 /** Persistent toast id so we can dismiss it on reconnect */
 const DISCONNECT_TOAST_ID = 'socket-disconnect'
+const OVERLOAD_TOAST_ID = 'server-overloaded'
+const OVERLOAD_RETRY_MS = 5_000
 
 export function SocketProvider({ children }: { children: ReactNode }) {
   const socketRef = useRef<TypedSocket>(getSocket())
@@ -44,8 +46,12 @@ export function SocketProvider({ children }: { children: ReactNode }) {
     const socket = socketRef.current
     let cancelled = false
     let reauthenticating = false
+    let overloadRetryTimer: ReturnType<typeof setTimeout> | undefined
 
     const onConnect = () => {
+      clearTimeout(overloadRetryTimer)
+      overloadRetryTimer = undefined
+      toast.dismiss(OVERLOAD_TOAST_ID)
       setIsConnected(true)
       toast.dismiss(DISCONNECT_TOAST_ID)
       if (hasDisconnectedRef.current) {
@@ -96,8 +102,19 @@ export function SocketProvider({ children }: { children: ReactNode }) {
     }
 
     const onConnectError = async (err: Error) => {
+      if (cancelled) return
+      if (err.message === 'SERVER_OVERLOADED') {
+        if (overloadRetryTimer !== undefined) return
+        toast.dismiss(DISCONNECT_TOAST_ID)
+        toast.warning('服务器当前较繁忙，正在重试…', { id: OVERLOAD_TOAST_ID, duration: Infinity })
+        overloadRetryTimer = setTimeout(() => {
+          overloadRetryTimer = undefined
+          if (!cancelled && !socket.connected) socket.connect()
+        }, OVERLOAD_RETRY_MS)
+        return
+      }
       if (err.message !== 'UNAUTHENTICATED') return
-      if (cancelled || reauthenticating) return
+      if (reauthenticating) return
 
       reauthenticating = true
       try {
@@ -117,6 +134,8 @@ export function SocketProvider({ children }: { children: ReactNode }) {
 
     return () => {
       cancelled = true
+      clearTimeout(overloadRetryTimer)
+      toast.dismiss(OVERLOAD_TOAST_ID)
       socket.off('connect', onConnect)
       socket.off('disconnect', onDisconnect)
       socket.off('connect_error', onConnectError)
