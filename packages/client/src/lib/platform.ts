@@ -21,13 +21,6 @@ export const PLATFORM_DOT: Record<MusicSource, string> = {
   kugou: 'bg-blue-500',
 }
 
-/** One character on a platform's round mark (the platform picker shows the mark instead of its name) */
-export const PLATFORM_GLYPH: Record<MusicSource, string> = {
-  netease: '云',
-  tencent: 'Q',
-  kugou: '酷',
-}
-
 /** Membership name of an account (empty when it has none). The level numbers differ per platform. */
 export function vipLabel(platform: MusicSource, vipType: number | undefined): string {
   if (!vipType || vipType <= 0) return ''
