@@ -9,7 +9,7 @@ export interface EndpointDeclaration {
     query?: string[];
     /** Reviewed constant headers; sensitive and transport headers are prohibited. */
     headers?: Record<string, string>;
-    auth?: "none" | "platform";
+    auth?: "none" | "platform" | "auto";
     /** Follow an actual redirect only to this reviewed GET/HEAD endpoint, using fresh authorization. */
     redirectTo?: string;
 }
