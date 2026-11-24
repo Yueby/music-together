@@ -9,6 +9,7 @@ vi.mock('@/lib/metadataFetch', () => ({ metadataFetch: transport.fetch }))
 vi.mock('@/lib/config', () => ({ SERVER_URL: 'https://music.test' }))
 
 import { useArtist } from './useArtist'
+import { clearAppQueryCache } from '@/lib/queryClient'
 
 const track = (id: string): Track => ({
   id: `t-${id}`,
@@ -51,6 +52,7 @@ function Probe() {
 const flush = () => act(async () => {})
 
 beforeEach(() => {
+  clearAppQueryCache()
   transport.fetch.mockReset()
   container = document.createElement('div')
   root = createRoot(container)

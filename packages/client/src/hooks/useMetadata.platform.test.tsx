@@ -8,6 +8,7 @@ import { createMappMetadataFetch } from '../../../mapp/src/compat/metadataFetch'
 import { useSearch } from './useSearch'
 import { useLyric } from './useLyric'
 import { usePlayerStore } from '@/stores/playerStore'
+import { clearAppQueryCache } from '@/lib/queryClient'
 
 const proxy = vi.hoisted(() => ({ fetch: vi.fn() }))
 vi.mock('@/lib/config', () => ({ SERVER_URL: 'https://music.example.test' }))
@@ -65,6 +66,7 @@ describe('shared search and lyric hooks with reviewed SDK metadata requests', ()
   >
 
   beforeEach(async () => {
+    clearAppQueryCache()
     vi.clearAllMocks()
     vi.stubGlobal('IS_REACT_ACT_ENVIRONMENT', true)
     vi.stubGlobal(

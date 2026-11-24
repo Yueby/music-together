@@ -1,7 +1,7 @@
 import { memo } from 'react'
-import dayjs from 'dayjs'
 import { motion } from 'motion/react'
 import type { ChatMessage as ChatMessageType } from '@music-together/shared'
+import { formatClockTime } from '@/lib/format'
 import { cn } from '@/lib/utils'
 
 interface ChatMessageProps {
@@ -31,7 +31,7 @@ export const ChatMessage = memo(function ChatMessage({ message, isOwnMessage }: 
     >
       <div className="flex items-center gap-2">
         <span className="text-xs font-medium text-muted-foreground">{message.nickname}</span>
-        <span className="text-xs text-muted-foreground/40">{dayjs(message.timestamp).format('HH:mm')}</span>
+        <span className="text-xs text-muted-foreground/40">{formatClockTime(message.timestamp)}</span>
       </div>
       <div
         className={cn(

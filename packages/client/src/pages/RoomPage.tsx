@@ -29,15 +29,48 @@ import { useIsMobile } from '@/hooks/useIsMobile'
 import { useRoomStore } from '@/stores/roomStore'
 import { useServerStatusStore } from '@/stores/serverStatusStore'
 import { useChatStore } from '@/stores/chatStore'
+import { useArtistPageStore } from '@/stores/artistPageStore'
 import { useSocketContext } from '@/providers/SocketProvider'
-import { AbilityProvider } from '@/providers/AbilityProvider'
+import { AbilityProvider, useAppAbility } from '@/providers/AbilityProvider'
 import { useClockSync } from '@/hooks/useClockSync'
+import { usePlayerHotkeys } from '@/hooks/usePlayerHotkeys'
 import { storage } from '@/lib/storage'
 import { roomCommands } from '@/lib/RoomCommands'
 
 /** Invisible component that runs NTP clock-sync only while in a room. */
 function ClockSyncRunner() {
   useClockSync()
+  return null
+}
+
+/** Invisible component that wires global room player hotkeys inside AbilityProvider. */
+function RoomHotkeysRunner({
+  anyDialogOpen,
+  onPlay,
+  onPause,
+  onNext,
+  onPrev,
+  onOpenSearch,
+}: {
+  anyDialogOpen: boolean
+  onPlay: () => void
+  onPause: () => void
+  onNext: () => void
+  onPrev: () => void
+  onOpenSearch: () => void
+}) {
+  const ability = useAppAbility()
+  const artistDialogOpen = useArtistPageStore((s) => s.target !== null)
+  usePlayerHotkeys({
+    enabled: true,
+    canPlay: ability.can('play', 'Player'),
+    anyDialogOpen: anyDialogOpen || artistDialogOpen,
+    onPlay,
+    onPause,
+    onNext,
+    onPrev,
+    onOpenSearch,
+  })
   return null
 }
 
@@ -318,6 +351,10 @@ export default function RoomPage() {
     [navigate],
   )
 
+  const handleOpenSearch = useCallback(() => {
+    setSearchOpen(true)
+  }, [])
+
   const handleOpenMembers = useCallback(() => {
     setSettingsInitialTab('members')
     setSettingsOpen(true)
@@ -375,9 +412,20 @@ export default function RoomPage() {
     )
   }
 
+  const anyDialogOpen =
+    searchOpen || queueOpen || settingsOpen || accountOpen || passwordNeeded || (isMobile && chatOpen)
+
   return (
     <AbilityProvider>
       <ClockSyncRunner />
+      <RoomHotkeysRunner
+        anyDialogOpen={anyDialogOpen}
+        onPlay={play}
+        onPause={pause}
+        onNext={next}
+        onPrev={prev}
+        onOpenSearch={handleOpenSearch}
+      />
       <motion.div
         initial={{ opacity: 0 }}
         animate={{ opacity: 1 }}
@@ -386,7 +434,7 @@ export default function RoomPage() {
       >
         <div className="flex h-dvh flex-col bg-background">
           <RoomHeader
-            onOpenSearch={() => setSearchOpen(true)}
+            onOpenSearch={handleOpenSearch}
             onOpenSettings={() => setSettingsOpen(true)}
             onOpenAccount={() => setAccountOpen(true)}
             onOpenMembers={handleOpenMembers}

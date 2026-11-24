@@ -10,6 +10,7 @@ vi.mock('@/lib/config', () => ({ SERVER_URL: 'https://music.test' }))
 vi.mock('sonner', () => ({ toast }))
 
 import { useSearch, type SearchType } from './useSearch'
+import { clearAppQueryCache } from '@/lib/queryClient'
 import type { MusicSource } from '@music-together/shared'
 
 const json = (body: unknown, status = 200) => ({ ok: status < 400, status, json: async () => body }) as Response
@@ -44,6 +45,7 @@ const render = (source: MusicSource = 'netease', type?: SearchType) =>
 const urlOf = (call: number) => new URL(transport.fetch.mock.calls[call][0] as string)
 
 beforeEach(() => {
+  clearAppQueryCache()
   transport.fetch.mockReset()
   toast.error.mockReset()
   container = document.createElement('div')
@@ -56,6 +58,33 @@ afterEach(() => {
 })
 
 describe('useSearch', () => {
+  it('deduplicates repeated searches while pending and reuses their result after reset', async () => {
+    const pending = deferred()
+    transport.fetch.mockReturnValueOnce(pending.promise)
+    act(() => latest.search('cached'))
+    act(() => latest.search(' cached '))
+    expect(transport.fetch).toHaveBeenCalledTimes(1)
+    expect(transport.fetch.mock.calls[0][1].signal.aborted).toBe(false)
+
+    await act(async () => pending.resolve(json({ tracks: songs('a'), hasMore: false })))
+    expect(latest.results).toEqual(songs('a'))
+    act(() => latest.resetState())
+    await act(async () => latest.search('cached'))
+    expect(latest.results).toEqual(songs('a'))
+    expect(transport.fetch).toHaveBeenCalledTimes(1)
+  })
+
+  it('sends the same search again after an HTTP failure', async () => {
+    transport.fetch
+      .mockResolvedValueOnce(json({}, 503))
+      .mockResolvedValueOnce(json({ tracks: songs('a'), hasMore: false }))
+    await act(async () => latest.search('retry'))
+    expect(latest.results).toEqual([])
+    await act(async () => latest.search('retry'))
+    expect(latest.results).toEqual(songs('a'))
+    expect(transport.fetch).toHaveBeenCalledTimes(2)
+  })
+
   it('searches the chosen platform and type, with the keyword trimmed and encoded', async () => {
     transport.fetch.mockResolvedValue(json({ tracks: songs('a'), hasMore: false }))
     render('kugou', 'album')

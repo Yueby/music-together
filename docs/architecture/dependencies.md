@@ -9,27 +9,32 @@
 | UI | react / react-dom | ^19.3.1 | UI 基础 |
 | UI | radix-ui / shadcn/ui | ^1.8.1 / — | 无障碍 UI 原语与项目组件 |
 | 样式 | tailwindcss / @tailwindcss/vite | ^4.3.3 | 原子化 CSS 与 Vite 集成 |
-| 状态 | zustand | ^5.0.16 | 客户端状态管理 |
-| 路由 | react-router | ^8.5.1 | 客户端路由（v8 ESM；仓库统一使用 Node >=24.15.0） |
+| 状态 | zustand | ^5.1.0 | 客户端状态管理 |
+| 请求缓存 | @tanstack/react-query | ^5.108.4 | 搜索、发现、歌手、歌单与歌词客户端缓存和并发去重 |
+| 路由 | react-router | ^8.5.2 | 客户端路由（v8 ESM；仓库统一使用 Node >=24.15.0） |
 | 实时通信 | socket.io-client | ^4.8.4 | Socket.IO 客户端 |
 | 音频 | howler | ^2.2.4 | 音频播放引擎 |
 | 歌词 | @applemusic-like-lyrics/core / react / lyric | ^0.6.0 / ^0.6.0 / ^1.1.0 | AMLL 歌词解析、逐词动画与动态背景 |
-| 动画 | motion | ^14.9.0 | React 动画 |
-| 虚拟列表 | @tanstack/react-virtual | ^3.14.24 | 搜索和歌单大列表 |
+| 动画 | motion | ^14.14.0 | React 动画 |
+| 虚拟列表 | @tanstack/react-virtual | ^3.14.26 | 搜索和歌单大列表 |
+| 拖拽排序 | @dnd-kit/core / sortable / utilities | ^6.3.1 / ^10.0.0 / ^3.2.2 | 播放队列触摸/指针/键盘拖拽排序 |
+| 快捷键 | tinykeys | ^4.0.1 | 房间内全局播放与搜索快捷键 |
 | 图形 | @pixi/* | 7.x | 歌词背景渲染与滤镜 |
-| 工具 | dayjs / nanoid / sonner / lucide-react | 当前锁定版本 | 日期、ID、通知、图标 |
+| 工具 | nanoid / sonner / lucide-react | 当前锁定版本 | ID、通知、图标 |
 
 ## Server 核心依赖
 
 | 库 | 版本 | 用途 |
 | --- | --- | --- |
 | express | ^5.3.0 | HTTP API 和静态文件托管 |
+| helmet | ^8.3.0 | HTTP 安全响应头（关闭 `X-Powered-By`，保留 `cross-origin` CORP 与 SPA/微应用兼容） |
+| compression | ^1.8.2 | JSON/文本与静态资源 HTTP 压缩（自动跳过音视频流与封面代理） |
+| pino / pino-http | ^10.4.0 / ^11.0.0 | 结构化日志与脱敏 HTTP 访问日志 |
 | socket.io | ^4.8.4 | 实时房间通信 |
 | @meting/core | ^1.6.2 | 多音源基础数据聚合 |
 | @neteasecloudmusicapienhanced/api | ^4.41.1 | 网易云登录、用户、歌单及登录态播放 URL API |
-| dotenv | ^18.0.9 | 环境变量加载 |
+| dotenv | ^18.0.10 | 环境变量加载 |
 | zod | ^4.6.7 | 运行时输入验证 |
-| pino | ^10.4.0 | 结构化日志 |
 | rate-limiter-flexible | ^11.2.3 | Socket/聊天限流 |
 | express-rate-limit | ^8.7.2 | 音乐 REST 与封面代理 HTTP 限流 |
 | lru-cache | ^11.5.3 | 搜索、曲目和资源缓存 |
@@ -60,7 +65,8 @@ QQ 音乐搜索使用腾讯 `zzc` 签名访问 `musics.fcg`，避免未签名 `m
 | --- | --- | --- |
 | TypeScript ~6.0.2 | all | `typescript` 使用 `@typescript/typescript6` 别名，提供类型检查和构建 |
 | TypeScript ~7.0.2 | all | `@typescript/native` 使用 `typescript` 别名，供原生编译器使用 |
-| Vite ^8.3.5 | client | 前端构建 |
+| Vite ^8.3.8 | client | 前端构建 |
+| vite-plugin-pwa ^2.0.0 | client | 仅 Web SPA 构建生成 Manifest 与 Service Worker（跳过 `/api/*` 与 `/socket.io/*`，不影响 `mapp`） |
 | ESLint ^10.14.0 | client | 代码检查 |
 | Vitest ^5.0.5 | root | Node/jsdom 单元与组件测试 |
 | Testing Library | client | React 组件行为测试 |

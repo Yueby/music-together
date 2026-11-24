@@ -1,4 +1,6 @@
 import { useDiscover, type DiscoverError } from '@/hooks/useDiscover'
+import { syncAccountLogin } from '@/lib/queryClient'
+import { useRoomStore } from '@/stores/roomStore'
 import { DISCOVER_SOURCES } from '@music-together/shared'
 import type { Artist, DiscoverHomeBlock, MusicSource, Playlist } from '@music-together/shared'
 import { useEffect, useMemo } from 'react'
@@ -20,6 +22,7 @@ export function useAccountDiscover(platform: MusicSource, loggedIn: boolean, ver
   const discover = useDiscover()
   const { loadHome, loadRadar, loadDaily } = discover
   const supported = DISCOVER_SOURCES.includes(platform)
+  const roomId = useRoomStore((state) => state.room?.id)
 
   useEffect(() => {
     if (supported) loadRadar(platform)
@@ -28,14 +31,18 @@ export function useAccountDiscover(platform: MusicSource, loggedIn: boolean, ver
   // The recommended playlists are the account's own once signed in, and today's songs need the account at all: both wait
   // for the saved login to be confirmed instead of loading twice (and the songs are not asked for while signed out).
   useEffect(() => {
-    if (!supported || verifying) return
+    if (verifying) return
+    if (roomId) syncAccountLogin(platform, roomId, loggedIn)
+    if (!supported) return
     loadHome(platform)
     if (loggedIn) loadDaily(platform)
-  }, [supported, verifying, loggedIn, platform, loadHome, loadDaily])
+  }, [supported, verifying, loggedIn, platform, roomId, loadHome, loadDaily])
 
   const daily = useMemo(
-    () => (verifying ? { ...discover.daily, loading: true, error: null } : discover.daily),
-    [verifying, discover.daily],
+    () => verifying || !loggedIn || discover.daily.source !== platform
+      ? { items: [], loading: verifying, error: null, source: null }
+      : discover.daily,
+    [verifying, loggedIn, platform, discover.daily],
   )
 
   const dailyTile = useMemo<Playlist | null>(() => {
@@ -58,7 +65,7 @@ export function useAccountDiscover(platform: MusicSource, loggedIn: boolean, ver
   }, [supported, loggedIn, verifying, daily, platform])
 
   // Never show what was loaded for another platform while this one is on its way.
-  const home = discover.home.source === platform ? discover.home : null
+  const home = !verifying && discover.home.source === platform ? discover.home : null
   const radar = discover.radar.source === platform ? discover.radar : null
 
   const block = (name: DiscoverHomeBlock): BlockState => ({
@@ -79,8 +86,8 @@ export function useAccountDiscover(platform: MusicSource, loggedIn: boolean, ver
       loading: radar ? radar.loading : true,
       error: radar?.error ?? null,
     },
-    reloadHome: () => loadHome(platform),
-    reloadRadar: () => loadRadar(platform),
-    reloadDaily: () => loadDaily(platform),
+    reloadHome: () => loadHome(platform, true),
+    reloadRadar: () => loadRadar(platform, true),
+    reloadDaily: () => loadDaily(platform, true),
   }
 }

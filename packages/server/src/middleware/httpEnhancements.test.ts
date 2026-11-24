@@ -1,0 +1,95 @@
+import express from 'express'
+import { createServer } from 'node:http'
+import type { AddressInfo } from 'node:net'
+import { afterEach, describe, expect, it } from 'vitest'
+import {
+  createCompressionMiddleware,
+  createHelmetMiddleware,
+  sanitizeUrlForLog,
+  shouldCompressResponse,
+} from './httpEnhancements.js'
+
+async function startTestServer(configure: (app: express.Express) => void) {
+  const app = express()
+  configure(app)
+  const server = createServer(app)
+  await new Promise<void>((resolve) => server.listen(0, '127.0.0.1', resolve))
+  const { port } = server.address() as AddressInfo
+  return {
+    baseUrl: `http://127.0.0.1:${port}`,
+    close: () => new Promise<void>((resolve, reject) => server.close((err) => (err ? reject(err) : resolve()))),
+  }
+}
+
+describe('httpEnhancements', () => {
+  const closers: Array<() => Promise<void>> = []
+
+  afterEach(async () => {
+    while (closers.length > 0) {
+      await closers.pop()!()
+    }
+  })
+
+  describe('sanitizeUrlForLog', () => {
+    it('redacts sensitive query parameters while preserving benign ones', () => {
+      const result = sanitizeUrlForLog(
+        '/api/mapp/audio?roomId=ABC123&mini_app_token=eyJhbGciOi&cookie=MUSIC_U%3Dsecret&source=netease',
+      )
+      expect(result).toContain('/api/mapp/audio?')
+      expect(result).toContain('roomId=ABC123')
+      expect(result).toContain('source=netease')
+      expect(result).not.toContain('eyJhbGciOi')
+      expect(result).not.toContain('MUSIC_U')
+      expect(result).toContain('mini_app_token=%5BREDACTED%5D')
+      expect(result).toContain('cookie=%5BREDACTED%5D')
+    })
+
+    it('returns paths without query strings untouched', () => {
+      expect(sanitizeUrlForLog('/api/rooms/ABCD12/check')).toBe('/api/rooms/ABCD12/check')
+      expect(sanitizeUrlForLog(undefined)).toBe('/')
+    })
+  })
+
+  describe('helmet & compression middleware', () => {
+    it('sets security headers, hides X-Powered-By, and keeps cross-origin CORP', async () => {
+      const srv = await startTestServer((app) => {
+        app.use(createHelmetMiddleware())
+        app.use(createCompressionMiddleware())
+        app.get('/api/test', (_req, res) => {
+          res.json({ payload: 'x'.repeat(2500) })
+        })
+      })
+      closers.push(srv.close)
+
+      const res = await fetch(`${srv.baseUrl}/api/test`, {
+        headers: { 'Accept-Encoding': 'gzip' },
+      })
+      expect(res.status).toBe(200)
+      expect(res.headers.get('x-powered-by')).toBeNull()
+      expect(res.headers.get('x-content-type-options')).toBe('nosniff')
+      expect(res.headers.get('cross-origin-resource-policy')).toBe('cross-origin')
+      expect(res.headers.get('content-security-policy')).toBeNull()
+      // Compression active for >1KiB JSON responses
+      expect(res.headers.get('vary')).toMatch(/accept-encoding/i)
+    })
+
+    it('skips compression for binary audio/cover proxy routes and audio/image content types', () => {
+      const fakeRes = (contentType?: string) =>
+        ({
+          getHeader: (name: string) => (name.toLowerCase() === 'content-type' ? contentType : undefined),
+        }) as unknown as express.Response
+
+      const fakeReq = (urlPath: string, headers: Record<string, string> = {}) =>
+        ({ path: urlPath, url: urlPath, headers }) as unknown as express.Request
+
+      expect(shouldCompressResponse(fakeReq('/api/mapp/audio'), fakeRes('application/octet-stream'))).toBe(false)
+      expect(shouldCompressResponse(fakeReq('/api/mapp/cover'), fakeRes('image/jpeg'))).toBe(false)
+      expect(shouldCompressResponse(fakeReq('/api/music/cover-proxy'), fakeRes('image/webp'))).toBe(false)
+      expect(shouldCompressResponse(fakeReq('/api/other'), fakeRes('audio/mpeg'))).toBe(false)
+      expect(
+        shouldCompressResponse(fakeReq('/api/music/lyric', { 'x-no-compression': '1' }), fakeRes('application/json')),
+      ).toBe(false)
+      expect(shouldCompressResponse(fakeReq('/api/music/lyric'), fakeRes('application/json'))).toBe(true)
+    })
+  })
+})

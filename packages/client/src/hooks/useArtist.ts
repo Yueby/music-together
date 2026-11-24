@@ -1,10 +1,12 @@
 import { findArtistByName } from '@/lib/artistLookup'
 import { getMusicJson as getJson, statusOf } from '@/lib/musicApi'
+import { fetchAppQuery, queryKeys } from '@/lib/queryClient'
 import type { Artist, MusicSource, Playlist, Track } from '@music-together/shared'
 import { useCallback, useEffect, useRef, useState } from 'react'
 
 const SONG_PAGE_SIZE = 50
 const ALBUM_PAGE_SIZE = 30
+const STALE_TIME = 5 * 60_000
 
 interface Page<T> {
   items: T[]
@@ -75,8 +77,14 @@ export function useArtist() {
 
   const load = useCallback(
     async (source: MusicSource, id: string, hint?: Artist) => {
-      reset()
       const controller = new AbortController()
+      const request = fetchAppQuery(
+        queryKeys.artist.home(source, id),
+        STALE_TIME,
+        (signal) => getJson<ArtistHome>('artist', { source, id }, signal),
+        controller.signal,
+      )
+      reset()
       abortRef.current = controller
       const generation = generationRef.current
       contextRef.current = { source, id }
@@ -84,8 +92,8 @@ export function useArtist() {
       if (hint) setArtist(hint)
       setLoading(true)
       try {
-        const home = await getJson<ArtistHome>('artist', { source, id }, controller.signal)
-        if (generationRef.current !== generation) return
+        const home = await request
+        if (generationRef.current !== generation || controller.signal.aborted) return
         setArtist(home.artist)
         songsOffsetRef.current = home.songs.items.length
         albumsOffsetRef.current = home.albums.items.length
@@ -125,7 +133,7 @@ export function useArtist() {
         setLoading(false)
         return
       }
-      if (generationRef.current !== generation) return
+      if (generationRef.current !== generation || controller.signal.aborted) return
       if (!found) {
         setError('not-found')
         setLoading(false)
@@ -138,16 +146,18 @@ export function useArtist() {
 
   const loadMoreSongs = useCallback(async () => {
     const context = contextRef.current
-    if (!context || loadingSongsRef.current || !songsHasMore) return
+    const controller = abortRef.current
+    if (!context || !controller || loadingSongsRef.current || !songsHasMore) return
     loadingSongsRef.current = true
     setSongsLoadingMore(true)
     const generation = generationRef.current
-    const signal = abortRef.current?.signal ?? new AbortController().signal
+    const offset = songsOffsetRef.current
     try {
-      const page = await getJson<Page<Track>>(
-        'artist/songs',
-        { ...context, offset: songsOffsetRef.current, limit: SONG_PAGE_SIZE },
-        signal,
+      const page = await fetchAppQuery(
+        queryKeys.artist.songs(context.source, context.id, offset, SONG_PAGE_SIZE),
+        STALE_TIME,
+        (signal) => getJson<Page<Track>>('artist/songs', { ...context, offset, limit: SONG_PAGE_SIZE }, signal),
+        controller.signal,
       )
       if (generationRef.current !== generation) return
       songsOffsetRef.current += page.items.length
@@ -165,16 +175,18 @@ export function useArtist() {
 
   const loadMoreAlbums = useCallback(async () => {
     const context = contextRef.current
-    if (!context || loadingAlbumsRef.current || !albumsHasMore) return
+    const controller = abortRef.current
+    if (!context || !controller || loadingAlbumsRef.current || !albumsHasMore) return
     loadingAlbumsRef.current = true
     setAlbumsLoadingMore(true)
     const generation = generationRef.current
-    const signal = abortRef.current?.signal ?? new AbortController().signal
+    const offset = albumsOffsetRef.current
     try {
-      const page = await getJson<Page<Playlist>>(
-        'artist/albums',
-        { ...context, offset: albumsOffsetRef.current, limit: ALBUM_PAGE_SIZE },
-        signal,
+      const page = await fetchAppQuery(
+        queryKeys.artist.albums(context.source, context.id, offset, ALBUM_PAGE_SIZE),
+        STALE_TIME,
+        (signal) => getJson<Page<Playlist>>('artist/albums', { ...context, offset, limit: ALBUM_PAGE_SIZE }, signal),
+        controller.signal,
       )
       if (generationRef.current !== generation) return
       albumsOffsetRef.current += page.items.length

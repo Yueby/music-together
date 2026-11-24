@@ -1,4 +1,5 @@
 import { getMusicJson as getJson, statusOf } from '@/lib/musicApi'
+import { fetchAppQuery, queryKeys } from '@/lib/queryClient'
 import { useRoomStore } from '@/stores/roomStore'
 import type { DiscoverHome, MusicSource, Playlist, Track } from '@music-together/shared'
 import { useCallback, useEffect, useRef, useState } from 'react'
@@ -61,17 +62,20 @@ export function useDiscover() {
       fetchData: (signal: AbortSignal) => Promise<T>,
       show: (state: { data: T | null; loading: boolean; error: DiscoverError | null }) => void,
     ) => {
-      run.abort?.abort()
+      const previous = run.abort
       const controller = new AbortController()
       run.abort = controller
       const generation = ++run.generation
       show({ data: null, loading: true, error: null })
-      fetchData(controller.signal).then(
+      const request = fetchData(controller.signal)
+      previous?.abort()
+      request.then(
         (data) => {
-          if (run.generation === generation) show({ data, loading: false, error: null })
+          if (run.generation === generation && !controller.signal.aborted) show({ data, loading: false, error: null })
         },
         (error: unknown) => {
-          if (run.generation !== generation || (error instanceof DOMException && error.name === 'AbortError')) return
+          if (run.generation !== generation || controller.signal.aborted) return
+          if (error instanceof DOMException && error.name === 'AbortError') return
           show({ data: null, loading: false, error: errorOf(statusOf(error)) })
         },
       )
@@ -80,7 +84,7 @@ export function useDiscover() {
   )
 
   const loadDaily = useCallback(
-    (source: MusicSource) => {
+    (source: MusicSource, force?: boolean) => {
       const roomId = useRoomStore.getState().room?.id
       if (!roomId) {
         dailyRun.current.abort?.abort()
@@ -90,7 +94,13 @@ export function useDiscover() {
       }
       start(
         dailyRun.current,
-        (signal) => getItems<Track>('discover/daily', { source, roomId }, signal),
+        (signal) => fetchAppQuery(
+          queryKeys.discover.daily(source, roomId),
+          2 * 60_000,
+          (querySignal) => getItems<Track>('discover/daily', { source, roomId }, querySignal),
+          signal,
+          { force },
+        ),
         (state) => setDaily({ items: state.data ?? [], loading: state.loading, error: state.error, source }),
       )
     },
@@ -98,17 +108,23 @@ export function useDiscover() {
   )
 
   const loadRadar = useCallback(
-    (source: MusicSource) =>
+    (source: MusicSource, force?: boolean) =>
       start(
         radarRun.current,
-        (signal) => getItems<Playlist>('discover/radar', { source }, signal),
+        (signal) => fetchAppQuery(
+          queryKeys.discover.radar(source),
+          10 * 60_000,
+          (querySignal) => getItems<Playlist>('discover/radar', { source }, querySignal),
+          signal,
+          { force },
+        ),
         (state) => setRadar({ items: state.data ?? [], loading: state.loading, error: state.error, source }),
       ),
     [start],
   )
 
   const loadHome = useCallback(
-    (source: MusicSource) => {
+    (source: MusicSource, force?: boolean) => {
       const roomId = useRoomStore.getState().room?.id
       if (!roomId) {
         homeRun.current.abort?.abort()
@@ -118,7 +134,13 @@ export function useDiscover() {
       }
       start(
         homeRun.current,
-        (signal) => getJson<DiscoverHome>('discover/home', { source, roomId }, signal),
+        (signal) => fetchAppQuery(
+          queryKeys.discover.home(source, roomId),
+          2 * 60_000,
+          (querySignal) => getJson<DiscoverHome>('discover/home', { source, roomId }, querySignal),
+          signal,
+          { force },
+        ),
         (state) => setHome({ data: state.data ?? noBlocks(), loading: state.loading, error: state.error, source }),
       )
     },
