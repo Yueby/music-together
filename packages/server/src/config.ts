@@ -39,6 +39,18 @@ const envSchema = z.object({
       .default(128),
   ),
   /**
+   * Highest bitrate (kbps: 128, 192, 320 or 999 = lossless) used when resolving URLs for the Cloudflare Worker
+   * edge audio relay (`resolve-v1`). Edge transfers bypass VPS outbound bandwidth; defaults to at least 320 kbps
+   * (staying comfortably under the 32 MiB media cap) while VPS direct streaming / `fallback-v1` keeps `MAPP_AUDIO_MAX_BITRATE`.
+   */
+  MAPP_RELAY_AUDIO_MAX_BITRATE: z.preprocess(
+    (value) => (value === '' ? undefined : value),
+    z.coerce
+      .number()
+      .refine((value) => [128, 192, 320, 999].includes(value), 'MAPP_RELAY_AUDIO_MAX_BITRATE 必须是 128、192、320 或 999')
+      .optional(),
+  ),
+  /**
    * How many mini-app audio transfers this server relays at once. Mini-apps cannot reach the music CDNs themselves
    * (their sandbox only talks to this server), so every member of a room pulls each track through here. More requests
    * than this wait in a short line; each running transfer holds one upstream connection and a few KiB of buffer.
@@ -92,10 +104,10 @@ const envSchema = z.object({
     (value) => (value === '' ? undefined : value),
     z.coerce.number().int().min(1).max(5000).optional(),
   ),
-  /** Weighted load cost of a mini-app user within the concurrent relay budget. */
+  /** Weighted load cost of a mini-app user within the concurrent relay budget (defaults to 1 when full edge relay is configured, else 3). */
   CAPACITY_MAPP_WEIGHT: z.preprocess(
     (value) => (value === '' ? undefined : value),
-    z.coerce.number().min(1).max(10).default(3),
+    z.coerce.number().min(1).max(10).optional(),
   ),
   CAPACITY_MAPP_ROOM_BASE: z.preprocess(
     (value) => (value === '' ? undefined : value),
@@ -119,6 +131,8 @@ const envSchema = z.object({
 })
 
 const env = envSchema.parse(process.env)
+const edgeRelayEnabled = Boolean(env.MAPP_RELAY_SECRET) && env.MAPP_RELAY_SOURCES.length === MUSIC_SOURCES.length
+const relayAudioMaxBitrate = (env.MAPP_RELAY_AUDIO_MAX_BITRATE ?? Math.max(env.MAPP_AUDIO_MAX_BITRATE, 320)) as AudioQuality
 const explicitOrigins = [env.CLIENT_URL, ...env.CORS_ORIGINS.split(',')]
   .map((origin) => origin.trim())
   .filter(Boolean)
@@ -149,9 +163,11 @@ export const config = {
   },
   mapp: {
     audioMaxBitrate: env.MAPP_AUDIO_MAX_BITRATE as AudioQuality,
+    relayAudioMaxBitrate,
     maxStreams: env.MAPP_MAX_STREAMS,
     relaySecret: env.MAPP_RELAY_SECRET,
     relaySources: env.MAPP_RELAY_SOURCES as readonly MusicSource[],
+    edgeRelayEnabled,
   },
   ttml: {
     dbBaseUrl: env.TTML_DB_BASE_URL.replace(/\/+$/, ''),
@@ -161,7 +177,7 @@ export const config = {
     minUnits: env.CAPACITY_MIN_UNITS,
     maxUnits: Math.max(env.CAPACITY_MIN_UNITS, env.CAPACITY_MAX_UNITS),
     baseUnits: env.CAPACITY_BASE_UNITS,
-    mappWeight: env.CAPACITY_MAPP_WEIGHT,
+    mappWeight: env.CAPACITY_MAPP_WEIGHT ?? (edgeRelayEnabled ? 1 : 3),
     mappRoomBase: env.CAPACITY_MAPP_ROOM_BASE,
     maxQueue: env.CAPACITY_MAX_QUEUE,
     maxSockets: env.CAPACITY_MAX_SOCKETS,

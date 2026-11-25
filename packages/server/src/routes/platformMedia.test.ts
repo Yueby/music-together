@@ -4,6 +4,7 @@ import type { Request, RequestHandler, Response } from 'express'
 import { afterEach, describe, expect, it, vi } from 'vitest'
 import { mappRoomMediaQuerySchema } from '@music-together/shared'
 import { createPlatformMediaRouter } from './platformMedia.js'
+import { getStreamSlotsSnapshot } from '../services/platformMediaService.js'
 import { MediaError } from '../services/mediaSourceRequest.js'
 
 vi.mock('../services/musicProvider.js', () => ({ musicProvider: { getStreamUrl: vi.fn() } }))
@@ -358,6 +359,7 @@ describe('unmounted roomAudio/platform router', () => {
     const secret = 'edge-relay-shared-secret-value'
 
     it('returns resolve-v1 JSON with headers when secret matches and source is enabled', async () => {
+      const before = getStreamSlotsSnapshot().recentEdgeResolveCount ?? 0
       const f = fixture({
         relaySecret: secret,
         relaySources: ['netease', 'tencent'],
@@ -368,6 +370,7 @@ describe('unmounted roomAudio/platform router', () => {
       })
       await f.run()
       expect(f.res.statusCode).toBe(200)
+      expect(getStreamSlotsSnapshot().recentEdgeResolveCount).toBe(before + 1)
       expect(f.rateLimit).toHaveBeenCalledOnce()
       expect(f.resolve).toHaveBeenCalledExactlyOnceWith(
         { roomId: 'ABC_-1', trackId: 'track', userId },
@@ -405,7 +408,23 @@ describe('unmounted roomAudio/platform router', () => {
       expect(f.res.headers['x-mt-relay-mode']).toBeUndefined()
     })
 
+    it.each([
+      { label: 'relay is configured', relaySecret: secret, relaySources: undefined, increment: 1 },
+      { label: 'relay secret is unset', relaySecret: undefined, relaySources: undefined, increment: 0 },
+      { label: 'no sources use relay', relaySecret: secret, relaySources: [], increment: 0 },
+    ])('streams a request without a relay header and records $increment bypasses when $label', async ({
+      relaySecret, relaySources, increment,
+    }) => {
+      const before = getStreamSlotsSnapshot().recentBypassCount ?? 0
+      const f = fixture({ relaySecret, relaySources })
+      await f.run()
+      expect(f.res.statusCode).toBe(200)
+      expect(f.stream).toHaveBeenCalledOnce()
+      expect(getStreamSlotsSnapshot().recentBypassCount).toBe(before + increment)
+    })
+
     it('silently falls back to direct streaming when resolved source is excluded by MAPP_RELAY_SOURCES', async () => {
+      const bypassesBefore = getStreamSlotsSnapshot().recentBypassCount
       const f = fixture({
         relaySecret: secret,
         relaySources: ['netease', 'tencent'],
@@ -420,10 +439,13 @@ describe('unmounted roomAudio/platform router', () => {
       expect(f.resolve).toHaveBeenCalledOnce()
       expect(f.stream).toHaveBeenCalledOnce()
       expect(f.res.headers['x-mt-relay-mode']).toBeUndefined()
+      expect(getStreamSlotsSnapshot().recentBypassCount).toBe(bypassesBefore)
     })
 
     it('skips second rate-limit deduction and logs sanitized relay_fallback on valid fallback-v1', async () => {
       log.warn.mockClear()
+      const before = getStreamSlotsSnapshot().recentFallbackCount ?? 0
+      const bypassesBefore = getStreamSlotsSnapshot().recentBypassCount
       const f = fixture({
         relaySecret: secret,
         headers: {
@@ -433,6 +455,8 @@ describe('unmounted roomAudio/platform router', () => {
       })
       await f.run()
       expect(f.res.statusCode).toBe(200)
+      expect(getStreamSlotsSnapshot().recentFallbackCount).toBe(before + 1)
+      expect(getStreamSlotsSnapshot().recentBypassCount).toBe(bypassesBefore)
       expect(f.rateLimit).not.toHaveBeenCalled()
       expect(f.resolve).not.toHaveBeenCalled()
       expect(f.stream).toHaveBeenCalledOnce()

@@ -1,7 +1,12 @@
 import { createHash, timingSafeEqual } from 'node:crypto'
 import { Router, type RequestHandler, type Response, type Router as RouterType } from 'express'
 import { MUSIC_SOURCES, mappRoomMediaQuerySchema, type MusicSource } from '@music-together/shared'
-import { createPlatformMediaService } from '../services/platformMediaService.js'
+import {
+  createPlatformMediaService,
+  recordEdgeRelayBypass,
+  recordEdgeRelayFallback,
+  recordEdgeRelayResolve,
+} from '../services/platformMediaService.js'
 import { MediaError } from '../services/mediaSourceRequest.js'
 import { mediaStreamRateLimit } from '../middleware/httpRateLimiter.js'
 import { logger } from '../utils/logger.js'
@@ -164,18 +169,23 @@ export function createPlatformMediaRouter(options: Options): RouterType {
       if (relayMode === RELAY_MODE_RESOLVE && service.resolve && allowedRelaySources.size > 0) {
         const resolved = await service.resolve(mediaInput, controller.signal)
         if (allowedRelaySources.has(resolved.source)) {
+          recordEdgeRelayResolve()
           res.setHeader('X-MT-Relay-Mode', RELAY_MODE_RESOLVE)
           res.setHeader('Cache-Control', 'private, no-store, no-transform')
           res.status(200).json(resolved)
           return
         }
       } else if (relayMode === RELAY_MODE_FALLBACK) {
+        recordEdgeRelayFallback()
         logger.warn('relay_fallback', {
           event: 'relay_fallback',
           roomId: mediaInput.roomId,
           trackId: mediaInput.trackId,
           userId: mediaInput.userId,
         })
+      }
+      if (options.relaySecret && allowedRelaySources.size > 0 && relayMode === 'direct') {
+        recordEdgeRelayBypass()
       }
       await service.stream(mediaInput, res, controller.signal)
     } catch (error) {

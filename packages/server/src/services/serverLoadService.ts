@@ -35,6 +35,8 @@ export interface CapacityControllerConfig {
   relaySlots?: number
   relayMaxQueued?: number
   mappRoomBase?: number
+  /** True when Cloudflare Worker edge relay is enabled for all music sources. */
+  edgeRelayEnabled?: boolean
   maxQueue: number
   /** Container limits used to derive initial baseUnits when baseUnits is not explicitly configured. */
   initialMemoryLimitBytes: number
@@ -44,7 +46,13 @@ export interface CapacityControllerConfig {
 const EWMA_ALPHA = 0.35
 const OVERLOAD_TICKS_TO_SHRINK = 2
 const HEALTHY_TICKS_TO_GROW = 5
+const IDLE_RECOVERY_TICKS = 15
+const GENERAL_IDLE_RECOVERY_PRESSURE = 0.35
+const MAPP_IDLE_RECOVERY_STREAM_PRESSURE = 0.2
+const MAPP_IDLE_RECOVERY_GENERAL_PRESSURE = 0.5
+const MAPP_IDLE_RECOVERY_RELAY_UTIL = 0.25
 const MAPP_GROW_COOLDOWN_MS = 30_000
+const EDGE_RELAY_DEGRADE_WINDOW_MS = 300_000
 const MAX_RELAY_DEFERRED_SHRINKS = 2
 const MIN_ROOMS_FOR_CREATE_RESTRICTION = 5
 export const ELD_RESOLUTION_MS = 20
@@ -98,10 +106,16 @@ export function deriveBaselineUnits(
  */
 export class CapacityController {
   private readonly cfg: CapacityControllerConfig
+  private readonly baselineUnits: number
   private effectiveCap: number
   private readonly relaySlots: number
+  private readonly relayBoundCap: number
   private readonly maxMappRoomCap: number
+  private readonly mappRoomBaseline: number
   private mappRoomCap: number
+  private edgeRelayActive: boolean
+  private edgeRelayDegradedUntil = 0
+  private edgeRelayNeedsRecoveryProof = false
   private initialized = false
   private ewmaMemRatio = 0
   private ewmaElDelayP95Ms = 0
@@ -111,8 +125,10 @@ export class CapacityController {
   private ewmaRelayUtil = 0
   private overloadTicks = 0
   private healthyTicks = 0
+  private idleRecoveryTicks = 0
   private mappOverloadTicks = 0
   private mappHealthyTicks = 0
+  private mappIdleRecoveryTicks = 0
   private mappGrowCooldownUntil = 0
   private relayDeferredShrinks = 0
   private lastGeneralPressure = 0
@@ -121,12 +137,20 @@ export class CapacityController {
 
   constructor(cfg: CapacityControllerConfig) {
     this.cfg = cfg
-    this.relaySlots = cfg.relaySlots ?? 8
-    this.maxMappRoomCap = this.relaySlots + (cfg.relayMaxQueued ?? 64)
-    this.mappRoomCap = clamp(cfg.mappRoomBase ?? this.relaySlots * 2, this.relaySlots, this.maxMappRoomCap)
-    this.effectiveCap = cfg.baseUnits
+    this.baselineUnits = cfg.baseUnits
       ? clamp(cfg.baseUnits, cfg.minUnits, cfg.maxUnits)
       : deriveBaselineUnits(cfg.initialMemoryLimitBytes, cfg.initialCpuLimitCores, cfg.minUnits, cfg.maxUnits)
+    this.effectiveCap = this.baselineUnits
+    this.relaySlots = cfg.relaySlots ?? 8
+    this.relayBoundCap = this.relaySlots + (cfg.relayMaxQueued ?? 64)
+    this.maxMappRoomCap = cfg.edgeRelayEnabled ? Math.max(this.relayBoundCap, cfg.maxUnits) : this.relayBoundCap
+    this.mappRoomBaseline = clamp(
+      cfg.mappRoomBase ?? (cfg.edgeRelayEnabled ? this.baselineUnits : this.relaySlots * 2),
+      this.relaySlots,
+      this.maxMappRoomCap,
+    )
+    this.mappRoomCap = this.mappRoomBaseline
+    this.edgeRelayActive = Boolean(cfg.edgeRelayEnabled)
   }
 
   private smooth(prev: number, next: number): number {
@@ -161,10 +185,30 @@ export class CapacityController {
 
     this.lastGeneralPressure = Math.max(memPressure, elDelayPressure, eluPressure, throttlePressure, urgentMemPressure)
     this.lastMappStreamPressure = Math.max(this.ewmaMappStreamPressure, rawMappStreamPressure >= 0.9 ? rawMappStreamPressure : 0)
+    const hasDegradeSignal =
+      (sample.streams.recentFallbackCount ?? 0) > 0 || (sample.streams.recentBypassCount ?? 0) > 0
+    if (this.cfg.edgeRelayEnabled && hasDegradeSignal) {
+      this.edgeRelayDegradedUntil = Math.max(this.edgeRelayDegradedUntil, sample.now + EDGE_RELAY_DEGRADE_WINDOW_MS)
+      this.edgeRelayNeedsRecoveryProof = true
+    } else if (
+      this.edgeRelayNeedsRecoveryProof &&
+      sample.now >= this.edgeRelayDegradedUntil &&
+      (sample.streams.recentEdgeResolveCount ?? 0) > 0
+    ) {
+      this.edgeRelayNeedsRecoveryProof = false
+    }
+    const edgeRelayDegraded =
+      Boolean(this.cfg.edgeRelayEnabled) &&
+      (sample.now < this.edgeRelayDegradedUntil || this.edgeRelayNeedsRecoveryProof)
+    this.edgeRelayActive =
+      Boolean(this.cfg.edgeRelayEnabled) &&
+      !edgeRelayDegraded &&
+      this.ewmaRelayUtil < 0.1 &&
+      this.lastMappStreamPressure < 0.1
 
     const usedUnits = this.computeUsedUnits(sample.webInRoom, sample.mappInRoom)
     const mappPeakRoom = sample.mappPeakRoom ?? sample.mappInRoom
-    const shrunkMappThisTick = this.adjustMappRoomCap(sample, mappPeakRoom)
+    const shrunkMappThisTick = this.adjustMappRoomCap(sample, mappPeakRoom, edgeRelayDegraded)
 
     // AIMD + hysteresis: shrink fast under overload, freeze when elevated, grow slowly when sustainably healthy.
     const relayAttributed = this.ewmaRelayUtil >= 0.5 && urgentMemPressure === 0
@@ -172,6 +216,7 @@ export class CapacityController {
     if (this.lastGeneralPressure >= 0.85) {
       this.overloadTicks++
       this.healthyTicks = 0
+      this.idleRecoveryTicks = 0
       if (this.overloadTicks >= OVERLOAD_TICKS_TO_SHRINK || urgentMemPressure === 1) {
         if (relayAttributed && !shrunkMappThisTick) this.shrinkMappRoomCap(mappPeakRoom)
         if (relayAttributed && this.relayDeferredShrinks < MAX_RELAY_DEFERRED_SHRINKS) {
@@ -187,29 +232,45 @@ export class CapacityController {
       // Elevated zone: hold ceiling steady to avoid oscillation.
       this.overloadTicks = 0
       this.healthyTicks = 0
+      this.idleRecoveryTicks = 0
     } else if (this.lastGeneralPressure < 0.5) {
       this.overloadTicks = 0
-      this.healthyTicks = usedUnits >= this.effectiveCap * 0.8 ? this.healthyTicks + 1 : 0
+      const hasDemand = usedUnits >= this.effectiveCap * 0.8
+      this.healthyTicks = hasDemand ? this.healthyTicks + 1 : 0
       if (this.healthyTicks >= HEALTHY_TICKS_TO_GROW) {
         const step = Math.max(2, Math.ceil(this.effectiveCap * 0.05))
         this.effectiveCap = clamp(this.effectiveCap + step, this.cfg.minUnits, this.cfg.maxUnits)
         this.healthyTicks = 0
+        this.idleRecoveryTicks = 0
+      } else if (!hasDemand && this.effectiveCap < this.baselineUnits && this.lastGeneralPressure < GENERAL_IDLE_RECOVERY_PRESSURE) {
+        this.idleRecoveryTicks++
+        if (this.idleRecoveryTicks >= IDLE_RECOVERY_TICKS) {
+          const step = Math.max(4, Math.ceil((this.baselineUnits - this.effectiveCap) * 0.25))
+          this.effectiveCap = Math.min(this.baselineUnits, this.effectiveCap + step)
+          this.idleRecoveryTicks = 0
+        }
+      } else {
+        this.idleRecoveryTicks = 0
       }
     } else {
       // Mid-band (0.50–0.65): clear overload counter without growing yet.
       this.overloadTicks = 0
+      this.idleRecoveryTicks = 0
     }
   }
 
   private shrinkMappRoomCap(mappPeakRoom: number): void {
     const target = Math.min(Math.floor(this.mappRoomCap * 0.85), Math.max(this.relaySlots, mappPeakRoom))
     this.mappRoomCap = clamp(target, this.relaySlots, this.maxMappRoomCap)
+    this.mappHealthyTicks = 0
+    this.mappIdleRecoveryTicks = 0
   }
 
-  private adjustMappRoomCap(sample: LoadSampleInput, mappPeakRoom: number): boolean {
+  private adjustMappRoomCap(sample: LoadSampleInput, mappPeakRoom: number, edgeRelayDegraded: boolean): boolean {
     if (this.lastMappStreamPressure >= 0.8) {
       this.mappOverloadTicks++
       this.mappHealthyTicks = 0
+      this.mappIdleRecoveryTicks = 0
       if (this.mappOverloadTicks >= OVERLOAD_TICKS_TO_SHRINK) {
         this.shrinkMappRoomCap(mappPeakRoom)
         this.mappOverloadTicks = 0
@@ -219,17 +280,47 @@ export class CapacityController {
     }
 
     this.mappOverloadTicks = 0
+    if (edgeRelayDegraded && this.mappRoomCap > this.relayBoundCap) {
+      this.mappRoomCap = Math.max(this.relayBoundCap, Math.floor(this.mappRoomCap * 0.85))
+      this.mappHealthyTicks = 0
+      this.mappIdleRecoveryTicks = 0
+      return false
+    }
+
+    const activeGrowthCap = edgeRelayDegraded ? this.relayBoundCap : this.maxMappRoomCap
+    const hasDemand = mappPeakRoom >= Math.ceil(this.mappRoomCap * 0.8)
+    const relayProbeSatisfied = this.edgeRelayActive || sample.streams.recentWaitP95Ms > 0
     const canGrow =
       this.lastMappStreamPressure < 0.3 &&
       this.lastGeneralPressure < 0.65 &&
-      sample.streams.recentWaitP95Ms > 0 &&
-      mappPeakRoom >= Math.ceil(this.mappRoomCap * 0.8) &&
+      relayProbeSatisfied &&
+      hasDemand &&
       sample.now >= this.mappGrowCooldownUntil
     this.mappHealthyTicks = canGrow ? this.mappHealthyTicks + 1 : 0
     if (this.mappHealthyTicks >= HEALTHY_TICKS_TO_GROW) {
       const step = Math.max(2, Math.ceil(this.mappRoomCap * 0.05))
-      this.mappRoomCap = clamp(this.mappRoomCap + step, this.relaySlots, this.maxMappRoomCap)
+      this.mappRoomCap = clamp(this.mappRoomCap + step, this.relaySlots, activeGrowthCap)
       this.mappHealthyTicks = 0
+      this.mappIdleRecoveryTicks = 0
+      this.mappGrowCooldownUntil = sample.now + MAPP_GROW_COOLDOWN_MS
+      return false
+    }
+
+    const recoveryTarget = edgeRelayDegraded ? Math.min(this.mappRoomBaseline, this.relayBoundCap) : this.mappRoomBaseline
+    const canIdleRecover =
+      !canGrow &&
+      this.mappRoomCap < recoveryTarget &&
+      this.lastMappStreamPressure < MAPP_IDLE_RECOVERY_STREAM_PRESSURE &&
+      this.lastGeneralPressure < MAPP_IDLE_RECOVERY_GENERAL_PRESSURE &&
+      this.ewmaRelayUtil < MAPP_IDLE_RECOVERY_RELAY_UTIL &&
+      (sample.streams.recentFallbackCount ?? 0) === 0 &&
+      (sample.streams.recentBypassCount ?? 0) === 0 &&
+      sample.now >= this.mappGrowCooldownUntil
+    this.mappIdleRecoveryTicks = canIdleRecover ? this.mappIdleRecoveryTicks + 1 : 0
+    if (this.mappIdleRecoveryTicks >= IDLE_RECOVERY_TICKS) {
+      const step = Math.max(4, Math.ceil((recoveryTarget - this.mappRoomCap) * 0.25))
+      this.mappRoomCap = Math.min(recoveryTarget, this.mappRoomCap + step)
+      this.mappIdleRecoveryTicks = 0
       this.mappGrowCooldownUntil = sample.now + MAPP_GROW_COOLDOWN_MS
     }
     return false
@@ -359,6 +450,10 @@ export class CapacityController {
     return {
       effectiveCap: this.effectiveCap,
       mappRoomCap: this.mappRoomCap,
+      edgeRelayActive: this.edgeRelayActive,
+      edgeRelayDegraded:
+        Boolean(this.cfg.edgeRelayEnabled) &&
+        (this.lastUpdatedAt < this.edgeRelayDegradedUntil || this.edgeRelayNeedsRecoveryProof),
       ewmaRelayUtil: Number(this.ewmaRelayUtil.toFixed(3)),
       relayDeferredShrinks: this.relayDeferredShrinks,
       ewmaMemRatio: Number(this.ewmaMemRatio.toFixed(3)),
@@ -416,6 +511,7 @@ const controller = new CapacityController({
   relaySlots: config.mapp.maxStreams,
   relayMaxQueued: getStreamSlotsSnapshot().maxQueued,
   mappRoomBase: config.capacity.mappRoomBase,
+  edgeRelayEnabled: config.mapp.edgeRelayEnabled,
   maxQueue: config.capacity.maxQueue,
   initialMemoryLimitBytes: initialContainer.memoryLimitBytes,
   initialCpuLimitCores: initialContainer.cpuLimitCores,
@@ -516,6 +612,9 @@ function sampleOnce(): void {
       queueLength: status.queueLength,
       mappActiveStreams: streams.activeStreams,
       mappWaitingStreams: streams.waitingCount,
+      mappEdgeResolves: streams.recentEdgeResolveCount ?? 0,
+      mappRelayFallbacks: streams.recentFallbackCount ?? 0,
+      mappRelayBypasses: streams.recentBypassCount ?? 0,
       level: status.level,
       mappLevel: status.mappLevel,
     })
@@ -586,7 +685,7 @@ export function startServerLoadMonitor(io: TypedServer): void {
   sampleOnce()
   sampleTimer = setInterval(sampleOnce, SAMPLE_INTERVAL_MS)
   sampleTimer.unref()
-  const { effectiveCap, mappRoomCap, ewmaRelayUtil, relayDeferredShrinks } = controller.getDiagnostics()
+  const { effectiveCap, mappRoomCap, edgeRelayActive, ewmaRelayUtil, relayDeferredShrinks } = controller.getDiagnostics()
   logger.info('Server capacity monitor started', {
     enabled: config.capacity.enabled,
     source: initialContainer.source,
@@ -594,6 +693,8 @@ export function startServerLoadMonitor(io: TypedServer): void {
     cpuLimitCores: Number(initialContainer.cpuLimitCores.toFixed(2)),
     initialEffectiveCap: effectiveCap,
     mappRoomCap,
+    edgeRelayEnabled: config.mapp.edgeRelayEnabled,
+    edgeRelayActive,
     ewmaRelayUtil,
     relayDeferredShrinks,
     mappWeight: config.capacity.mappWeight,
