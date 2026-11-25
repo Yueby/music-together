@@ -1,3 +1,4 @@
+// Keep this module import-free: `packages/mapp/scripts/clientPackage.ts` imports it directly under Node 24 native TS execution.
 export const MAPP_METADATA_MAX_BYTES = 1024 * 1024
 export const MAPP_METADATA_TARGETS = {
   search: {
@@ -41,5 +42,3 @@ export const MAPP_METADATA_TARGETS = {
     queryKeys: ['source', 'id', 'type', 'limit', 'offset', 'total', 'roomId'],
   },
 } as const
-
-export { COVER_HOST_ALLOWLIST, MAPP_COVER_MAX_BYTES } from './mediaContracts.js'

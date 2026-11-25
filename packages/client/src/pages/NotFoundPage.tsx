@@ -12,7 +12,7 @@ export default function NotFoundPage() {
       animate={{ opacity: 1 }}
       exit={{ opacity: 0 }}
       transition={{ duration: 0.2 }}
-      className="flex min-h-screen items-center justify-center bg-background"
+      className="flex min-h-[var(--app-vh)] items-center justify-center bg-background"
     >
       <motion.div
         initial={{ opacity: 0, y: 20 }}

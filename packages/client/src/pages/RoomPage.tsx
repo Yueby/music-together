@@ -432,7 +432,7 @@ export default function RoomPage() {
         exit={{ opacity: 0 }}
         transition={{ duration: 0.2 }}
       >
-        <div className="flex h-dvh flex-col bg-background">
+        <div className="flex h-[var(--app-dvh)] flex-col overflow-hidden bg-background">
           <RoomHeader
             onOpenSearch={handleOpenSearch}
             onOpenSettings={() => setSettingsOpen(true)}
@@ -471,7 +471,7 @@ export default function RoomPage() {
           {/* Mobile: chat drawer from bottom */}
           {isMobile && (
             <Drawer open={chatOpen} onOpenChange={setChatOpen}>
-              <DrawerContent className="flex h-[70vh] flex-col p-0">
+              <DrawerContent className="flex h-[calc(var(--app-vh)*0.7)] flex-col p-0">
                 <DrawerHeader className="sr-only">
                   <DrawerTitle>聊天</DrawerTitle>
                 </DrawerHeader>

@@ -1,2 +1,22 @@
 @import '../../client/src/index.css';
 @source '../../client/src';
+
+:root {
+  --app-vh: 640px;
+  --app-dvh: 640px;
+}
+
+@media (min-width: 768px) {
+  :root {
+    --app-vh: 720px;
+    --app-dvh: 720px;
+  }
+}
+
+@layer base {
+  html,
+  body {
+    margin: 0;
+    padding: 0;
+  }
+}

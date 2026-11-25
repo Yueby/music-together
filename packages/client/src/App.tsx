@@ -19,7 +19,7 @@ const NotFoundPage = lazy(() => import('@/pages/NotFoundPage'))
 function ErrorFallback({ error, resetErrorBoundary }: { error: unknown; resetErrorBoundary: () => void }) {
   const message = error instanceof Error ? error.message : '应用遇到了意外错误'
   return (
-    <div className="flex min-h-screen items-center justify-center p-6">
+    <div className="flex min-h-[var(--app-vh)] items-center justify-center p-6">
       <div className="flex max-w-md flex-col items-center gap-4 rounded-xl border bg-card p-8 text-center shadow-lg">
         <AlertTriangle className="h-12 w-12 text-destructive" />
         <h2 className="text-xl font-semibold">出了点问题</h2>
@@ -34,7 +34,7 @@ function ErrorFallback({ error, resetErrorBoundary }: { error: unknown; resetErr
 
 function RouteFallback() {
   return (
-    <div className="flex min-h-screen items-center justify-center">
+    <div className="flex min-h-[var(--app-vh)] items-center justify-center">
       <div className="h-8 w-8 animate-spin rounded-full border-4 border-primary border-t-transparent" />
     </div>
   )

@@ -159,7 +159,7 @@ export function AudioPlayer({
             <LayoutGroup>
               <div
                 className={cn(
-                  'relative mx-auto flex h-full w-full flex-col items-center gap-[clamp(12px,3vh,32px)] transition-[max-width] duration-300',
+                  'relative mx-auto flex h-full w-full flex-col items-center gap-[clamp(12px,calc(var(--app-vh)*0.03),32px)] transition-[max-width] duration-300',
                   lyricExpanded ? 'max-w-2xl' : 'max-w-md',
                 )}
               >
@@ -215,7 +215,7 @@ export function AudioPlayer({
             // ---------------------------------------------------------------
             <>
               <div
-                className="relative flex w-[40%] flex-col items-center gap-[clamp(12px,3vh,32px)] transition-all duration-300"
+                className="relative flex w-[40%] flex-col items-center gap-[clamp(12px,calc(var(--app-vh)*0.03),32px)] transition-all duration-300"
               >
                 {/* 1. Cover — flex-1 fills remaining space, centered */}
                 <div ref={coverAreaRef} className="min-h-0 w-full flex-1 flex items-center justify-center" style={{ containerType: 'size' }}>
