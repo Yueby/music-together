@@ -1,5 +1,6 @@
 import { promisify } from 'node:util'
 import { unzip } from 'node:zlib'
+import { readBoundedJson } from '../utils/readBounded.js'
 
 const unzipAsync = promisify(unzip)
 const KRC_ENCODE_KEY = Buffer.from([64, 71, 97, 119, 94, 50, 116, 71, 81, 54, 49, 45, 206, 210, 110, 105])
@@ -162,7 +163,7 @@ async function fetchJson<T>(url: URL): Promise<T> {
     signal: AbortSignal.timeout(REQUEST_TIMEOUT_MS),
   })
   if (!response.ok) throw new Error(`Kugou lyric HTTP ${response.status}`)
-  return (await response.json()) as T
+  return readBoundedJson<T>(response)
 }
 
 export async function getKrcByHash(hash: string): Promise<KrcInfo | null> {

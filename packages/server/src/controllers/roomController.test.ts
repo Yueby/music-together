@@ -43,7 +43,7 @@ function connect(identityUserId: string) {
   const socket = {
     id: `socket-${++sequence}`,
     connected: true,
-    data: { identityUserId, clientIp: `2001:db8::${sequence.toString(16)}` },
+    data: { identityUserId, clientIp: `2001:db8:0:${sequence.toString(16)}::1` },
     emit,
     on: (event: string, handler: Handler) => handlers.set(event, handler),
     join: vi.fn(),
@@ -306,11 +306,11 @@ describe('guessing a room password', () => {
 
     const messages = guests.map((guest) => lastError(guest)?.message)
     expect(messages.filter((message) => message === '密码错误')).toHaveLength(30)
-    expect(messages.filter((message) => message === '密码错误次数过多，请稍后再试')).toHaveLength(5)
+    expect(messages.filter((message) => message === '房间密码错误次数过多，请稍后再试')).toHaveLength(5)
 
     const lateGuest = connect(newIdentity('late-guest'))
     await send(lateGuest, EVENTS.ROOM_JOIN, { roomId, nickname: 'Late guest', password: 'secret' })
-    expect(lastError(lateGuest)).toMatchObject({ message: '密码错误次数过多，请稍后再试' })
+    expect(lastError(lateGuest)).toMatchObject({ message: '房间密码错误次数过多，请稍后再试' })
     expect(isMember(roomId, lateGuest.identityUserId)).toBe(false)
   })
 

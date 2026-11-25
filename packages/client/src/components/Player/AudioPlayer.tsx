@@ -157,7 +157,12 @@ export function AudioPlayer({
           {/* ----------------------------------------------------------------- */}
           {isPortrait ? (
             <LayoutGroup>
-              <div className="relative mx-auto flex h-full w-full max-w-md flex-col items-center gap-[clamp(12px,3vh,32px)]">
+              <div
+                className={cn(
+                  'relative mx-auto flex h-full w-full flex-col items-center gap-[clamp(12px,3vh,32px)] transition-[max-width] duration-300',
+                  lyricExpanded ? 'max-w-2xl' : 'max-w-md',
+                )}
+              >
                 {/* 1. Cover — fills remaining space in cover mode, centered within */}
                 <div
                   ref={coverAreaRef}

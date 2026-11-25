@@ -1,4 +1,5 @@
 import { RateLimiterMemory } from 'rate-limiter-flexible'
+import { ipKeyGenerator } from 'express-rate-limit'
 import { EVENTS, ERROR_CODE, LIMITS } from '@music-together/shared'
 import type { ErrorCode } from '@music-together/shared'
 import type { TypedSocket } from './types.js'
@@ -10,8 +11,8 @@ const RATE_LIMIT_DURATION_S = 5
  * Per-identity rate limiter for critical socket events.
  * Shared across all controllers to prevent event spam.
  *
- * Separate limiter from chat (which has its own) — this covers
- * VOTE_START, QUEUE_ADD, PLAYER_PLAY, PLAYER_SEEK, etc.
+ * Covers manual playback controls, queue mutations, and vote start/cast.
+ * Conductor auto-advance, playback sync, and chat are outside this budget.
  *
  * None of these limiters are cleaned up when a socket disconnects: the counters expire on their own, and deleting
  * them on disconnect would let a client reset its budget just by reconnecting.
@@ -130,24 +131,24 @@ setInterval(() => {
 function joinFailureBuckets(socket: TypedSocket, roomId: string) {
   const address = socket.data.clientIp ?? socket.handshake.address
   return [
-    { key: `identity:${joinFailureKey(socket, roomId)}`, limit: LIMITS.ROOM_JOIN_PASSWORD_MAX_FAILURES },
-    { key: `room:${roomId}`, limit: ROOM_PASSWORD_MAX_FAILURES },
-    { key: `ip:${address}`, limit: IP_PASSWORD_MAX_FAILURES },
-  ]
+    { scope: 'room', key: `room:${roomId}`, limit: ROOM_PASSWORD_MAX_FAILURES },
+    { scope: 'personal', key: `identity:${joinFailureKey(socket, roomId)}`, limit: LIMITS.ROOM_JOIN_PASSWORD_MAX_FAILURES },
+    { scope: 'personal', key: `ip:${ipKeyGenerator(address, 64)}`, limit: IP_PASSWORD_MAX_FAILURES },
+  ] as const
 }
 
 /**
- * True when any password failure budget is spent. Checks and writes stay synchronous with password validation so
+ * Reports the scope of a spent budget. Checks and writes stay synchronous with password validation so
  * simultaneous joins cannot all observe an open budget before recording their failures.
  * While locked, the caller must not let any password through (a correct guess would confirm the guess);
  * requests that need no password (rejoin ticket, already a member, creator, admin) are unaffected.
  */
-export function isJoinPasswordLocked(socket: TypedSocket, roomId: string): boolean {
+export function getJoinPasswordLock(socket: TypedSocket, roomId: string): 'room' | 'personal' | undefined {
   const now = Date.now()
-  return joinFailureBuckets(socket, roomId).some(({ key, limit }) => {
+  return joinFailureBuckets(socket, roomId).find(({ key, limit }) => {
     const entry = passwordFailures.get(key)
     return entry !== undefined && entry.expiresAt > now && entry.count >= limit
-  })
+  })?.scope
 }
 
 /** Count one wrong password in each applicable budget. */

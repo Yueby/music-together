@@ -12,7 +12,7 @@ import { searchAlbums, searchPlaylists } from './catalogSearch.js'
 import { SearchError } from './catalogUtils.js'
 
 const QQ_KEY = 'music.search.SearchCgiService.DoSearchForQQMusicDesktop'
-const json = (body: unknown, status = 200) => ({ ok: status < 400, status, json: async () => body }) as Response
+const json = (body: unknown, status = 200) => Response.json(body, { status })
 
 const qq = (body: unknown) => json({ [QQ_KEY]: { code: 0, data: { body } } })
 const kugou = (info: unknown, errcode = 0) => json({ errcode, data: { info } })

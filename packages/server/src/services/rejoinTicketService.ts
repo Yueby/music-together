@@ -1,5 +1,6 @@
 import { nanoid } from 'nanoid'
 import { config } from '../config.js'
+import { registerRoomCleanup } from './roomCleanupRegistry.js'
 
 interface RejoinTicket {
   token: string
@@ -10,6 +11,7 @@ interface RejoinTicket {
 
 const tickets = new Map<string, RejoinTicket>()
 const roomUserIndex = new Map<string, Set<string>>()
+registerRoomCleanup('rejoin-tickets', cleanupRoomRejoinTickets)
 
 function roomUserKey(roomId: string, userId: string): string {
   return `${roomId}:${userId}`

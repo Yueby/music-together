@@ -1,6 +1,7 @@
 import { MUSIC_SOURCES } from '@music-together/shared'
 import type { MusicSource, PlatformAuthStatus, MyPlatformAuth } from '@music-together/shared'
 import { logger } from '../utils/logger.js'
+import { registerRoomCleanup } from './roomCleanupRegistry.js'
 
 /**
  * Room-scoped cookie pool for music platform authentication.
@@ -20,6 +21,7 @@ interface CookieEntry {
 
 /** roomId -> (platform -> list of cookie entries) */
 const roomCookiePool = new Map<string, Map<MusicSource, CookieEntry[]>>()
+registerRoomCleanup('auth', cleanupRoom)
 
 // ---------------------------------------------------------------------------
 // Internal helpers

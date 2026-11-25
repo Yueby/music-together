@@ -21,15 +21,17 @@ export async function executeVoteAction(
     case 'resume':
       playerService.resumeTrack(io, roomId)
       return true
-    case 'next': {
+    case 'next':
+    case 'prev': {
       const room = roomRepo.get(roomId)
       if (!room) return false
-      await playerService.playNextTrackInRoom(io, roomId, room.playMode, { skipDebounce: true })
+      const trackId = typeof payload?.trackId === 'string' ? payload.trackId : undefined
+      if (trackId !== undefined && playerService.getLatestPlayback(room).track?.id !== trackId) return false
+      const options = { skipDebounce: true, expectedTrackId: trackId }
+      if (action === 'next') await playerService.playNextTrackInRoom(io, roomId, room.playMode, options)
+      else await playerService.playPrevTrackInRoom(io, roomId, options)
       return true
     }
-    case 'prev':
-      await playerService.playPrevTrackInRoom(io, roomId, { skipDebounce: true })
-      return true
     case 'set-mode': {
       const parsed = playerSetModeSchema.safeParse(payload)
       if (!parsed.success) {

@@ -41,11 +41,18 @@ export function usePlayer() {
   const next = useCallback(() => socket.emit(EVENTS.PLAYER_NEXT), [socket])
 
   // Auto-next on song end: only the current conductor (hostId) emits PLAYER_NEXT.
-  // The conductor is auto-elected by the server (owner > admin > member).
-  // Other clients silently wait to prevent duplicate PLAYER_NEXT events.
+  // Sends `{ auto: true, trackId, revision }` so the server can reject stale/late auto-advances
+  // and keep manual skips governed by normal CASL permission checks.
   const autoNext = useCallback(() => {
     const { room } = useRoomStore.getState()
-    if (room?.conductorSocketId === socket.id) socket.emit(EVENTS.PLAYER_NEXT)
+    if (!room || room.conductorSocketId !== socket.id) return
+    const trackId = room.currentTrack?.id
+    if (!trackId) return
+    socket.emit(EVENTS.PLAYER_NEXT, {
+      auto: true,
+      trackId,
+      revision: room.playState.revision,
+    })
   }, [socket])
 
   const { howlRef, soundIdRef, loadTrack, setDesiredPlayback, setScheduledPlayback, startPlayback } = useHowl(autoNext)

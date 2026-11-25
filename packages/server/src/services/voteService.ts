@@ -2,6 +2,9 @@ import { nanoid } from 'nanoid'
 import type { VoteAction, VoteState, User } from '@music-together/shared'
 import { TIMING } from '@music-together/shared'
 import { logger } from '../utils/logger.js'
+import { roomRepo } from '../repositories/roomRepository.js'
+import { getLatestPlayback } from './playerService.js'
+import { registerRoomCleanup } from './roomCleanupRegistry.js'
 
 interface Vote {
   id: string
@@ -27,6 +30,7 @@ export interface VoteDecision {
 
 /** Active vote per room (at most one at a time) */
 const activeVotes = new Map<string, Vote>()
+registerRoomCleanup('vote', cleanupRoom)
 
 /**
  * Create a new vote. Returns null if a vote is already in progress.
@@ -43,6 +47,11 @@ export function createVote(
   if (activeVotes.has(roomId)) return null
 
   const requiredVotes = Math.floor(totalUsers / 2) + 1
+  if (action === 'next' || action === 'prev') {
+    const room = roomRepo.get(roomId)
+    const trackId = room ? getLatestPlayback(room).track?.id : undefined
+    payload = trackId ? { trackId } : undefined
+  }
 
   const vote: Vote = {
     id: nanoid(8),

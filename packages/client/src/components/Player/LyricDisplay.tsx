@@ -79,8 +79,9 @@ export function LyricDisplay() {
       className="amll-container h-full w-full"
       style={
         {
+          containerType: 'inline-size',
           fontWeight,
-          '--amll-lp-font-size': `clamp(16px, calc(min(5vh, 7vw) * ${fontSize / 100}), 80px)`,
+          '--amll-lp-font-size': `clamp(18px, calc(min(4.6vh, 7.2cqi) * ${fontSize / 100}), 64px)`,
           '--amll-translated-font-size': `${translationFontSize / 100}em`,
           '--amll-roman-font-size': `${romanFontSize / 100}em`,
         } as React.CSSProperties

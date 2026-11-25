@@ -6,8 +6,7 @@
  * and eliminate the circular dependency (roomService -> playerController -> roomService).
  *
  * Dependency direction:
- *   roomService -> roomLifecycleService -> (repos, playerService, voteService, authService)
- *   roomLifecycleService does NOT depend on roomService (no circular risk).
+ *   Room-scoped services register their cleanup hooks independently of room lifecycle timers.
  *
  * Note: Role grace period has been removed. Owner role is permanent (based on creatorId),
  * admin is persisted via adminUserIds, temporary admin is assigned when no permanent
@@ -22,12 +21,11 @@ import type { TypedServer } from '../middleware/types.js'
 import { chatRepo } from '../repositories/chatRepository.js'
 import { roomRepo } from '../repositories/roomRepository.js'
 import { logger } from '../utils/logger.js'
-import { cleanupRoom as cleanupAuthRoom } from './authService.js'
-import { cleanupRoom as cleanupPlayerRoom } from './playerService.js'
-import { cleanupRoom as cleanupVoteRoom } from './voteService.js'
-import { cleanupRoomRejoinTickets } from './rejoinTicketService.js'
+import { getRoomCleanupHooks } from './roomCleanupRegistry.js'
 import { admissionQueue } from './admissionQueueService.js'
 import { getPublicServerCapacity, notifyCapacityChanged } from './serverLoadService.js'
+
+export { registerRoomCleanup } from './roomCleanupRegistry.js'
 
 // ---------------------------------------------------------------------------
 // Module-level state
@@ -55,12 +53,15 @@ export function scheduleDeletion(roomId: string, io?: TypedServer): void {
   const timer = setTimeout(() => {
     const r = roomRepo.get(roomId)
     if (r && r.users.length === 0) {
-      cleanupPlayerRoom(roomId)
+      for (const [name, cleanup] of getRoomCleanupHooks()) {
+        try {
+          cleanup(roomId)
+        } catch {
+          logger.warn('Room cleanup hook failed', { roomId, name })
+        }
+      }
       roomRepo.delete(roomId)
       chatRepo.deleteRoom(roomId)
-      cleanupVoteRoom(roomId)
-      cleanupAuthRoom(roomId)
-      cleanupRoomRejoinTickets(roomId)
       roomDeletionTimers.delete(roomId)
       logger.info(`Room ${roomId} deleted after grace period`, { roomId })
       // Notify lobby users & queued joiners that the room is gone

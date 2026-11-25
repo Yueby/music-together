@@ -9,7 +9,6 @@ import {
 } from '@music-together/shared'
 import type { TypedServer, TypedSocket } from '../middleware/types.js'
 import { createWithPermission } from '../middleware/withControl.js'
-import { checkSocketRateLimit } from '../middleware/socketRateLimiter.js'
 import * as chatService from '../services/chatService.js'
 import { sanitizeIncomingTracks } from '../services/incomingTracks.js'
 import * as playerService from '../services/playerService.js'
@@ -22,7 +21,6 @@ export function registerQueueController(io: TypedServer, socket: TypedSocket) {
   socket.on(
     EVENTS.QUEUE_ADD,
     withPermission('add', 'Queue', async (ctx, raw) => {
-      if (!(await checkSocketRateLimit(ctx.socket))) return
       const parsed = queueAddSchema.safeParse(raw)
       if (!parsed.success) {
         socket.emit(EVENTS.ROOM_ERROR, { code: ERROR_CODE.INVALID_DATA, message: '无效的歌曲数据' })
@@ -55,7 +53,6 @@ export function registerQueueController(io: TypedServer, socket: TypedSocket) {
   socket.on(
     EVENTS.QUEUE_INSERT_AFTER_CURRENT,
     withPermission('add', 'Queue', async (ctx, raw) => {
-      if (!(await checkSocketRateLimit(ctx.socket))) return
       const parsed = queueInsertAfterCurrentSchema.safeParse(raw)
       if (!parsed.success) {
         socket.emit(EVENTS.ROOM_ERROR, { code: ERROR_CODE.INVALID_DATA, message: '无效的歌曲数据' })
@@ -85,7 +82,6 @@ export function registerQueueController(io: TypedServer, socket: TypedSocket) {
   socket.on(
     EVENTS.QUEUE_ADD_BATCH,
     withPermission('add', 'Queue', async (ctx, raw) => {
-      if (!(await checkSocketRateLimit(ctx.socket))) return
       const parsed = queueAddBatchSchema.safeParse(raw)
       if (!parsed.success) {
         socket.emit(EVENTS.ROOM_ERROR, { code: ERROR_CODE.INVALID_DATA, message: '无效的歌曲数据' })

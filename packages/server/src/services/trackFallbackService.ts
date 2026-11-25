@@ -1,5 +1,16 @@
 import type { MusicSource, Track } from '@music-together/shared'
+import { ERROR_CODE, EVENTS } from '@music-together/shared'
+import { nanoid } from 'nanoid'
+import { config } from '../config.js'
+import type { TypedServer } from '../middleware/types.js'
+import type { RoomData } from '../repositories/types.js'
+import { logger } from '../utils/logger.js'
+import { getAnyCookie } from './authService.js'
+import { fallbackCooldown } from './fallbackCooldown.js'
 import { musicProvider } from './musicProvider.js'
+import { removeTrack } from './queueService.js'
+import { resolveStreamUrl } from './streamUrlResolver.js'
+import { isStreamUrlExpired } from './streamUrlLifetime.js'
 
 // Keep scope minimal: only support netease <-> tencent auto fallback.
 const SUPPORTED_SOURCES: ReadonlySet<Exclude<MusicSource, 'kugou'>> = new Set(['netease', 'tencent'])
@@ -137,4 +148,91 @@ export async function findBestAlternativeTrack(
   if (second && best.score - second.score < 0.05) return null
 
   return best
+}
+
+async function tryAlternativeTrack(
+  io: TypedServer,
+  room: RoomData,
+  track: Track,
+  vipRequired: boolean,
+  valid: () => boolean,
+): Promise<Track | null> {
+  const roomId = room.id
+  const fromSource = track.source
+  if (!config.autoFallback.enabled || fromSource === 'kugou' || !fallbackCooldown.canTry(roomId, track.id)) return null
+  const toSource = getFallbackTargetSource(fromSource)
+  if (!toSource) return null
+
+  fallbackCooldown.mark(roomId, track.id, 60_000)
+  const event = { attemptId: nanoid(), fromSource, toSource, trackTitle: track.title }
+  const reasonType = vipRequired ? 'VIP_REQUIRED' : 'UNKNOWN'
+  io.to(roomId).emit(EVENTS.ROOM_AUTO_FALLBACK, {
+    ...event,
+    status: 'trying',
+    reasonType,
+    reasonDetail: vipRequired ? 'VIP 歌曲未登录' : undefined,
+  })
+
+  try {
+    const best = await findBestAlternativeTrack(track, toSource)
+    if (!valid()) return null
+    if (best) {
+      const { source, urlId } = best.track
+      const cookie = getAnyCookie(source, roomId)
+      const streamUrl = await resolveStreamUrl(musicProvider, source, urlId, room.audioQuality, cookie ?? undefined)
+      if (!valid()) return null
+      if (streamUrl) {
+        const replacement: Track = { ...best.track, id: track.id, requestedBy: track.requestedBy, streamUrl }
+        room.queue = room.queue.map((item) => (item.id === track.id ? replacement : item))
+        io.to(roomId).emit(EVENTS.QUEUE_UPDATED, { queue: room.queue })
+        io.to(roomId).emit(EVENTS.ROOM_AUTO_FALLBACK, { ...event, status: 'success' })
+        return { ...replacement }
+      }
+    }
+  } catch {
+    if (!valid()) return null
+    logger.error('Auto fallback failed', undefined, { roomId })
+  }
+
+  io.to(roomId).emit(EVENTS.ROOM_AUTO_FALLBACK, { ...event, status: 'failed', reasonType })
+  return null
+}
+
+/** Resolve a playable track, removing failed queue items while the playback request is still current. */
+export async function resolvePlayableTrack(
+  io: TypedServer,
+  room: RoomData,
+  track: Track,
+  valid: () => boolean,
+): Promise<Track | null> {
+  if (track.streamUrl && !isStreamUrlExpired(track.source, track.streamUrl)) return { ...track }
+
+  const roomId = room.id
+  const cookie = getAnyCookie(track.source, roomId)
+  const vipRequired = !!track.vip && !cookie
+  try {
+    const streamUrl = await resolveStreamUrl(musicProvider, track.source, track.urlId, room.audioQuality, cookie ?? undefined)
+    if (!valid()) return null
+    if (streamUrl) return { ...track, streamUrl }
+
+    const replacement = await tryAlternativeTrack(io, room, track, vipRequired, valid)
+    if (!valid()) return null
+    if (replacement) return replacement
+  } catch {
+    if (!valid()) return null
+    logger.error('Could not resolve track stream URL', undefined, { roomId })
+    removeTrack(roomId, track.id)
+    io.to(roomId).emit(EVENTS.QUEUE_UPDATED, { queue: room.queue })
+    return null
+  }
+
+  const hint = vipRequired ? '（VIP 歌曲，需要有用户登录 VIP 账号）' : ''
+  logger.warn(`Cannot get stream URL for "${track.title}"${hint}, removing from queue`, { roomId })
+  removeTrack(roomId, track.id)
+  io.to(roomId).emit(EVENTS.QUEUE_UPDATED, { queue: room.queue })
+  io.to(roomId).emit(EVENTS.ROOM_ERROR, {
+    code: ERROR_CODE.STREAM_FAILED,
+    message: `无法获取「${track.title}」的播放链接${hint}，已从列表移除`,
+  })
+  return null
 }

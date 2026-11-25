@@ -56,6 +56,12 @@ export const roomAutoFallbackSchema = z.object({
 // Player
 // ---------------------------------------------------------------------------
 
+export const playerNextSchema = z.object({
+  auto: z.boolean().optional(),
+  trackId: z.string().min(1).max(200).optional(),
+  revision: z.number().int().nonnegative().optional(),
+}).optional()
+
 export const playerSeekSchema = z.object({
   currentTime: z.number().finite().nonnegative(),
 })

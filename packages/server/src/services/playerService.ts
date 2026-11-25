@@ -1,15 +1,15 @@
 import type { AudioQuality, MusicSource, PlayMode, PlayState, ScheduledPlayState, Track } from '@music-together/shared'
 import { EVENTS, ERROR_CODE, NTP, effectivePlayMode } from '@music-together/shared'
 import { roomRepo } from '../repositories/roomRepository.js'
-import { nanoid } from 'nanoid'
 import { musicProvider } from './musicProvider.js'
 import * as queueService from './queueService.js'
-import * as trackFallbackService from './trackFallbackService.js'
+import { resolvePlayableTrack } from './trackFallbackService.js'
 import * as authService from './authService.js'
 import { estimateCurrentTime } from './syncService.js'
 import { isStreamUrlExpired } from './streamUrlLifetime.js'
 import { resolveStreamUrl as resolveStreamUrlWithFallback } from './streamUrlResolver.js'
 import { broadcastRoomList } from './roomLifecycleService.js'
+import { registerRoomCleanup } from './roomCleanupRegistry.js'
 import { toPublicRoomState } from '../utils/roomUtils.js'
 import { config } from '../config.js'
 import { logger } from '../utils/logger.js'
@@ -128,7 +128,7 @@ function scheduled(ps: PlayState, roomId: string, scheduleTime?: number): Schedu
   return { ...ps, serverTimeToExecute: scheduleTime ?? getScheduleTime(roomId) }
 }
 
-function getLatestPlayback(room: RoomData): { track: Track | null; playState: PlayState } {
+export function getLatestPlayback(room: RoomData): { track: Track | null; playState: PlayState } {
   return room.pendingPlayback
     ? { track: room.pendingPlayback.track, playState: room.pendingPlayback.playState }
     : { track: room.currentTrack, playState: room.playState }
@@ -209,138 +209,8 @@ async function _playTrackInRoom(io: TypedServer, roomId: string, track: Track, g
 
   const valid = playbackGuard(roomId, room, generation)
   if (!valid()) return false
-  const resolved = { ...track }
-  if (hasExpiredUrl(resolved)) resolved.streamUrl = undefined
-
-  // Fetch stream URL if missing
-  if (!resolved.streamUrl) {
-    try {
-      // Get cookie from the room's pool for this platform (enables VIP access)
-      const cookie = authService.getAnyCookie(resolved.source, roomId)
-      const url = await resolveStreamUrl(resolved.source, resolved.urlId, room.audioQuality, cookie ?? undefined)
-      if (!valid()) return false
-
-      if (!url) {
-        const isVip = resolved.vip
-        const hint = isVip && !cookie ? '（VIP 歌曲，需要有用户登录 VIP 账号）' : ''
-        logger.warn(`Cannot get stream URL for "${resolved.title}"${hint}, removing from queue`, { roomId })
-
-        // -------------------------------------------------------------------
-        // Auto fallback (netease <-> tencent)
-        // -------------------------------------------------------------------
-        if (
-          config.autoFallback.enabled &&
-          (resolved.source === 'netease' || resolved.source === 'tencent') &&
-          fallbackCooldown.canTry(roomId, resolved.id)
-        ) {
-          // Prevent repeated fallback attempts for this queue item
-          fallbackCooldown.mark(roomId, resolved.id, 60_000)
-          const fromSource = resolved.source
-          const trackTitle = resolved.title
-          const toSource = trackFallbackService.getFallbackTargetSource(fromSource)
-          if (toSource) {
-            const attemptId = nanoid()
-            io.to(roomId).emit(EVENTS.ROOM_AUTO_FALLBACK, {
-              attemptId,
-              status: 'trying',
-              fromSource,
-              toSource,
-              trackTitle,
-              reasonType: isVip && !cookie ? 'VIP_REQUIRED' : 'UNKNOWN',
-              reasonDetail: isVip && !cookie ? 'VIP 歌曲未登录' : undefined,
-            })
-
-            try {
-              const best = await trackFallbackService.findBestAlternativeTrack(resolved, toSource)
-              if (!valid()) return false
-              if (best) {
-                const cookie2 = authService.getAnyCookie(best.track.source, roomId)
-                const url2 = await resolveStreamUrl(
-                  best.track.source,
-                  best.track.urlId,
-                  room.audioQuality,
-                  cookie2 ?? undefined,
-                )
-                if (!valid()) return false
-                if (url2) {
-                  const replacement: Track = {
-                    ...best.track,
-                    id: resolved.id, // keep stable id so queue/current references remain consistent
-                    requestedBy: resolved.requestedBy,
-                    streamUrl: url2,
-                  }
-
-                  // Replace in queue (if present) before playing
-                  const roomBefore = roomRepo.get(roomId)
-                  if (roomBefore) {
-                    roomBefore.queue = roomBefore.queue.map((t) => (t.id === resolved.id ? replacement : t))
-                    io.to(roomId).emit(EVENTS.QUEUE_UPDATED, { queue: roomBefore.queue })
-                  }
-
-                  io.to(roomId).emit(EVENTS.ROOM_AUTO_FALLBACK, {
-                    attemptId,
-                    status: 'success',
-                    fromSource,
-                    toSource,
-                    trackTitle,
-                  })
-
-                  // Continue playback with replacement
-                  resolved.source = replacement.source
-                  resolved.sourceId = replacement.sourceId
-                  resolved.urlId = replacement.urlId
-                  resolved.lyricId = replacement.lyricId
-                  resolved.picId = replacement.picId
-                  resolved.vip = replacement.vip
-                  resolved.album = replacement.album
-                  resolved.artist = replacement.artist
-                  resolved.title = replacement.title
-                  resolved.cover = replacement.cover
-                  resolved.streamUrl = replacement.streamUrl
-                }
-              }
-            } catch (fallbackErr) {
-              if (!valid()) return false
-              logger.error('Auto fallback failed', fallbackErr, { roomId })
-            }
-
-            if (!resolved.streamUrl) {
-              io.to(roomId).emit(EVENTS.ROOM_AUTO_FALLBACK, {
-                attemptId,
-                status: 'failed',
-                fromSource,
-                toSource,
-                trackTitle,
-                reasonType: isVip && !cookie ? 'VIP_REQUIRED' : 'UNKNOWN',
-              })
-            }
-          }
-        }
-
-        // If still no streamUrl, follow original failure path
-        if (!resolved.streamUrl) {
-          // Auto-remove the invalid track from the queue
-          queueService.removeTrack(roomId, resolved.id)
-          const room2 = roomRepo.get(roomId)
-          if (room2) io.to(roomId).emit(EVENTS.QUEUE_UPDATED, { queue: room2.queue })
-          io.to(roomId).emit(EVENTS.ROOM_ERROR, {
-            code: ERROR_CODE.STREAM_FAILED,
-            message: `无法获取「${resolved.title}」的播放链接${hint}，已从列表移除`,
-          })
-          return false
-        }
-      }
-      resolved.streamUrl = url ?? resolved.streamUrl
-    } catch (err) {
-      if (!valid()) return false
-      logger.error(`getStreamUrl failed for ${resolved.urlId}`, err, { roomId })
-      // Auto-remove on unexpected failure too
-      queueService.removeTrack(roomId, resolved.id)
-      const room2 = roomRepo.get(roomId)
-      if (room2) io.to(roomId).emit(EVENTS.QUEUE_UPDATED, { queue: room2.queue })
-      return false
-    }
-  }
+  const resolved = await resolvePlayableTrack(io, room, track, valid)
+  if (!resolved) return false
 
   // The track may have been removed while an external stream/cover request was
   // in flight. Never commit a queue item that no longer exists.
@@ -616,7 +486,7 @@ export function playNextTrackInRoom(
   io: TypedServer,
   roomId: string,
   playMode: PlayMode,
-  options?: { skipDebounce?: boolean },
+  options?: { skipDebounce?: boolean; expectedTrackId?: string },
 ): Promise<void> {
   const room = roomRepo.get(roomId)
   if (!room || (!options?.skipDebounce && _isSkipDebounced(roomId, 'next'))) return Promise.resolve()
@@ -628,6 +498,7 @@ export function playNextTrackInRoom(
     const consume = room.queueMode === 'consume'
     // What is (about to be) playing is the track being left.
     const leaving = getLatestPlayback(room).track
+    if (options?.expectedTrackId !== undefined && leaving?.id !== options.expectedTrackId) return
     // Count on from the track being left, which is not `room.currentTrack` while a switch is still pending.
     let nextTrack = queueService.getNextTrack(roomId, playMode, leaving?.id)
     if (consume && nextTrack && nextTrack.id === leaving?.id) nextTrack = null // a lone track has no "next"
@@ -667,7 +538,7 @@ export function playNextTrackInRoom(
 export function playPrevTrackInRoom(
   io: TypedServer,
   roomId: string,
-  options?: { skipDebounce?: boolean },
+  options?: { skipDebounce?: boolean; expectedTrackId?: string },
 ): Promise<void> {
   const room = roomRepo.get(roomId)
   if (!room || (!options?.skipDebounce && _isSkipDebounced(roomId, 'prev'))) return Promise.resolve()
@@ -678,6 +549,7 @@ export function playPrevTrackInRoom(
     if (!valid()) return
     // Step back from what is (about to be) playing, which is not `room.currentTrack` while a switch is still pending.
     const leavingId = getLatestPlayback(room).track?.id
+    if (options?.expectedTrackId !== undefined && leavingId !== options.expectedTrackId) return
     const prevTrack = queueService.getPreviousTrack(roomId, leavingId)
     if (!prevTrack) {
       // In a consumed queue what was heard has left it, so there is nothing to go back to: "previous" starts the
@@ -814,14 +686,20 @@ const CONDUCTOR_REJECT_DRIFT_THRESHOLD_S = 3
 
 /** Remove per-room entries for a deleted room */
 export function cleanupRoom(roomId: string): void {
+  cleanupPlayerRoom(roomId)
+  fallbackCooldown.clearRoom(roomId)
+}
+
+function cleanupPlayerRoom(roomId: string): void {
   lastSkipTimestamp.delete(roomId)
   playMutexes.delete(roomId)
   controlGenerations.delete(roomId)
   announcedPreloads.delete(roomId)
-  fallbackCooldown.clearRoom(roomId)
   const room = roomRepo.get(roomId)
   if (room) cancelPendingPlayback(room)
 }
+
+registerRoomCleanup('player', cleanupPlayerRoom)
 
 /** Reject reports that would move the authoritative room position backwards by seconds. */
 export function validateConductorReport(_roomId: string, reportedTime: number, estimatedTime: number): boolean {

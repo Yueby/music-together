@@ -2,6 +2,7 @@ import Meting from '@meting/core'
 import type { MusicSource, Playlist } from '@music-together/shared'
 import { httpsCoverUrl } from '../utils/httpsCoverUrl.js'
 import { logger } from '../utils/logger.js'
+import { readBoundedJson } from '../utils/readBounded.js'
 import { withTimeoutOrNull } from '../utils/withTimeout.js'
 import { SearchError } from './catalogUtils.js'
 import { deriveThumbnailCoverUrl, normalizeKugouTemplateCoverUrl, normalizeNeteaseCoverUrl } from './coverUrls.js'
@@ -45,7 +46,7 @@ async function qqSearch(searchType: number, keyword: string, limit: number, page
       body: JSON.stringify(payload),
       signal,
     })
-    return res.ok ? ((await res.json()) as Raw) : null
+    return res.ok ? await readBoundedJson<Raw>(res) : null
   }, API_TIMEOUT_MS)
   const result = response?.[QQ_SEARCH_KEY]
   return result?.code === 0 ? (result.data?.body ?? null) : null
@@ -63,7 +64,7 @@ async function kugouSearch(
     `&plat=2&tag=1&sver=5&showtype=10&page=${page}&keyword=${encodeURIComponent(keyword)}&version=8990`
   const response = await withTimeoutOrNull(async (signal) => {
     const res = await fetch(url, { signal })
-    return res.ok ? ((await res.json()) as Raw) : null
+    return res.ok ? await readBoundedJson<Raw>(res) : null
   }, API_TIMEOUT_MS)
   return response?.errcode === 0 && Array.isArray(response.data?.info) ? response.data.info : null
 }

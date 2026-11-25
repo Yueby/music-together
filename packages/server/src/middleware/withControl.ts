@@ -1,7 +1,34 @@
 import { EVENTS, ERROR_CODE, defineAbilityFor } from '@music-together/shared'
 import type { Actions, Subjects } from '@music-together/shared'
 import type { HandlerContext, TypedServer } from './types.js'
+import { checkSocketRateLimit } from './socketRateLimiter.js'
 import { createWithRoom } from './withRoom.js'
+
+type RoomHandler<T> = (ctx: HandlerContext, data: T) => void | Promise<void>
+
+export function withSocketRateLimit<T>(handler: RoomHandler<T>): RoomHandler<T> {
+  return async (ctx, data) => {
+    if (await checkSocketRateLimit(ctx.socket)) await handler(ctx, data)
+  }
+}
+
+export function withRateLimitedPermission<T>(
+  action: Actions,
+  subject: Subjects,
+  handler: RoomHandler<T>,
+): RoomHandler<T> {
+  const limitedHandler = withSocketRateLimit(handler)
+  return (ctx, data) => {
+    if (!defineAbilityFor(ctx.user.role).can(action, subject)) {
+      ctx.socket.emit(EVENTS.ROOM_ERROR, {
+        code: ERROR_CODE.NO_PERMISSION,
+        message: '你没有权限执行此操作',
+      })
+      return
+    }
+    return limitedHandler(ctx, data)
+  }
+}
 
 /**
  * Socket 中间件：基于 CASL 权限检查。
@@ -13,19 +40,9 @@ export function createWithPermission(io: TypedServer) {
   return function withPermission<T = void>(
     action: Actions,
     subject: Subjects,
-    handler: (ctx: HandlerContext, data: T) => void | Promise<void>,
+    handler: RoomHandler<T>,
   ) {
-    return withRoom<T>((ctx, data) => {
-      const ability = defineAbilityFor(ctx.user.role)
-      if (!ability.can(action, subject)) {
-        ctx.socket.emit(EVENTS.ROOM_ERROR, {
-          code: ERROR_CODE.NO_PERMISSION,
-          message: '你没有权限执行此操作',
-        })
-        return
-      }
-      return handler(ctx, data)
-    })
+    return withRoom(withRateLimitedPermission(action, subject, handler))
   }
 }
 
