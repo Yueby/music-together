@@ -1,0 +1,5 @@
+{
+  "name": "@music-together/cf-worker",
+  "private": true,
+  "type": "module"
+}

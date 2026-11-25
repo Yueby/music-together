@@ -172,6 +172,7 @@ router.get(
 router.get('/cover-proxy', coverProxyRateLimit, async (req: Request, res: Response) => {
   const imageUrl = req.query.url
   if (typeof imageUrl !== 'string' || !imageUrl) {
+    res.setHeader('Cache-Control', 'no-store')
     res.status(400).json({ error: 'Missing url parameter' })
     return
   }
@@ -179,6 +180,7 @@ router.get('/cover-proxy', coverProxyRateLimit, async (req: Request, res: Respon
   try {
     const cover = await fetchCoverImage(limitCoverSize(imageUrl))
     if (!cover.ok) {
+      res.setHeader('Cache-Control', 'no-store')
       res.status(cover.status).json({ error: cover.error })
       return
     }
@@ -193,6 +195,7 @@ router.get('/cover-proxy', coverProxyRateLimit, async (req: Request, res: Respon
   } catch {
     logger.error('Cover proxy failed')
     if (!res.headersSent) {
+      res.setHeader('Cache-Control', 'no-store')
       res.status(504).json({ error: 'Cover proxy failed' })
     } else {
       res.end()

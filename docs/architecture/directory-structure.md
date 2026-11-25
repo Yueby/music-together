@@ -6,6 +6,8 @@
 music-together/
 ├── .agents/skills/      # 项目 Agent Skills（每个技能目录包含 SKILL.md）
 ├── .github/             # CI、Dependabot、PR/Issue 模板
+├── deploy/
+│   └── cf-worker/       # 可选 Cloudflare Worker 边缘加速插件（音频中转、封面缓存、公开元数据缓存；不参与 pnpm workspace / Docker 构建）
 ├── packages/
 │   ├── client/          # React 前端
 │   ├── mapp/            # Discourse 微应用适配与打包（独立 ZIP，不参与主站构建）
@@ -296,6 +298,7 @@ src/
 ├── constants.ts       # 业务常量：LIMITS（长度/数量限制）, TIMING（同步间隔/宽限期）, NTP（时钟同步参数）, QR_STATUS（扫码状态码）, QR_TIMING（轮询间隔）
 ├── schemas.ts         # Zod 验证 schema
 ├── mappMetadata.ts    # 平台只读元数据 target/query 合同与大小预算
+├── mediaContracts.ts  # 音频 CDN 后缀/MIME/32MiB 上限与封面白名单/尺寸上限（无运行时依赖，供 server 与 deploy/cf-worker 共用）
 ├── musicRef.ts        # 按 ID 查找：各平台歌曲/专辑/歌单/歌手的 ID 形状（`normalizeMusicId`，只放行合法 ID，纯 ID 或同平台同类型分享链接里的 ID）、分享链接解析（`parseMusicLink`，识别平台与类型；网易云/QQ/酷狗常见链接格式，不会信任仿冒域名）、`looksLikeMusicId`（比前者更严：短数字、普通词仍当作关键词）、`supportsIdLookup`（歌手页仅网易云）
 └── abilities.ts       # CASL 权限定义（Actions incl. set-mode, Subjects, defineAbilityFor）
 ```

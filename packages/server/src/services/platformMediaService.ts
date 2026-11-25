@@ -9,7 +9,7 @@ import { roomRepo } from '../repositories/roomRepository.js'
 import type { RoomData, RoomRepository } from '../repositories/types.js'
 import { musicProvider } from './musicProvider.js'
 import { getAnyCookie } from './authService.js'
-import { MAX_MEDIA_BYTES, MediaError, requestMediaSource } from './mediaSourceRequest.js'
+import { MAX_MEDIA_BYTES, MediaError, requestMediaSource, validateMediaUrl } from './mediaSourceRequest.js'
 import { resolveStreamUrl } from './streamUrlResolver.js'
 import { getStreamUrlCacheTtl, isStreamUrlExpired } from './streamUrlLifetime.js'
 
@@ -233,6 +233,12 @@ export interface RoomMediaInput {
   trackId: string
 }
 
+export interface ResolvedRoomMedia {
+  v: 1
+  source: MusicSource
+  url: string
+}
+
 export function createPlatformMediaService(dependencies: Partial<Dependencies> = {}) {
   const deps: Dependencies = {
     rooms: roomRepo,
@@ -292,49 +298,74 @@ export function createPlatformMediaService(dependencies: Partial<Dependencies> =
     return work
   }
 
+  function prepareAccess(input: RoomMediaInput) {
+    const room = deps.rooms.get(input.roomId)
+    // The caller must still be in the same room object and the track must still be playable there.
+    const accessibleTrack = () => {
+      if (!room || deps.rooms.get(input.roomId) !== room || !room.users.some((u) => u.id === input.userId)) {
+        throw new MediaError('MEDIA_FORBIDDEN', 403)
+      }
+      const track = [room.currentTrack, room.pendingPlayback?.track, ...room.queue].find(
+        (t) => t?.id === input.trackId,
+      )
+      if (!track) throw new MediaError('MEDIA_FORBIDDEN', 403)
+      return track
+    }
+    // The URL comes from the server-side provider, never from client-supplied track data.
+    const { source, urlId } = accessibleTrack()
+    const priority: StreamPriority =
+      room!.currentTrack?.id === input.trackId || room!.pendingPlayback?.track?.id === input.trackId
+        ? 'normal'
+        : 'low'
+    const check = () => {
+      const current = accessibleTrack()
+      if (current.source !== source || current.urlId !== urlId) throw new MediaError('MEDIA_FORBIDDEN', 403)
+    }
+    const resolveUrl = async (signal: AbortSignal) => {
+      const url = await abortable(
+        resolveRoomUrl(room!, input.roomId, source, urlId),
+        AbortSignal.any([signal, AbortSignal.timeout(RESOLVE_TIMEOUT_MS)]),
+      )
+      check()
+      if (!url) throw new MediaError('MEDIA_SOURCE_UNAVAILABLE', 502)
+      return url
+    }
+    return { source, priority, check, resolveUrl }
+  }
+
   return {
+    /**
+     * Resolves and validates a room-accessible CDN URL without consuming `StreamSlots`.
+     * Used by the optional Cloudflare Worker edge relay (`resolve-v1`).
+     */
+    async resolve(input: RoomMediaInput, parentSignal: AbortSignal): Promise<ResolvedRoomMedia> {
+      try {
+        if (parentSignal.aborted) throw new MediaError('MEDIA_ABORTED', 499)
+        const { source, resolveUrl } = prepareAccess(input)
+        const url = await resolveUrl(parentSignal)
+        validateMediaUrl(source, url)
+        return { v: 1, source, url }
+      } catch (error) {
+        if (parentSignal.aborted) throw new MediaError('MEDIA_ABORTED', 499)
+        if (error instanceof MediaError && error.code === 'MEDIA_ABORTED') {
+          throw new MediaError('MEDIA_SOURCE_TIMEOUT', 504)
+        }
+        throw error instanceof MediaError ? error : new MediaError('MEDIA_SOURCE_REJECTED', 502)
+      }
+    },
+
     /** Streams a track the caller may currently hear in the room. Throws only sanitized MediaErrors. */
     async stream(input: RoomMediaInput, res: Response, parentSignal: AbortSignal): Promise<void> {
       const signal = AbortSignal.any([parentSignal, AbortSignal.timeout(STREAM_TIMEOUT_MS)])
       let release: (() => void) | undefined
       try {
         if (signal.aborted) throw new MediaError('MEDIA_ABORTED', 499)
-        const room = deps.rooms.get(input.roomId)
-        // The caller must still be in the same room object and the track must still be playable there.
-        const accessibleTrack = () => {
-          if (!room || deps.rooms.get(input.roomId) !== room || !room.users.some((u) => u.id === input.userId)) {
-            throw new MediaError('MEDIA_FORBIDDEN', 403)
-          }
-          const track = [room.currentTrack, room.pendingPlayback?.track, ...room.queue].find(
-            (t) => t?.id === input.trackId,
-          )
-          if (!track) throw new MediaError('MEDIA_FORBIDDEN', 403)
-          return track
-        }
-        // The URL comes from the server-side provider, never from client-supplied track data.
-        const { source, urlId } = accessibleTrack()
-        const priority: StreamPriority =
-          room!.currentTrack?.id === input.trackId || room!.pendingPlayback?.track?.id === input.trackId
-            ? 'normal'
-            : 'low'
-        const check = () => {
-          const current = accessibleTrack()
-          if (current.source !== source || current.urlId !== urlId) throw new MediaError('MEDIA_FORBIDDEN', 403)
-        }
-        const resolveUrl = async () => {
-          const url = await abortable(
-            resolveRoomUrl(room!, input.roomId, source, urlId),
-            AbortSignal.any([signal, AbortSignal.timeout(RESOLVE_TIMEOUT_MS)]),
-          )
-          check()
-          if (!url) throw new MediaError('MEDIA_SOURCE_UNAVAILABLE', 502)
-          return url
-        }
-        let url = await resolveUrl()
+        const { source, priority, check, resolveUrl } = prepareAccess(input)
+        let url = await resolveUrl(signal)
         release = await deps.slots.acquire(input.userId, signal, { priority })
         check()
         if (signal.aborted) throw new MediaError('MEDIA_ABORTED', 499)
-        if (isStreamUrlExpired(source, url)) url = await resolveUrl()
+        if (isStreamUrlExpired(source, url)) url = await resolveUrl(signal)
         const upstream = await deps.request(source, url, signal)
         try {
           check()

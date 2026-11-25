@@ -2,8 +2,8 @@ import { config as loadEnv } from 'dotenv'
 
 loadEnv({ quiet: true })
 import * as z from 'zod/v4'
-import { TIMING } from '@music-together/shared'
-import type { AudioQuality } from '@music-together/shared'
+import { MUSIC_SOURCES, TIMING } from '@music-together/shared'
+import type { AudioQuality, MusicSource } from '@music-together/shared'
 import { readFileSync } from 'node:fs'
 import { resolve, dirname } from 'node:path'
 import { fileURLToPath } from 'node:url'
@@ -46,6 +46,28 @@ const envSchema = z.object({
   MAPP_MAX_STREAMS: z.preprocess(
     (value) => (value === '' ? undefined : value),
     z.coerce.number().int().min(1).max(32).default(8),
+  ),
+  /** Optional shared secret enabling trusted Cloudflare Worker edge audio relay (`X-MT-Relay-Secret`). */
+  MAPP_RELAY_SECRET: z.preprocess(
+    (value) => (typeof value === 'string' && value.trim() === '' ? undefined : typeof value === 'string' ? value.trim() : value),
+    z.string().min(1).optional(),
+  ),
+  /** Comma-separated music sources allowed to use edge relay resolution (default: all sources; `none` disables all). */
+  MAPP_RELAY_SOURCES: z.preprocess(
+    (value) => {
+      if (value === undefined || value === null) return [...MUSIC_SOURCES]
+      if (typeof value !== 'string') return value
+      const trimmed = value.trim()
+      if (!trimmed) return [...MUSIC_SOURCES]
+      if (trimmed.toLowerCase() === 'none') return []
+      const items = trimmed
+        .split(',')
+        .map((item) => item.trim().toLowerCase())
+        .filter(Boolean)
+      if (items.length === 0) return ['']
+      return Array.from(new Set(items))
+    },
+    z.array(z.enum(MUSIC_SOURCES)),
   ),
   /** Origin of the word-by-word TTML lyric library (`<origin>/ncm-lyrics/<id>.ttml`, `<origin>/qq-lyrics/<mid>.ttml`). */
   // An empty value (`TTML_DB_BASE_URL=` in compose files) means "not set"; a malformed one still stops the boot.
@@ -128,6 +150,8 @@ export const config = {
   mapp: {
     audioMaxBitrate: env.MAPP_AUDIO_MAX_BITRATE as AudioQuality,
     maxStreams: env.MAPP_MAX_STREAMS,
+    relaySecret: env.MAPP_RELAY_SECRET,
+    relaySources: env.MAPP_RELAY_SOURCES as readonly MusicSource[],
   },
   ttml: {
     dbBaseUrl: env.TTML_DB_BASE_URL.replace(/\/+$/, ''),

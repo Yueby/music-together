@@ -61,6 +61,7 @@ function fixture(maxBitrate: 128 | 192 | 320 | 999 = 999) {
   const sink = new Sink()
   const run = (target: Sink = sink, signal = controller.signal) =>
     service.stream(input, target as unknown as Response, signal)
+  const resolve = (signal = controller.signal) => service.resolve(input, signal)
   /** Both of this account's concurrent slots must be free again. */
   const expectSlotsFree = async () => {
     const a = await slots.acquire(input.userId)
@@ -68,7 +69,7 @@ function fixture(maxBitrate: 128 | 192 | 320 | 999 = 999) {
     a()
     b()
   }
-  return { room, track, rooms, body, request, provider, cookie, slots, controller, sink, run, expectSlotsFree }
+  return { room, track, rooms, body, request, provider, cookie, slots, controller, sink, run, resolve, expectSlotsFree }
 }
 const tick = () => new Promise<void>((resolve) => setImmediate(resolve))
 
@@ -438,6 +439,60 @@ describe('room-controlled media service', () => {
     f.request.mockRejectedValueOnce(new MediaError('MEDIA_SOURCE_DENIED', 403))
     await expect(f.run()).rejects.toMatchObject({ code: 'MEDIA_SOURCE_DENIED', status: 403 })
     await f.expectSlotsFree()
+  })
+
+  describe('resolve() for edge relay', () => {
+    it('resolves and validates a CDN URL using roomUrlState cache without consuming StreamSlots', async () => {
+      const f = fixture()
+      const acquireSpy = vi.spyOn(f.slots, 'acquire')
+      const busy = await Promise.all(Array.from({ length: 8 }, (_, i) => f.slots.acquire(`other${i}`)))
+      acquireSpy.mockClear()
+
+      await expect(f.resolve()).resolves.toEqual({
+        v: 1,
+        source: 'netease',
+        url: 'https://m1.music.126.net/server-signed',
+      })
+      expect(acquireSpy).not.toHaveBeenCalled()
+      expect(f.request).not.toHaveBeenCalled()
+
+      // Subsequent resolve and direct stream reuse the cached URL without re-querying the provider.
+      await expect(f.resolve()).resolves.toEqual({
+        v: 1,
+        source: 'netease',
+        url: 'https://m1.music.126.net/server-signed',
+      })
+      expect(f.provider.getStreamUrl).toHaveBeenCalledOnce()
+
+      busy.forEach((release) => release())
+      f.body.end(audio)
+      await f.run()
+      expect(f.provider.getStreamUrl).toHaveBeenCalledOnce()
+    })
+
+    it('rejects non-allowlisted CDN URLs and room access violations in resolve()', async () => {
+      const f = fixture()
+      f.provider.getStreamUrl.mockResolvedValueOnce('https://evil.test/track.mp3')
+      await expect(f.resolve()).rejects.toMatchObject({ code: 'MEDIA_SOURCE_REJECTED', status: 502 })
+
+      f.room.users = []
+      await expect(f.resolve()).rejects.toMatchObject({ code: 'MEDIA_FORBIDDEN', status: 403 })
+    })
+
+    it('maps provider timeouts and caller aborts in resolve()', async () => {
+      const resolveTimeout = new AbortController()
+      vi.spyOn(AbortSignal, 'timeout').mockImplementation(() => resolveTimeout.signal)
+      const f = fixture()
+      f.provider.getStreamUrl.mockReturnValueOnce(new Promise(() => {}))
+      const timedOut = f.resolve()
+      await tick()
+      resolveTimeout.abort()
+      await expect(timedOut).rejects.toMatchObject({ code: 'MEDIA_SOURCE_TIMEOUT', status: 504 })
+
+      const f2 = fixture()
+      f2.controller.abort()
+      await expect(f2.resolve()).rejects.toMatchObject({ code: 'MEDIA_ABORTED', status: 499 })
+    })
   })
 })
 

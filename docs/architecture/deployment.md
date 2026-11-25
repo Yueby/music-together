@@ -45,6 +45,8 @@ TRUST_PROXY
 TTML_DB_BASE_URL
 MAPP_AUDIO_MAX_BITRATE
 MAPP_MAX_STREAMS
+MAPP_RELAY_SECRET
+MAPP_RELAY_SOURCES
 ```
 
 ### 动态容量与准入排队
@@ -80,6 +82,43 @@ MAPP_ALLOW_SANDBOX  可选，true 时同时接受沙箱通道令牌；默认只�
 沙箱构建签发的令牌 `channel` 为 `sandbox`，默认会被拒绝。测试沙箱构建时临时设置 `MAPP_ALLOW_SANDBOX=true`（官方文档要求沙箱需显式允许并与正式数据分开）；沙箱会话会与本服务的真实房间共用数据，测试完成后应移除该变量。
 
 四项全部不设置即关闭；只设置一部分或值非法时服务会拒绝启动。使用 `MAPP_JWKS_FILE` 时把公钥文件只读挂载进容器（如 `-v ./platform-jwks.json:/run/keys/platform-jwks.json:ro`）；不设置则从论坛 `/mini-app-api/jwks` 获取公钥。日志和代理不要记录带 `mini_app_token` 的完整 query。详见 [微应用兼容层](mini-app-compatibility.md)。
+
+### Cloudflare Worker 边缘加速插件（可选，`deploy/cf-worker/`）
+
+在「域名开启 Cloudflare 橙云 + Cloudflare Tunnel (`cloudflared`) 指向低配单容器 VPS」的部署拓扑下，可按需部署 `deploy/cf-worker/` 将高带宽/高频读请求卸载到 Cloudflare 边缘节点。不部署该插件时，主程序 100% 保持单容器零配置运行，Web 与微应用前端代码零改动。
+
+#### 模块与路由边界
+
+插件包含三个可独立开关的模块（`ENABLE_MAPP_AUDIO` / `ENABLE_COVER_PROXY` / `ENABLE_PUBLIC_METADATA_CACHE`），通过精确的 **Workers Routes** 挂载（**严禁挂 `/*` 通配路由，严禁使用 Custom Domain**，以免拦截 WebSocket/SPA 或触发同域 `fetch` 循环）：
+
+1. **微应用音频边缘中转（`/api/mapp/audio*`）**：Worker 原样携带 `Origin`/`Authorization` 附加 `X-MT-Relay: resolve-v1` 与 `X-MT-Relay-Secret` 回源完成 Discourse JWT 与房间权限校验并获取签名 CDN URL（不占用 VPS `StreamSlots`），再由 Worker 直连白名单音频 CDN，通过 workerd 原生 `FixedLengthStream` 零拷贝流式转发给微应用（8 秒仅限响应头超时，拿到响应头即释放定时器）。任意校验/拉取失败时取消上游流并携带 `X-MT-Relay: fallback-v1` 回退 VPS 直推（跳过二次 `mediaStreamRateLimit` 扣减，保留 `StreamSlots` 并发控制）。
+2. **全站封面代理与边缘缓存（`/api/music/cover-proxy*`）**：Web 封面直接走 `caches.default` 与共享白名单图床抓取（含网易云 `600y600` 尺寸限制、最多 3 跳 `https` 白名单重定向、光栅图片校验与 3 MiB 上限），异常回退 VPS；当 Worker 配置 `ALLOWED_MAPP_ORIGIN` 后，匹配该来源且带 `Authorization` 的微应用封面请求及 `OPTIONS` 预检直接由边缘缓存/白名单图床响应（严格执行 `<= 2 MiB`、`Access-Control-Allow-Origin: <ALLOWED_MAPP_ORIGIN>`、`Vary: Origin`、`Cache-Control: private, no-store, no-transform`），实现 VPS 零封面请求；未配置 `ALLOWED_MAPP_ORIGIN` 时带 `Authorization` 请求安全透传源站。
+3. **公开只读元数据边缘缓存**：仅接管精确白名单路径（`/api/music/ttml`、`/api/music/lyric`、`/api/music/discover/radar`、`/api/music/artist`、`/api/music/artist/songs`、`/api/music/artist/albums`、`/api/music/playlist`、`/api/music/search`）且为同源 Web 无 `Authorization` 的 `GET` 请求；严禁覆盖 `/api/music/playlist/mine`、`/api/music/discover/daily`、`/api/music/discover/home`、`/api/music/url`。MISS 回源前剥离 `Cookie` 请求头，入缓存前删除 `Set-Cookie` 与 `Access-Control-*`，且仅缓存 `200` 且不含 `no-store` 的响应。
+
+#### 部署步骤
+
+1. **配置 VPS 环境变量**：生成高熵共享密钥（`openssl rand -base64 32`）写入容器 `MAPP_RELAY_SECRET`；可按需配置 `MAPP_RELAY_SOURCES`（默认 `netease,tencent,kugou`，设 `none` 或移除某音源即可零停机秒退 VPS 直推）。
+2. **调整 `deploy/cf-worker/wrangler.toml`**：将 `[[routes]]` 域名替换为实际站点域名，确认 `[observability] enabled = false`（防止签名链接与密钥进入 CF 日志）；启用微应用时建议取消注释并填写 `ALLOWED_MAPP_ORIGIN`（如 `https://linux.do`），以同时启用微应用封面边缘极速模式并在 `resolve-v1` 回源异常时为 Worker 生成的 `503 MEDIA_RELAY_FAILED` 附带 CORS 头。
+3. **写入密钥并部署 Worker**：
+   ```bash
+   cd deploy/cf-worker
+   npx wrangler secret put MAPP_RELAY_SECRET
+   npx wrangler deploy
+   ```
+4. **开启全部路由的 Fail open**：在 Cloudflare Dashboard → **Workers Routes** 中，为每一条挂载的路由选择 **Failure mode: Fail open (proceed)**（该项由 Cloudflare 控制台/API 管理，无法直接写在 `wrangler.toml` 中），确保 Worker 触及配额或异常时自动放行回源。
+
+#### 启用后的动态容量推荐配置
+
+开启 Worker 音频边缘中转后，微应用音频不再占用 VPS 的 `StreamSlots`，`recentWaitP95Ms` 会长期保持为 `0`。由于动态容量控制器的单房上限增长条件依赖近期中转等待记录（`recentWaitP95Ms > 0`），若保留默认配置，`mappRoomCap` 会停留在默认值 `2 × MAPP_MAX_STREAMS = 16` 人且按高权重计费。
+
+推荐在启用 Worker 音频中转的 VPS 上同步设置：
+
+```bash
+CAPACITY_MAPP_WEIGHT=1
+CAPACITY_MAPP_ROOM_BASE=48   # 或 64，按实际房间规模与内存余量调整
+```
+
+这样既能释放微应用单房容纳人数，又保留容器内存、事件循环延迟与 CPU 节流的通用过载保护，以及回退直推时的 `StreamSlots` 兜底限流。
 
 ## Docker 多阶段构建
 

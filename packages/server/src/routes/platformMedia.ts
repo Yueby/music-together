@@ -1,5 +1,6 @@
+import { createHash, timingSafeEqual } from 'node:crypto'
 import { Router, type RequestHandler, type Response, type Router as RouterType } from 'express'
-import { mappRoomMediaQuerySchema } from '@music-together/shared'
+import { MUSIC_SOURCES, mappRoomMediaQuerySchema, type MusicSource } from '@music-together/shared'
 import { createPlatformMediaService } from '../services/platformMediaService.js'
 import { MediaError } from '../services/mediaSourceRequest.js'
 import { mediaStreamRateLimit } from '../middleware/httpRateLimiter.js'
@@ -12,18 +13,34 @@ export interface RoomMediaIdentityInput {
   authorization: string | undefined
   method: string
 }
+type PlatformMediaService = ReturnType<typeof createPlatformMediaService>
 interface Options {
   allowedOrigin: string
   verifyIdentity: (input: RoomMediaIdentityInput) => Promise<{ userId: string }>
   /** Defaults to the shared per-identity media limiter. */
   rateLimit?: RequestHandler
-  service?: ReturnType<typeof createPlatformMediaService>
+  service?: Pick<PlatformMediaService, 'stream'> & Partial<Pick<PlatformMediaService, 'resolve'>>
+  /** Optional shared secret for trusted edge relay (`X-MT-Relay-Secret`). Unset = direct streaming only. */
+  relaySecret?: string
+  /** Sources permitted to use edge relay resolution; excluded sources silently fall back to direct streaming. */
+  relaySources?: readonly MusicSource[]
 }
 
 const PATH = '/api/mapp/audio'
 const AUTH_TIMEOUT_MS = 6_000
 const PLATFORM_USER_ID = /^mapp_[a-f0-9]{32}$/
 const PREFLIGHT_HEADERS = ['authorization', 'content-type']
+const RELAY_MODE_RESOLVE = 'resolve-v1'
+const RELAY_MODE_FALLBACK = 'fallback-v1'
+
+type RelayMode = 'direct' | typeof RELAY_MODE_RESOLVE | typeof RELAY_MODE_FALLBACK
+
+function verifyRelaySecret(provided: string | undefined, expected: string | undefined): boolean {
+  if (!provided || !expected) return false
+  const providedDigest = createHash('sha256').update(provided, 'utf8').digest()
+  const expectedDigest = createHash('sha256').update(expected, 'utf8').digest()
+  return timingSafeEqual(providedDigest, expectedDigest)
+}
 
 /** Error bodies carry only a fixed code; never upstream, provider or resolver details. */
 function sendError(res: Response, error: unknown): void {
@@ -37,7 +54,7 @@ function sendError(res: Response, error: unknown): void {
   // client cancellations are routine and stay quiet.
   if (safe.status !== 401 && safe.status !== 499) logger.warn('Platform audio request failed', { code: safe.code, status: safe.status })
   // A failure after header preparation must not advertise the upstream length/type.
-  for (const name of ['Content-Length', 'Content-Type', 'Content-Encoding']) res.removeHeader(name)
+  for (const name of ['Content-Length', 'Content-Type', 'Content-Encoding', 'X-MT-Relay-Mode']) res.removeHeader(name)
   res.setHeader('Cache-Control', 'no-store')
   // Cloudflare replaces an origin 502/504 with its own error page, which carries no CORS headers: the browser then
   // reports a bare CORS failure and the fixed code below never arrives. 503 is passed through untouched.
@@ -59,6 +76,8 @@ export function createPlatformMediaRouter(options: Options): RouterType {
     throw new Error('MEDIA_CONFIGURATION_REJECTED')
   }
   const service = options.service ?? createPlatformMediaService()
+  const allowedRelaySources = new Set<MusicSource>(options.relaySources ?? MUSIC_SOURCES)
+  const limiter = options.rateLimit ?? mediaStreamRateLimit
   const router = Router()
 
   // 1. Origin, method, query and identity. No Cookie fallback.
@@ -112,23 +131,53 @@ export function createPlatformMediaRouter(options: Options): RouterType {
 
       req.identityUserId = identity.userId
       res.locals.mediaQuery = query.data
+      const relayHeader = req.get('X-MT-Relay')
+      const secretValid = verifyRelaySecret(req.get('X-MT-Relay-Secret'), options.relaySecret)
+      let relayMode: RelayMode = 'direct'
+      if (secretValid && relayHeader === RELAY_MODE_RESOLVE) relayMode = RELAY_MODE_RESOLVE
+      else if (secretValid && relayHeader === RELAY_MODE_FALLBACK) relayMode = RELAY_MODE_FALLBACK
+      res.locals.relayMode = relayMode
       next()
     } catch (error) {
       sendError(res, error)
     }
   })
 
-  // 2. Per-identity rate limit.
-  router.use(PATH, options.rateLimit ?? mediaStreamRateLimit)
+  // 2. Per-identity rate limit (trusted `fallback-v1` skips second deduction because `resolve-v1` already counted).
+  router.use(PATH, (req, res, next) => {
+    if (res.locals.relayMode === RELAY_MODE_FALLBACK) {
+      next()
+      return
+    }
+    limiter(req, res, next)
+  })
 
-  // 3. Stream. Client disconnects cancel the upstream request; the service enforces the 30s limit.
+  // 3. Resolve for edge relay or stream directly. Client disconnects cancel upstream work.
   router.use(PATH, async (req, res) => {
     const controller = new AbortController()
     res.once('close', () => {
       if (!res.writableFinished) controller.abort()
     })
     try {
-      await service.stream({ ...res.locals.mediaQuery, userId: req.identityUserId! }, res, controller.signal)
+      const relayMode = (res.locals.relayMode ?? 'direct') as RelayMode
+      const mediaInput = { ...res.locals.mediaQuery, userId: req.identityUserId! }
+      if (relayMode === RELAY_MODE_RESOLVE && service.resolve && allowedRelaySources.size > 0) {
+        const resolved = await service.resolve(mediaInput, controller.signal)
+        if (allowedRelaySources.has(resolved.source)) {
+          res.setHeader('X-MT-Relay-Mode', RELAY_MODE_RESOLVE)
+          res.setHeader('Cache-Control', 'private, no-store, no-transform')
+          res.status(200).json(resolved)
+          return
+        }
+      } else if (relayMode === RELAY_MODE_FALLBACK) {
+        logger.warn('relay_fallback', {
+          event: 'relay_fallback',
+          roomId: mediaInput.roomId,
+          trackId: mediaInput.trackId,
+          userId: mediaInput.userId,
+        })
+      }
+      await service.stream(mediaInput, res, controller.signal)
     } catch (error) {
       sendError(res, error)
     }

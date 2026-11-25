@@ -1,4 +1,9 @@
-import { COVER_HOST_ALLOWLIST, MAPP_COVER_MAX_BYTES } from '@music-together/shared'
+import {
+  COVER_HOST_ALLOWLIST,
+  MAPP_COVER_MAX_BYTES,
+  MAX_WEB_COVER_BYTES,
+  RASTER_IMAGE_TYPES,
+} from '@music-together/shared'
 import { readBounded } from '../utils/readBounded.js'
 
 /**
@@ -7,9 +12,9 @@ import { readBounded } from '../utils/readBounded.js'
  */
 export const ALLOWED_COVER_HOSTS: readonly string[] = COVER_HOST_ALLOWLIST
 
-export const MAX_WEB_COVER_BYTES = 3 * 1024 * 1024
+export { MAX_WEB_COVER_BYTES }
 
-const RASTER_IMAGE_TYPES = new Set(['image/jpeg', 'image/jpg', 'image/png', 'image/webp', 'image/gif', 'image/avif'])
+const RASTER_IMAGE_TYPE_SET = new Set(RASTER_IMAGE_TYPES)
 
 const NETEASE_COVER_HOST = /^p[1-4]\.music\.126\.net$/
 /** Player-sized artwork: ~0.5 MB instead of the multi-megabyte original. */
@@ -178,7 +183,7 @@ async function fetchUpstreamCover(target: URL, maxBytes: number, fetcher: typeof
   }
 
   const contentType = (response.headers.get('content-type') ?? '').split(';', 1)[0].trim().toLowerCase()
-  if (!RASTER_IMAGE_TYPES.has(contentType)) {
+  if (!RASTER_IMAGE_TYPE_SET.has(contentType)) {
     await discard(response)
     return { ok: false, status: 415, error: 'Unsupported image type', kind: 'invalid' }
   }
