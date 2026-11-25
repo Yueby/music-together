@@ -57,15 +57,17 @@ MAPP_RELAY_SOURCES
 | `CAPACITY_MIN_UNITS` | `12` | 动态容量下限（加权单位） |
 | `CAPACITY_MAX_UNITS` | `300` | 动态容量上限（加权单位，至少为配置的下限） |
 | `CAPACITY_BASE_UNITS` | 自动估算 | 初始容量（加权单位），默认根据内存和 CPU 配额估算 |
-| `CAPACITY_MAPP_WEIGHT` | `3` | 并发中转预算内每位微应用用户的总权重，最多对 `MAPP_MAX_STREAMS` 名听众收取额外权重。所有入房用户的基础权重为 1 |
-| `CAPACITY_MAPP_ROOM_BASE` | `2 × MAPP_MAX_STREAMS` | 微应用单房听众上限的初始值，可设置为 1–2000。运行时限制在中转并发槽位数与该槽位数加中转请求队列上限之间 |
+| `CAPACITY_MAPP_WEIGHT` | `3`（全音源边缘中转时自动 `1`） | 并发中转预算内每位微应用用户的总权重，最多对 `MAPP_MAX_STREAMS` 名听众收取额外权重。所有入房用户的基础权重为 1 |
+| `CAPACITY_MAPP_ROOM_BASE` | `2 × MAPP_MAX_STREAMS`（全音源边缘中转时自动对齐通用容量基线） | 微应用单房听众上限的初始值，可设置为 1–2000。直推模式运行时限制在中转并发槽位数与该槽位数加中转请求队列上限之间。全音源边缘中转模式的上限为 `max(中转并发槽位 + 中转请求队列上限, CAPACITY_MAX_UNITS)` |
+| `MAPP_AUDIO_MAX_BITRATE` | `128` | 微应用经 VPS 直推或 `fallback-v1` 回退时的最高码率（`128` / `192` / `320` / `999`） |
+| `MAPP_RELAY_AUDIO_MAX_BITRATE` | `320`（不低于 `MAPP_AUDIO_MAX_BITRATE`） | 微应用经 Cloudflare Worker `resolve-v1` 边缘直转时的最高码率（`128` / `192` / `320` / `999`） |
 | `CAPACITY_MAX_QUEUE` | `100` | 等候队列人数上限，设为 `0` 时满载请求直接被拒绝 |
 | `CAPACITY_MAX_SOCKETS` | `500` | Socket.IO 并发连接上限，包含未进入房间的连接 |
 | `CAPACITY_MEMORY_LIMIT_MB` | 自动检测 | 可选内存上限（MiB），存在有限 cgroup 配额时取两者较小值 |
 
 Linux 容器从 cgroup 读取内存和 CPU 配额。内存采样在可用时扣除非活跃文件页缓存，并以 Node.js 进程 RSS 为下限。持续健康且已使用至少 80% 有效容量时，容量上限才会逐步回升。
 
-通用容量和微应用单房听众上限各自使用 AIMD 调节。持续中转拥塞会收紧单房上限。中转利用率高时，通用过载的前两次收缩优先收紧单房上限，之后也收紧通用容量。内存占比达到 88% 时立即收紧通用容量。单房上限在有近期中转等待记录、房间接近上限且两种压力都较低时增长，每次增长后冷却 30 秒。
+通用容量和微应用单房听众上限各自使用 AIMD 调节。持续中转拥塞会收紧单房上限。中转利用率高时，通用过载的前两次收缩优先收紧单房上限，之后也收紧通用容量。内存占比达到 88% 时立即收紧通用容量。单房上限在健康且房间接近上限时按 30 秒冷却逐步扩容（VPS 直推模式需观测到近期中转等待记录，边缘中转运行健康时无需等待记录即可按需扩容）。若通用容量或单房上限因短暂尖刺收缩至各自基线以下，在系统持续健康、无回退且低压力时会逐步自愈回各自基线，不会在低峰期长期锁死在低位；超过基线的扩容仍严格要求真实高占用触发。
 
 ### Discourse 微应用入口（可选，默认关闭）
 
@@ -107,18 +109,15 @@ MAPP_ALLOW_SANDBOX  可选，true 时同时接受沙箱通道令牌；默认只�
    ```
 4. **开启全部路由的 Fail open**：在 Cloudflare Dashboard → **Workers Routes** 中，为每一条挂载的路由选择 **Failure mode: Fail open (proceed)**（该项由 Cloudflare 控制台/API 管理，无法直接写在 `wrangler.toml` 中），确保 Worker 触及配额或异常时自动放行回源。
 
-#### 启用后的动态容量推荐配置
+#### 启用后的动态容量与音质行为
 
-开启 Worker 音频边缘中转后，微应用音频不再占用 VPS 的 `StreamSlots`，`recentWaitP95Ms` 会长期保持为 `0`。由于动态容量控制器的单房上限增长条件依赖近期中转等待记录（`recentWaitP95Ms > 0`），若保留默认配置，`mappRoomCap` 会停留在默认值 `2 × MAPP_MAX_STREAMS = 16` 人且按高权重计费。
+当服务端配置了 `MAPP_RELAY_SECRET` 且 `MAPP_RELAY_SOURCES` 覆盖全部音源时，动态容量控制器自动进入**边缘中转感知模式**：
 
-推荐在启用 Worker 音频中转的 VPS 上同步设置：
+- 未显式配置时，`CAPACITY_MAPP_WEIGHT` 自动默认 `1`，单房听众上限基线自动对齐通用容量基线、上限放开至 `max(中转并发槽位 + 中转请求队列上限, CAPACITY_MAX_UNITS)`（不再被直推槽位上限 `8 + 64 = 72` 截断）；
+- `resolve-v1` 边缘直转使用独立的 `MAPP_RELAY_AUDIO_MAX_BITRATE`（默认 `320` kbps），而 `fallback-v1` 回退与直推仍使用 `MAPP_AUDIO_MAX_BITRATE`（默认 `128` kbps）；
+- 服务端分别记录 Worker 主动发起的 `fallback-v1` 回退和 Cloudflare Fail Open（请求绕过 Worker 直连 VPS）。任一信号都会触发或延长 5 分钟降级窗口。窗口内退出边缘活跃态，逐步将高于直推容量的单房上限收回至 `MAPP_MAX_STREAMS + 64` 以内，并将自愈目标限制在该上限。发生中转拥塞时，以 `mapp_stream` 限制微应用入房，网页端仍可正常入房。连续 5 分钟无新的回退或绕过事件、观测到新的边缘解析恢复（`resolve-v1`）且中转压力降至低压阈值后，恢复边缘活跃态并逐步自愈至基线。
 
-```bash
-CAPACITY_MAPP_WEIGHT=1
-CAPACITY_MAPP_ROOM_BASE=48   # 或 64，按实际房间规模与内存余量调整
-```
-
-这样既能释放微应用单房容纳人数，又保留容器内存、事件循环延迟与 CPU 节流的通用过载保护，以及回退直推时的 `StreamSlots` 兜底限流。
+如需显式锁定更低单房上限，仍可手动配置 `CAPACITY_MAPP_WEIGHT` / `CAPACITY_MAPP_ROOM_BASE` 覆盖默认值。
 
 ## Docker 多阶段构建
 

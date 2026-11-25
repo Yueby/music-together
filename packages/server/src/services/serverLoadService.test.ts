@@ -413,6 +413,145 @@ describe('CapacityController', () => {
     expect(ctrl.getDiagnostics().effectiveCap).toBe(100)
     expect(ctrl.getDiagnostics().relayDeferredShrinks).toBe(1)
   })
+
+  it('unlocks mappRoomCap in edge-relay mode and grows on demand without StreamSlots waits', () => {
+    const defaultEdge = makeController({ edgeRelayEnabled: true, mappWeight: 1, baseUnits: 100, maxUnits: 300 })
+    expect(defaultEdge.getDiagnostics()).toMatchObject({ mappRoomCap: 100, edgeRelayActive: true })
+
+    const highBase = makeController({
+      edgeRelayEnabled: true,
+      mappWeight: 1,
+      baseUnits: 100,
+      maxUnits: 300,
+      mappRoomBase: 120,
+      relayMaxQueued: 10,
+    })
+    expect(highBase.getDiagnostics().mappRoomCap).toBe(120)
+
+    const sample = makeSample({
+      webInRoom: 0,
+      mappInRoom: 85,
+      mappPeakRoom: 85,
+      streams: { ...IDLE_STREAMS, recentWaitP95Ms: 0, recentEdgeResolveCount: 12, recentFallbackCount: 0 },
+    })
+    recordTicks(defaultEdge, sample, 4)
+    expect(defaultEdge.getDiagnostics().mappRoomCap).toBe(100)
+    defaultEdge.recordSample({ ...sample, now: 9_000 })
+    expect(defaultEdge.getDiagnostics().mappRoomCap).toBe(105)
+  })
+
+  it('drops out of edge-relay active state and protects Web under fallback-v1 congestion', () => {
+    const ctrl = makeController({ edgeRelayEnabled: true, mappWeight: 1, mappRoomBase: 64 })
+    const fallbackOverload = makeSample({
+      webInRoom: 10,
+      mappInRoom: 20,
+      mappPeakRoom: 12,
+      streams: {
+        ...IDLE_STREAMS,
+        activeStreams: 8,
+        waitingCount: 12,
+        recentWaitP95Ms: 6_500,
+        recentBusyCount: 2,
+        recentFallbackCount: 5,
+      },
+    })
+    recordTicks(ctrl, fallbackOverload, 2)
+    expect(ctrl.getDiagnostics()).toMatchObject({ edgeRelayActive: false, mappRoomCap: 12 })
+    expect(ctrl.canAdmit('mapp', fallbackOverload)).toEqual({ allowed: false, reason: 'mapp_stream' })
+    expect(ctrl.canAdmit('web', fallbackOverload)).toEqual({ allowed: true })
+  })
+
+  it('self-heals effectiveCap back to baseline when healthy even while idle, without overshooting baseline', () => {
+    const ctrl = makeController({ baseUnits: 100, mappWeight: 1 })
+    ctrl.recordSample(makeSample({ memoryRatio: 0.4, webInRoom: 10, mappInRoom: 0, now: 1_000 }))
+    ctrl.recordSample(makeSample({ memoryRatio: 0.9, webInRoom: 10, mappInRoom: 0, now: 3_000 }))
+    expect(ctrl.getDiagnostics().effectiveCap).toBe(12)
+
+    // Traffic drops well below 80% of shrunk cap; sustained healthy ticks should recover back to 100 and stop there.
+    const idleHealthy = makeSample({ memoryRatio: 0.25, webInRoom: 2, mappInRoom: 0, now: 5_000 })
+    recordTicks(ctrl, idleHealthy, 25)
+    expect(ctrl.getDiagnostics().effectiveCap).toBeGreaterThan(12)
+    expect(ctrl.getDiagnostics().effectiveCap).toBeLessThanOrEqual(100)
+
+    recordTicks(ctrl, { ...idleHealthy, now: 60_000 }, 200)
+    expect(ctrl.getDiagnostics().effectiveCap).toBe(100)
+  })
+
+  it('self-heals mappRoomCap back to baseline after transient relay pressure clears, and pauses on fallbacks', () => {
+    const ctrl = makeController({ edgeRelayEnabled: true, mappWeight: 1, mappRoomBase: 48 })
+    const burst = makeSample({
+      mappInRoom: 32,
+      mappPeakRoom: 32,
+      streams: { ...IDLE_STREAMS, activeStreams: 8, recentBusyCount: 2, recentFallbackCount: 2 },
+      now: 1_000,
+    })
+    recordTicks(ctrl, burst, 2)
+    expect(ctrl.getDiagnostics().mappRoomCap).toBe(32)
+
+    // While recentFallbackCount > 0, do not heal back up yet.
+    const stillFallingBack = makeSample({
+      mappInRoom: 4,
+      mappPeakRoom: 4,
+      streams: { ...IDLE_STREAMS, recentFallbackCount: 1 },
+      now: 5_000,
+    })
+    recordTicks(ctrl, stillFallingBack, 20)
+    expect(ctrl.getDiagnostics().mappRoomCap).toBe(32)
+
+    // Once fallbacks and StreamSlots pressure clear, heal smoothly back toward 48 without requiring recentWaitP95Ms > 0.
+    const clean = makeSample({
+      mappInRoom: 4,
+      mappPeakRoom: 4,
+      streams: { ...IDLE_STREAMS, recentEdgeResolveCount: 4, recentFallbackCount: 0 },
+      now: 50_000,
+    })
+    recordTicks(ctrl, clean, 20)
+    const healed = ctrl.getDiagnostics().mappRoomCap
+    expect(healed).toBeGreaterThan(32)
+    expect(healed).toBeLessThanOrEqual(48)
+    expect(ctrl.getDiagnostics()).toMatchObject({ edgeRelayActive: false, edgeRelayDegraded: true })
+
+    recordTicks(ctrl, { ...clean, now: 90_000 }, 110)
+    expect(ctrl.getDiagnostics()).toMatchObject({ edgeRelayActive: false, edgeRelayDegraded: true, mappRoomCap: 48 })
+
+    ctrl.recordSample({ ...clean, now: 343_000 })
+    expect(ctrl.getDiagnostics()).toMatchObject({ edgeRelayActive: true, edgeRelayDegraded: false, mappRoomCap: 48 })
+  })
+
+  it('limits room capacity to VPS streaming capacity during Cloudflare Fail Open and recovers after the window', () => {
+    const ctrl = makeController({ edgeRelayEnabled: true, mappWeight: 1, baseUnits: 105, maxUnits: 300 })
+    expect(ctrl.getDiagnostics()).toMatchObject({ edgeRelayActive: true, edgeRelayDegraded: false, mappRoomCap: 105 })
+
+    const bypass = makeSample({ streams: { ...IDLE_STREAMS, recentBypassCount: 2, recentFallbackCount: 0 } })
+    ctrl.recordSample(bypass)
+    expect(ctrl.getDiagnostics()).toMatchObject({ edgeRelayActive: false, edgeRelayDegraded: true, mappRoomCap: 89 })
+    recordTicks(ctrl, { ...bypass, now: 3_000 }, 2)
+    expect(ctrl.getDiagnostics().mappRoomCap).toBe(72)
+
+    recordTicks(ctrl, makeSample({
+      now: 7_000,
+      mappInRoom: 70,
+      streams: { ...IDLE_STREAMS, recentBusyCount: 2 },
+    }), 2)
+    expect(ctrl.getDiagnostics().mappRoomCap).toBe(61)
+
+    const idle = makeSample({ streams: { ...IDLE_STREAMS, recentBypassCount: 0, recentFallbackCount: 0 } })
+    for (let now = 11_000; now < 305_000; now += 2_000) {
+      ctrl.recordSample({ ...idle, now })
+      expect(ctrl.getDiagnostics().mappRoomCap).toBeLessThanOrEqual(72)
+    }
+    expect(ctrl.getDiagnostics()).toMatchObject({ edgeRelayActive: false, edgeRelayDegraded: true, mappRoomCap: 72 })
+
+    // Silence alone after the 5-minute window must not exit degradation without positive edge-resolve proof.
+    recordTicks(ctrl, { ...idle, now: 305_000 }, 20)
+    expect(ctrl.getDiagnostics()).toMatchObject({ edgeRelayActive: false, edgeRelayDegraded: true, mappRoomCap: 72 })
+
+    // Once Worker serves resolve-v1 again after the window, exit degradation and heal back to 105.
+    ctrl.recordSample({ ...idle, now: 347_000, streams: { ...IDLE_STREAMS, recentEdgeResolveCount: 1 } })
+    expect(ctrl.getDiagnostics()).toMatchObject({ edgeRelayActive: true, edgeRelayDegraded: false })
+    recordTicks(ctrl, { ...idle, now: 349_000 }, 210)
+    expect(ctrl.getDiagnostics().mappRoomCap).toBe(105)
+  })
 })
 
 describe('normalizeEventLoopDelayMs', () => {

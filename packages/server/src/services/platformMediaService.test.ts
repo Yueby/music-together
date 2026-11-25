@@ -493,6 +493,38 @@ describe('room-controlled media service', () => {
       f2.controller.abort()
       await expect(f2.resolve()).rejects.toMatchObject({ code: 'MEDIA_ABORTED', status: 499 })
     })
+
+    it('uses relayMaxBitrate independently of VPS direct maxBitrate', async () => {
+      const f = fixture(128)
+      const service = createPlatformMediaService({
+        rooms: f.rooms,
+        request: f.request,
+        provider: f.provider,
+        cookie: f.cookie,
+        slots: f.slots,
+        maxBitrate: 128,
+        relayMaxBitrate: 320,
+      })
+      f.room.audioQuality = 999
+      f.provider.getStreamUrl
+        .mockResolvedValueOnce('https://m1.music.126.net/edge-320')
+        .mockResolvedValueOnce('https://m1.music.126.net/vps-128')
+
+      await expect(service.resolve(input, f.controller.signal)).resolves.toEqual({
+        v: 1,
+        source: 'netease',
+        url: 'https://m1.music.126.net/edge-320',
+      })
+      f.body.end(audio)
+      await service.stream(input, f.sink as unknown as Response, f.controller.signal)
+
+      expect(f.provider.getStreamUrl.mock.calls.map((call) => call[2])).toEqual([320, 128])
+      expect(f.request).toHaveBeenCalledExactlyOnceWith(
+        'netease',
+        'https://m1.music.126.net/vps-128',
+        expect.any(AbortSignal),
+      )
+    })
   })
 })
 
@@ -605,5 +637,18 @@ describe('stream slots', () => {
     expect(await settled(queued[1])).toBe(false)
     releaseB()
     ;(await queued[1])()
+  })
+
+  it('tracks and prunes edge-relay resolves, fallbacks, and bypasses in the 30s window', () => {
+    vi.useFakeTimers()
+    vi.setSystemTime(1_000)
+    const slots = new StreamSlots()
+    slots.recordEdgeResolve()
+    slots.recordEdgeResolve()
+    slots.recordRelayFallback()
+    slots.recordRelayBypass()
+    expect(slots.getSnapshot()).toMatchObject({ recentEdgeResolveCount: 2, recentFallbackCount: 1, recentBypassCount: 1 })
+    vi.advanceTimersByTime(31_000)
+    expect(slots.getSnapshot()).toMatchObject({ recentEdgeResolveCount: 0, recentFallbackCount: 0, recentBypassCount: 0 })
   })
 })

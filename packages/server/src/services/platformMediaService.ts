@@ -38,6 +38,9 @@ export interface StreamSlotsSnapshot {
   maxQueued: number
   recentWaitP95Ms: number
   recentBusyCount: number
+  recentEdgeResolveCount?: number
+  recentFallbackCount?: number
+  recentBypassCount?: number
 }
 
 const METRICS_WINDOW_MS = 30_000
@@ -54,6 +57,9 @@ export class StreamSlots {
   private lowWaiting: Array<() => void> = []
   private waitSamples: Array<{ at: number; ms: number }> = []
   private busyEvents: number[] = []
+  private edgeResolveEvents: number[] = []
+  private fallbackEvents: number[] = []
+  private bypassEvents: number[] = []
   private readonly maxStreams: number
   private readonly maxQueued: number
   private readonly queueTimeoutMs: number
@@ -68,6 +74,9 @@ export class StreamSlots {
     const cutoff = now - METRICS_WINDOW_MS
     while (this.waitSamples.length > 0 && this.waitSamples[0]!.at < cutoff) this.waitSamples.shift()
     while (this.busyEvents.length > 0 && this.busyEvents[0]! < cutoff) this.busyEvents.shift()
+    while (this.edgeResolveEvents.length > 0 && this.edgeResolveEvents[0]! < cutoff) this.edgeResolveEvents.shift()
+    while (this.fallbackEvents.length > 0 && this.fallbackEvents[0]! < cutoff) this.fallbackEvents.shift()
+    while (this.bypassEvents.length > 0 && this.bypassEvents[0]! < cutoff) this.bypassEvents.shift()
   }
 
   private recordWait(ms: number): void {
@@ -81,6 +90,24 @@ export class StreamSlots {
     const now = Date.now()
     this.pruneMetrics(now)
     this.busyEvents.push(now)
+  }
+
+  recordEdgeResolve(): void {
+    const now = Date.now()
+    this.pruneMetrics(now)
+    this.edgeResolveEvents.push(now)
+  }
+
+  recordRelayFallback(): void {
+    const now = Date.now()
+    this.pruneMetrics(now)
+    this.fallbackEvents.push(now)
+  }
+
+  recordRelayBypass(): void {
+    const now = Date.now()
+    this.pruneMetrics(now)
+    this.bypassEvents.push(now)
   }
 
   getSnapshot(): StreamSlotsSnapshot {
@@ -98,6 +125,9 @@ export class StreamSlots {
       maxQueued: this.maxQueued,
       recentWaitP95Ms,
       recentBusyCount: this.busyEvents.length,
+      recentEdgeResolveCount: this.edgeResolveEvents.length,
+      recentFallbackCount: this.fallbackEvents.length,
+      recentBypassCount: this.bypassEvents.length,
     }
   }
 
@@ -183,6 +213,20 @@ export function getStreamSlotsSnapshot(): StreamSlotsSnapshot {
   return sharedSlots.getSnapshot()
 }
 
+/** Record a trusted edge-relay URL resolution (`resolve-v1`) in the shared telemetry window. */
+export function recordEdgeRelayResolve(): void {
+  sharedSlots.recordEdgeResolve()
+}
+
+/** Record a trusted edge-relay fallback to VPS streaming (`fallback-v1`) in the shared telemetry window. */
+export function recordEdgeRelayFallback(): void {
+  sharedSlots.recordRelayFallback()
+}
+
+export function recordEdgeRelayBypass(): void {
+  sharedSlots.recordRelayBypass()
+}
+
 /** Legacy provider promises cannot be cancelled: stop waiting for them, and ignore their late result. */
 function abortable<T>(work: Promise<T>, signal: AbortSignal): Promise<T> {
   // Whatever happens, `work` must always have a rejection handler: once we stop waiting, its failure is not ours.
@@ -224,8 +268,10 @@ interface Dependencies {
   cookie: (source: MusicSource, roomId: string) => string | null
   request: typeof requestMediaSource
   slots: StreamSlots
-  /** Ceiling for the bitrate served here; the room's own quality still applies below it. */
+  /** Ceiling for direct VPS / fallback streaming; the room's own quality still applies below it. */
   maxBitrate: AudioQuality
+  /** Ceiling for edge-relayed URL resolution (`resolve-v1`); defaults to `config.mapp.relayAudioMaxBitrate`. */
+  relayMaxBitrate: AudioQuality
 }
 export interface RoomMediaInput {
   userId: string
@@ -240,14 +286,19 @@ export interface ResolvedRoomMedia {
 }
 
 export function createPlatformMediaService(dependencies: Partial<Dependencies> = {}) {
+  const maxBitrate = dependencies.maxBitrate ?? config.mapp.audioMaxBitrate
+  const relayMaxBitrate =
+    dependencies.relayMaxBitrate ??
+    (dependencies.maxBitrate !== undefined ? maxBitrate : config.mapp.relayAudioMaxBitrate)
   const deps: Dependencies = {
     rooms: roomRepo,
     provider: musicProvider,
     cookie: getAnyCookie,
     request: requestMediaSource,
     slots: sharedSlots,
-    maxBitrate: config.mapp.audioMaxBitrate,
     ...dependencies,
+    maxBitrate,
+    relayMaxBitrate,
   }
   const roomUrlState = new WeakMap<
     RoomData,
@@ -257,9 +308,15 @@ export function createPlatformMediaService(dependencies: Partial<Dependencies> =
     }
   >()
 
-  function resolveRoomUrl(room: RoomData, roomId: string, source: MusicSource, urlId: string): Promise<string | null> {
-    // Cap bitrate because the mini-app downloads the full file before playback.
-    const bitrate = Math.min(room.audioQuality, deps.maxBitrate) as AudioQuality
+  function resolveRoomUrl(
+    room: RoomData,
+    roomId: string,
+    source: MusicSource,
+    urlId: string,
+    bitrateCeiling: AudioQuality,
+  ): Promise<string | null> {
+    // Cap bitrate according to the delivery path (VPS direct vs edge relay).
+    const bitrate = Math.min(room.audioQuality, bitrateCeiling) as AudioQuality
     const cookie = deps.cookie(source, roomId)
     const cookieHash = cookie ? createHash('sha256').update(cookie).digest('hex').slice(0, 16) : 'anon'
     const key = `${source}:${urlId}:${bitrate}:${cookieHash}`
@@ -298,7 +355,7 @@ export function createPlatformMediaService(dependencies: Partial<Dependencies> =
     return work
   }
 
-  function prepareAccess(input: RoomMediaInput) {
+  function prepareAccess(input: RoomMediaInput, bitrateCeiling: AudioQuality) {
     const room = deps.rooms.get(input.roomId)
     // The caller must still be in the same room object and the track must still be playable there.
     const accessibleTrack = () => {
@@ -323,7 +380,7 @@ export function createPlatformMediaService(dependencies: Partial<Dependencies> =
     }
     const resolveUrl = async (signal: AbortSignal) => {
       const url = await abortable(
-        resolveRoomUrl(room!, input.roomId, source, urlId),
+        resolveRoomUrl(room!, input.roomId, source, urlId, bitrateCeiling),
         AbortSignal.any([signal, AbortSignal.timeout(RESOLVE_TIMEOUT_MS)]),
       )
       check()
@@ -341,7 +398,7 @@ export function createPlatformMediaService(dependencies: Partial<Dependencies> =
     async resolve(input: RoomMediaInput, parentSignal: AbortSignal): Promise<ResolvedRoomMedia> {
       try {
         if (parentSignal.aborted) throw new MediaError('MEDIA_ABORTED', 499)
-        const { source, resolveUrl } = prepareAccess(input)
+        const { source, resolveUrl } = prepareAccess(input, deps.relayMaxBitrate)
         const url = await resolveUrl(parentSignal)
         validateMediaUrl(source, url)
         return { v: 1, source, url }
@@ -360,7 +417,7 @@ export function createPlatformMediaService(dependencies: Partial<Dependencies> =
       let release: (() => void) | undefined
       try {
         if (signal.aborted) throw new MediaError('MEDIA_ABORTED', 499)
-        const { source, priority, check, resolveUrl } = prepareAccess(input)
+        const { source, priority, check, resolveUrl } = prepareAccess(input, deps.maxBitrate)
         let url = await resolveUrl(signal)
         release = await deps.slots.acquire(input.userId, signal, { priority })
         check()
