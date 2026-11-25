@@ -1,8 +1,7 @@
-import { EVENTS, ERROR_CODE, defineAbilityFor, ntpPingSchema, playerPlaySchema, playerSeekSchema, playerSetModeSchema, playerSyncSchema } from '@music-together/shared'
-import type { TypedServer, TypedSocket } from '../middleware/types.js'
-import { createWithPermission } from '../middleware/withControl.js'
+import { EVENTS, ERROR_CODE, ntpPingSchema, playerNextSchema, playerPlaySchema, playerSeekSchema, playerSetModeSchema, playerSyncSchema } from '@music-together/shared'
+import type { HandlerContext, TypedServer, TypedSocket } from '../middleware/types.js'
+import { createWithPermission, withRateLimitedPermission } from '../middleware/withControl.js'
 import { createWithRoom } from '../middleware/withRoom.js'
-import { checkSocketRateLimit } from '../middleware/socketRateLimiter.js'
 import { roomRepo } from '../repositories/roomRepository.js'
 import * as playerService from '../services/playerService.js'
 import * as roomService from '../services/roomService.js'
@@ -16,7 +15,6 @@ export function registerPlayerController(io: TypedServer, socket: TypedSocket) {
   socket.on(
     EVENTS.PLAYER_PLAY,
     withPermission('play', 'Player', async (ctx, raw) => {
-      if (!(await checkSocketRateLimit(ctx.socket))) return
       const parsed = playerPlaySchema.safeParse(raw ?? undefined)
       if (!parsed.success) {
         ctx.socket.emit(EVENTS.ROOM_ERROR, { code: ERROR_CODE.INVALID_DATA, message: '无效的播放请求' })
@@ -56,22 +54,28 @@ export function registerPlayerController(io: TypedServer, socket: TypedSocket) {
     }),
   )
 
-  // Conductor (hostId) auto-next bypasses CASL — system behavior, not manual user action.
-  // Non-conductor manual next still requires CASL permission check.
   const withRoom = createWithRoom(io)
+  const manualNext = withRateLimitedPermission('play', 'Player', async (ctx: HandlerContext) => {
+    await playerService.playNextTrackInRoom(ctx.io, ctx.roomId, ctx.room.playMode)
+  })
   socket.on(
     EVENTS.PLAYER_NEXT,
-    withRoom(async (ctx) => {
-      if (ctx.user.id !== ctx.room.hostId) {
-        const ability = defineAbilityFor(ctx.user.role)
-        if (!ability.can('next', 'Player')) {
-          ctx.socket.emit(EVENTS.ROOM_ERROR, {
-            code: ERROR_CODE.NO_PERMISSION,
-            message: '你没有权限执行此操作',
-          })
-          return
-        }
+    withRoom(async (ctx, raw) => {
+      const parsed = playerNextSchema.safeParse(raw)
+      if (!parsed.success) {
+        ctx.socket.emit(EVENTS.ROOM_ERROR, { code: ERROR_CODE.INVALID_DATA, message: '无效的切歌请求' })
+        return
       }
+      const data = parsed.data
+      if (!data?.auto) return manualNext(ctx, undefined)
+
+      const latest = playerService.getLatestPlayback(ctx.room)
+      if (!latest.track || latest.track.id !== data.trackId || latest.playState.revision !== data.revision) return
+      if (ctx.user.id !== ctx.room.hostId) {
+        ctx.socket.emit(EVENTS.ROOM_ERROR, { code: ERROR_CODE.NO_PERMISSION, message: '你没有权限执行此操作' })
+        return
+      }
+
       await playerService.playNextTrackInRoom(ctx.io, ctx.roomId, ctx.room.playMode)
     }),
   )

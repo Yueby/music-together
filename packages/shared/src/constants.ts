@@ -13,6 +13,9 @@ export const ROOM_ID_PATTERN = /^[A-Za-z0-9_-]{1,20}$/
  */
 export const PASSWORD_LOCKED_MESSAGE = '密码错误次数过多，请稍后再试'
 
+/** The `WRONG_PASSWORD` message when a room's global wrong-password budget is temporarily exhausted. */
+export const ROOM_PASSWORD_LOCKED_MESSAGE = '房间密码错误次数过多，请稍后再试'
+
 /** What a track's artist list says when the platform credited nobody. It names no one, so it must not be linked. */
 export const UNKNOWN_ARTIST = 'Unknown'
 

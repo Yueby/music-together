@@ -13,6 +13,7 @@ import { EVENTS } from '@music-together/shared'
 import { useHasHover } from '@/hooks/useHasHover'
 import { useIsMobile } from '@/hooks/useIsMobile'
 import { useCallback, useEffect, useMemo, useRef, useState, type MouseEvent } from 'react'
+import { createPortal } from 'react-dom'
 import { defaultRangeExtractor, useVirtualizer, type Range } from '@tanstack/react-virtual'
 import {
   DndContext,
@@ -587,30 +588,34 @@ export function QueueDrawer({ open, onOpenChange, onRemoveFromQueue, onReorderQu
                   })}
                 </div>
               </SortableContext>
-              <DragOverlay dropAnimation={null}>
-                {activeDragTrack && (
-                  <div
-                    data-testid="queue-drag-overlay"
-                    className="flex h-12 items-center gap-2 rounded-lg border border-primary/30 bg-popover/95 px-2 shadow-xl backdrop-blur-md"
-                  >
-                    <span className="-ml-1 flex h-8 w-5 shrink-0 items-center justify-center text-muted-foreground">
-                      <GripVertical className="h-3.5 w-3.5" />
-                    </span>
-                    <span className="w-5 shrink-0 text-center text-xs tabular-nums text-muted-foreground">
-                      {activeDragIndex + 1}
-                    </span>
-                    <div className="relative shrink-0">
-                      <QueueCover track={activeDragTrack} />
-                    </div>
-                    <div className="min-w-0 flex-1">
-                      <div className="truncate text-sm font-medium">{activeDragTrack.title}</div>
-                      <div className="truncate text-xs text-muted-foreground">
-                        <ArtistNames track={activeDragTrack} />
+              {typeof document !== 'undefined' &&
+                createPortal(
+                  <DragOverlay dropAnimation={null} zIndex={60}>
+                    {activeDragTrack && (
+                      <div
+                        data-testid="queue-drag-overlay"
+                        className="flex h-12 items-center gap-2 rounded-lg border border-primary/30 bg-popover/95 px-2 shadow-xl backdrop-blur-md"
+                      >
+                        <span className="-ml-1 flex h-8 w-5 shrink-0 items-center justify-center text-muted-foreground">
+                          <GripVertical className="h-3.5 w-3.5" />
+                        </span>
+                        <span className="w-5 shrink-0 text-center text-xs tabular-nums text-muted-foreground">
+                          {activeDragIndex + 1}
+                        </span>
+                        <div className="relative shrink-0">
+                          <QueueCover track={activeDragTrack} />
+                        </div>
+                        <div className="min-w-0 flex-1">
+                          <div className="truncate text-sm font-medium">{activeDragTrack.title}</div>
+                          <div className="truncate text-xs text-muted-foreground">
+                            <ArtistNames track={activeDragTrack} />
+                          </div>
+                        </div>
                       </div>
-                    </div>
-                  </div>
+                    )}
+                  </DragOverlay>,
+                  document.body,
                 )}
-              </DragOverlay>
             </DndContext>
           )}
         </div>

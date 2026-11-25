@@ -1,7 +1,7 @@
 import { EVENTS, ERROR_CODE, TIMING, defineAbilityFor, voteStartSchema, voteCastSchema } from '@music-together/shared'
 import type { Actions, Subjects, VoteAction } from '@music-together/shared'
 import { createWithRoom } from '../middleware/withRoom.js'
-import { checkSocketRateLimit } from '../middleware/socketRateLimiter.js'
+import { withSocketRateLimit } from '../middleware/withControl.js'
 import * as voteService from '../services/voteService.js'
 import { executeVoteAction } from '../services/voteActionService.js'
 import { logger } from '../utils/logger.js'
@@ -12,8 +12,7 @@ export function registerVoteController(io: TypedServer, socket: TypedSocket) {
 
   socket.on(
     EVENTS.VOTE_START,
-    withRoom(async (ctx, raw) => {
-      if (!(await checkSocketRateLimit(ctx.socket))) return
+    withRoom(withSocketRateLimit(async (ctx, raw) => {
       const parsed = voteStartSchema.safeParse(raw)
       if (!parsed.success) {
         ctx.socket.emit(EVENTS.ROOM_ERROR, { code: ERROR_CODE.INVALID_INPUT, message: '无效的投票请求' })
@@ -84,15 +83,20 @@ export function registerVoteController(io: TypedServer, socket: TypedSocket) {
 
       // Broadcast vote started
       io.to(ctx.roomId).emit(EVENTS.VOTE_STARTED, voteService.toVoteState(vote))
-    }),
+    })),
   )
 
   socket.on(
     EVENTS.VOTE_CAST,
-    withRoom(async (ctx, raw) => {
+    withRoom(withSocketRateLimit(async (ctx, raw) => {
       const parsed = voteCastSchema.safeParse(raw)
       if (!parsed.success) {
         ctx.socket.emit(EVENTS.ROOM_ERROR, { code: ERROR_CODE.INVALID_INPUT, message: '无效的投票数据' })
+        return
+      }
+
+      if (!voteService.getActiveVote(ctx.roomId)) {
+        ctx.socket.emit(EVENTS.ROOM_ERROR, { code: ERROR_CODE.INVALID_INPUT, message: '当前没有进行中的投票' })
         return
       }
 
@@ -119,6 +123,6 @@ export function registerVoteController(io: TypedServer, socket: TypedSocket) {
           reason: result.passed && !executed ? 'action_failed' : result.reason,
         })
       }
-    }),
+    })),
   )
 }

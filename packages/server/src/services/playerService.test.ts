@@ -1,9 +1,10 @@
-import type { Track } from '@music-together/shared'
+import { EVENTS, type Track } from '@music-together/shared'
 import { afterEach, describe, expect, it, vi } from 'vitest'
 import { roomRepo } from '../repositories/roomRepository.js'
 import { toPublicRoomState } from '../utils/roomUtils.js'
 import type { RoomData } from '../repositories/types.js'
 import { musicProvider } from './musicProvider.js'
+import { config } from '../config.js'
 import {
   autoPlayIfEmpty,
   cleanupRoom,
@@ -72,6 +73,47 @@ afterEach(() => {
 })
 
 describe('playerService state transitions', () => {
+  it('uses the replacement metadata in the queue and playback after automatic fallback', async () => {
+    vi.useFakeTimers()
+    const data = room()
+    const original = {
+      ...track,
+      streamUrl: undefined,
+      artistIds: ['original-artist'],
+      thumbnailCover: 'https://example.com/original.jpg',
+    }
+    const replacement: Track = {
+      ...track,
+      id: 'replacement',
+      source: 'tencent',
+      sourceId: 'replacement',
+      urlId: 'replacement',
+      duration: 184,
+      artistIds: ['replacement-artist'],
+      thumbnailCover: 'https://example.com/replacement.jpg',
+    }
+    data.queue = [original]
+    roomRepo.set(data.id, data)
+    vi.spyOn(musicProvider, 'search').mockResolvedValue([replacement])
+    vi.spyOn(musicProvider, 'getStreamUrl').mockImplementation(async (source) =>
+      source === 'tencent' ? 'https://example.com/replacement.mp3' : null,
+    )
+    const { io, emit } = ioMock()
+
+    const wasEnabled = config.autoFallback.enabled
+    config.autoFallback.enabled = true
+    try {
+      expect(await playTrackInRoom(io as never, data.id, original)).toBe(true)
+    } finally {
+      config.autoFallback.enabled = wasEnabled
+    }
+    const queued = { ...replacement, id: original.id, streamUrl: 'https://example.com/replacement.mp3' }
+    expect(data.queue).toEqual([queued])
+    expect(emit).toHaveBeenCalledWith(EVENTS.PLAYER_PLAY, { track: queued, playState: expect.anything() })
+    await vi.advanceTimersByTimeAsync(2_000)
+    expect(data.currentTrack).toEqual(queued)
+  })
+
   it('pauses at the scheduled execution position without seeking clients backwards', () => {
     vi.useFakeTimers()
     vi.setSystemTime(new Date('2026-01-01T00:00:10Z'))

@@ -39,7 +39,7 @@ export function createWithRoom(io: TypedServer) {
         user,
       }
 
-      Promise.resolve(handler(ctx, data)).catch((err) => {
+      return Promise.resolve(handler(ctx, data)).catch((err) => {
         logger.error('Handler error', err, { roomId: mapping.roomId })
         socket.emit(EVENTS.ROOM_ERROR, { code: ERROR_CODE.INTERNAL, message: '服务器内部错误' })
       })

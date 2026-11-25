@@ -16,3 +16,14 @@ export async function readBounded(response: Response, maxBytes: number): Promise
   }
   return Buffer.concat(chunks)
 }
+
+export async function readBoundedJson<T = unknown>(response: Response, maxBytes = 2 * 1024 * 1024): Promise<T> {
+  const body = await readBounded(response, maxBytes)
+  if (!body) throw new Error('JSON response exceeds size limit')
+  // Match Response.json(), including its handling of a UTF-8 BOM.
+  try {
+    return JSON.parse(new TextDecoder().decode(body)) as T
+  } catch {
+    throw new SyntaxError('Invalid JSON response')
+  }
+}

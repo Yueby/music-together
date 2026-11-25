@@ -104,7 +104,7 @@ export interface ClientToServerEvents {
   [EVENTS.PLAYER_PLAY]: (data?: { track?: Track }) => void
   [EVENTS.PLAYER_PAUSE]: () => void
   [EVENTS.PLAYER_SEEK]: (data: { currentTime: number }) => void
-  [EVENTS.PLAYER_NEXT]: () => void
+  [EVENTS.PLAYER_NEXT]: (data?: { auto?: boolean; trackId?: string; revision?: number }) => void
   [EVENTS.PLAYER_PREV]: () => void
   [EVENTS.PLAYER_SYNC]: (data: { currentTime: number; hostServerTime?: number; revision: number; trackId: string }) => void
   [EVENTS.PLAYER_SYNC_REQUEST]: () => void

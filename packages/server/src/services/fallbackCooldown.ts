@@ -1,3 +1,5 @@
+import { registerRoomCleanup } from './roomCleanupRegistry.js'
+
 /**
  * Cooldown after an automatic source fallback for a track: stops the same unplayable track from being retried (and
  * bounced between sources) over and over. Kept per room so a room that is gone takes its entries with it.
@@ -32,3 +34,4 @@ export function createFallbackCooldown(now: () => number = Date.now) {
 }
 
 export const fallbackCooldown = createFallbackCooldown()
+registerRoomCleanup('fallback-cooldown', fallbackCooldown.clearRoom)

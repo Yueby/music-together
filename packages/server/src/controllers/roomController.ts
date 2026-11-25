@@ -3,6 +3,7 @@ import {
   EVENTS,
   LIMITS,
   PASSWORD_LOCKED_MESSAGE,
+  ROOM_PASSWORD_LOCKED_MESSAGE,
   roomCreateSchema,
   roomJoinSchema,
   roomSettingsSchema,
@@ -16,7 +17,7 @@ import {
   checkRoomEntryRateLimit,
   checkRoomListRateLimit,
   clearJoinPasswordFailures,
-  isJoinPasswordLocked,
+  getJoinPasswordLock,
   recordJoinPasswordFailure,
 } from '../middleware/socketRateLimiter.js'
 import { roomRepo } from '../repositories/roomRepository.js'
@@ -316,22 +317,22 @@ export function registerRoomController(io: TypedServer, socket: TypedSocket) {
 
       // After too many wrong passwords, no password is evaluated any more (so a lucky guess cannot succeed), but a
       // join that needs none — rejoin ticket, already a member, creator, admin — still goes through untouched.
-      const passwordLocked = isJoinPasswordLocked(socket, roomId)
+      const passwordLock = getJoinPasswordLock(socket, roomId)
 
       // Validate join request (password, rejoin scenarios) — pure business logic
       const validation = roomService.validateJoinRequest(
         roomId,
         socket.id,
         socket.data.identityUserId,
-        passwordLocked ? undefined : password,
+        passwordLock ? undefined : password,
         rejoinToken,
       )
       if (!validation.valid) {
         if (validation.errorCode === 'WRONG_PASSWORD') {
-          if (passwordLocked) {
+          if (passwordLock) {
             socket.emit(EVENTS.ROOM_ERROR, {
               code: ERROR_CODE.WRONG_PASSWORD,
-              message: PASSWORD_LOCKED_MESSAGE,
+              message: passwordLock === 'room' ? ROOM_PASSWORD_LOCKED_MESSAGE : PASSWORD_LOCKED_MESSAGE,
             })
             return
           }
@@ -344,7 +345,7 @@ export function registerRoomController(io: TypedServer, socket: TypedSocket) {
         return
       }
       // A password that was actually checked and accepted: forget this identity's earlier typos.
-      if (password && !passwordLocked && !validation.skipPassword) {
+      if (password && !passwordLock && !validation.skipPassword) {
         clearJoinPasswordFailures(socket, roomId)
       }
 

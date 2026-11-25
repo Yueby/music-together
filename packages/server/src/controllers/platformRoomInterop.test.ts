@@ -23,7 +23,7 @@ vi.mock('../services/playerService.js', () => ({
 vi.mock('../middleware/socketRateLimiter.js', () => ({
   checkSocketRateLimit: vi.fn(async () => true),
   checkRoomEntryRateLimit: vi.fn(async () => true),
-  isJoinPasswordLocked: vi.fn(() => false),
+  getJoinPasswordLock: vi.fn(() => undefined),
   recordJoinPasswordFailure: vi.fn(),
   clearJoinPasswordFailures: vi.fn(),
 }))

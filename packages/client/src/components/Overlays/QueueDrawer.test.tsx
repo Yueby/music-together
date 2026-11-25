@@ -301,11 +301,14 @@ describe('QueueDrawer', () => {
     // Viewport scrolled far down (indices 10..15) — index 1 must stay mounted while dragging
     const indices = dndState.rangeExtractor?.({ startIndex: 12, endIndex: 15, overscan: 2, count: 20 })
     expect(indices).toContain(1)
-    expect(container.querySelector('[data-testid="queue-drag-overlay"]')?.textContent).toContain('Song 1')
+    // Overlay must be portaled to document.body (outside drawer content) so Vaul's `will-change: transform` cannot offset it
+    const overlay = document.body.querySelector('[data-testid="queue-drag-overlay"]')
+    expect(overlay?.textContent).toContain('Song 1')
+    expect(container.querySelector('[data-testid="queue-drag-overlay"]')).toBeNull()
 
     act(() => {
       dndState.onDragCancel?.()
     })
-    expect(container.querySelector('[data-testid="queue-drag-overlay"]')).toBeNull()
+    expect(document.body.querySelector('[data-testid="queue-drag-overlay"]')).toBeNull()
   })
 })

@@ -4,6 +4,7 @@ import type { Playlist } from '@music-together/shared'
 import type { GetUserInfoResult, UserInfoData } from './authProvider.js'
 import { logger } from '../utils/logger.js'
 import { parseCookieString } from '../utils/cookieUtils.js'
+import { readBoundedJson } from '../utils/readBounded.js'
 
 /**
  * Kugou Music authentication service.
@@ -186,7 +187,7 @@ async function kugouRequest(config: KugouRequestConfig): Promise<KugouApiRespons
 
   let body: KugouApiResponse
   try {
-    body = (await res.json()) as KugouApiResponse
+    body = await readBoundedJson<KugouApiResponse>(res)
   } catch {
     throw new Error(`Kugou API JSON parse failed: ${config.url} (HTTP ${res.status})`)
   }

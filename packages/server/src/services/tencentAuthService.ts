@@ -3,6 +3,7 @@ import type { Playlist } from '@music-together/shared'
 import type { GetUserInfoResult } from './authProvider.js'
 import { logger } from '../utils/logger.js'
 import { getCookieValue } from '../utils/cookieUtils.js'
+import { readBoundedJson } from '../utils/readBounded.js'
 import * as crypto from 'node:crypto'
 
 // ---------------------------------------------------------------------------
@@ -177,7 +178,7 @@ async function tencentApiRequest<T = Record<string, unknown>>(reqConfig: Tencent
     throw new Error(`Tencent API ${reqConfig.module}.${reqConfig.method} HTTP ${response.status}`)
   }
 
-  const body = (await response.json()) as TencentApiResponse
+  const body = await readBoundedJson<TencentApiResponse>(response)
   const reqRes = body?.req
 
   if (reqRes?.code !== 0 && reqRes?.code !== undefined) {
@@ -508,7 +509,7 @@ export async function getUserInfo(cookie: string): Promise<GetUserInfoResult> {
     })
     if (!response.ok) throw new Error(`QQ profile HTTP ${response.status}`)
 
-    const body = (await response.json()) as { code?: number; data?: ProfileData }
+    const body = await readBoundedJson<{ code?: number; data?: ProfileData }>(response)
     if (body.code !== undefined && body.code !== 0) {
       throw new Error(`QQ profile response code ${body.code}`)
     }
@@ -708,7 +709,7 @@ async function getEncryptUin(musicid: string | number): Promise<string> {
     },
     signal: AbortSignal.timeout(10_000),
   })
-  const data = (await response.json()) as { data?: ProfileData }
+  const data = await readBoundedJson<{ data?: ProfileData }>(response)
   return data?.data?.creator?.encrypt_uin || ''
 }
 

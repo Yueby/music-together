@@ -7,7 +7,7 @@ import {
   checkRoomEntryRateLimit,
   checkSocketRateLimit,
   clearJoinPasswordFailures,
-  isJoinPasswordLocked,
+  getJoinPasswordLock,
   recordJoinPasswordFailure,
 } from './socketRateLimiter.js'
 
@@ -18,7 +18,7 @@ const newIdentity = () => `identity-${++sequence}`
 function connection(
   identityUserId: string | undefined,
   id = `socket-${++sequence}`,
-  address = `2001:db8::${sequence.toString(16)}`,
+  address = `2001:db8:0:${sequence.toString(16)}::1`,
 ) {
   const emit = vi.fn()
   const socket = { id, data: { identityUserId }, handshake: { address }, emit } as unknown as TypedSocket
@@ -107,6 +107,7 @@ describe('per-identity socket rate limits', () => {
 
 describe('room password guessing limit', () => {
   const max = LIMITS.ROOM_JOIN_PASSWORD_MAX_FAILURES
+  const isJoinPasswordLocked = (socket: TypedSocket, roomId: string) => !!getJoinPasswordLock(socket, roomId)
 
   async function failTimes(socket: TypedSocket, roomId: string, times: number) {
     for (let i = 0; i < times; i++) await recordJoinPasswordFailure(socket, roomId)
@@ -168,6 +169,7 @@ describe('room password guessing limit', () => {
     }
     const { socket } = connection(newIdentity())
     expect(isJoinPasswordLocked(socket, roomId)).toBe(true)
+    expect(getJoinPasswordLock(socket, roomId)).toBe('room')
     expect(isJoinPasswordLocked(socket, 'ROOM31')).toBe(false)
   })
 
@@ -183,5 +185,26 @@ describe('room password guessing limit', () => {
     expect(isJoinPasswordLocked(socket, 'ROOM15')).toBe(false)
     socket.data.clientIp = clientIp
     expect(isJoinPasswordLocked(socket, 'ROOM16')).toBe(true)
+    expect(getJoinPasswordLock(socket, 'ROOM16')).toBe('personal')
+  })
+
+  it('shares one password budget across alternate spellings and addresses in the same IPv6 /64', () => {
+    for (let i = 1; i <= 15; i++) {
+      const { socket } = connection(newIdentity(), undefined, `2001:db8:1234::${i.toString(16)}`)
+      recordJoinPasswordFailure(socket, 'V6TEST')
+    }
+    const samePrefix = connection(newIdentity(), undefined, '2001:0DB8:1234:0:aaaa:bbbb:cccc:dddd')
+    const differentPrefix = connection(newIdentity(), undefined, '2001:db8:1234:1::1')
+    expect(getJoinPasswordLock(samePrefix.socket, 'OTHER1')).toBe('personal')
+    expect(getJoinPasswordLock(differentPrefix.socket, 'OTHER1')).toBeUndefined()
+  })
+
+  it('shares a password budget between IPv4 and mapped IPv6 addresses', () => {
+    for (let i = 0; i < 15; i++) {
+      const { socket } = connection(newIdentity(), undefined, '::ffff:198.51.100.42')
+      recordJoinPasswordFailure(socket, 'V4TEST')
+    }
+    const ipv4 = connection(newIdentity(), undefined, '198.51.100.42')
+    expect(getJoinPasswordLock(ipv4.socket, 'OTHER2')).toBe('personal')
   })
 })
