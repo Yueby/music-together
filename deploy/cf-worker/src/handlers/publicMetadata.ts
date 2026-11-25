@@ -1,6 +1,7 @@
 import type { WorkerRuntime } from '../types.js'
 
 const TTML_PATH = '/api/music/ttml'
+const EDGE_TTL_HEADER = 'X-MT-Edge-TTL'
 const METADATA_TTLS = new Map([
   [TTML_PATH, 21_600],
   ['/api/music/lyric', 1_800],
@@ -18,6 +19,8 @@ export function isPublicMetadataPath(pathname: string): boolean {
 
 function stripPrivateHeaders(headers: Headers): void {
   headers.delete('Set-Cookie')
+  headers.delete('RateLimit')
+  headers.delete('RateLimit-Policy')
   for (const name of [...headers.keys()]) {
     if (name.startsWith('access-control-')) headers.delete(name)
   }
@@ -72,6 +75,12 @@ export async function handlePublicMetadata(
   if (cached) {
     const headers = new Headers(cached.headers)
     stripPrivateHeaders(headers)
+    const rawTtl = Number(headers.get(EDGE_TTL_HEADER))
+    headers.delete(EDGE_TTL_HEADER)
+    // Cloudflare's zone Browser Cache TTL (default 4h = 14400s) can rewrite Cache-Control
+    // stored in caches.default; restore the route's intended TTL for client responses.
+    const ttl = Number.isInteger(rawTtl) && rawTtl > 0 ? Math.min(rawTtl, defaultTtl) : defaultTtl
+    headers.set('Cache-Control', 'public, max-age=' + ttl)
     addRequestVariance(headers)
     headers.set('X-MT-Edge-Cache', 'HIT')
     return new Response(cached.body, { status: cached.status, headers })
@@ -90,15 +99,16 @@ export async function handlePublicMetadata(
   headers.delete('Set-Cookie')
   headers.set('X-MT-Edge-Cache', 'MISS')
   if (ttl > 0) {
-    const cacheControl = 'public, max-age=' + ttl
+    const clientCacheControl = 'public, max-age=' + ttl
     const cacheHeaders = new Headers(upstream.headers)
     stripPrivateHeaders(cacheHeaders)
     cacheHeaders.delete('Vary')
     cacheHeaders.delete('X-MT-Edge-Cache')
-    cacheHeaders.set('Cache-Control', cacheControl)
+    cacheHeaders.set('Cache-Control', `public, s-maxage=${ttl}, max-age=${ttl}`)
+    cacheHeaders.set(EDGE_TTL_HEADER, String(ttl))
     const entry = new Response(upstream.clone().body, { status: upstream.status, headers: cacheHeaders })
     ctx.waitUntil(cache.put(cacheKey, entry).catch(() => {}))
-    headers.set('Cache-Control', cacheControl)
+    headers.set('Cache-Control', clientCacheControl)
     addRequestVariance(headers)
   }
   return new Response(upstream.body, { status: upstream.status, statusText: upstream.statusText, headers })

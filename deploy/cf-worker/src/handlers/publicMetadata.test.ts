@@ -79,6 +79,8 @@ describe('public metadata edge cache', () => {
       'Access-Control-Allow-Origin': zone,
       'Access-Control-Allow-Methods': 'GET',
       'Access-Control-Expose-Headers': 'X-Example',
+      RateLimit: '"120-in-1min"; r=119; t=59',
+      'RateLimit-Policy': '"120-in-1min"; q=120; w=60; pk=:abc:',
       Vary: 'Origin',
     } }))
     const miss = await handler(request, {}, ctx)
@@ -91,11 +93,15 @@ describe('public metadata edge cache', () => {
     await Promise.all(pending)
     const key = zone + '/__mt_edge_cache/meta/api/music/search?foo=2&foo=1&query=music&source=netease'
     expect(Object.fromEntries(entries.get(key)!.headers)).toEqual({
-      'cache-control': 'public, max-age=180', 'content-type': 'application/json',
+      'cache-control': 'public, s-maxage=180, max-age=180',
+      'content-type': 'application/json',
+      'x-mt-edge-ttl': '180',
     })
     expect(entries.has(search + '?foo=2&foo=1&query=music&source=netease')).toBe(false)
     const hit = await handler(new Request(search + '?foo=2&query=music&foo=1&source=netease'), {}, ctx)
     expect(hit.headers.get('X-MT-Edge-Cache')).toBe('HIT')
+    expect(hit.headers.get('X-MT-Edge-TTL')).toBeNull()
+    expect(hit.headers.get('Cache-Control')).toBe('public, max-age=180')
     expect(hit.headers.get('Vary')).toBe('Origin, Authorization')
     expect(await hit.json()).toEqual({ results: [] })
     expect(runtime.fetch).toHaveBeenCalledOnce()
@@ -114,6 +120,19 @@ describe('public metadata edge cache', () => {
     expect([...hit.headers.keys()].some((key) => key === 'set-cookie' || key.startsWith('access-control-'))).toBe(false)
     expect(hit.headers.get('X-MT-Edge-Cache')).toBe('HIT')
     expect(runtime.fetch).not.toHaveBeenCalled()
+  })
+
+  it('restores intended TTL on HIT even if Cloudflare rewrites cached Cache-Control to 14400', async () => {
+    const { handler, runtime, ctx } = fixture()
+    runtime.cache.match.mockResolvedValueOnce(
+      Response.json({ lines: null }, {
+        headers: { 'Cache-Control': 'public, max-age=14400', 'X-MT-Edge-TTL': '600' },
+      }),
+    )
+    const hit = await handler(new Request(ttml), {}, ctx)
+    expect(hit.headers.get('X-MT-Edge-Cache')).toBe('HIT')
+    expect(hit.headers.get('Cache-Control')).toBe('public, max-age=600')
+    expect(hit.headers.get('X-MT-Edge-TTL')).toBeNull()
   })
 
   it('returns a clean 503 with no-store when origin fetch throws', async () => {
