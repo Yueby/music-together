@@ -270,7 +270,7 @@ export default function HomePage() {
       animate={{ opacity: 1 }}
       exit={{ opacity: 0 }}
       transition={{ duration: 0.2 }}
-      className="flex min-h-screen flex-col bg-background"
+      className="flex min-h-[var(--app-vh)] flex-col bg-background"
     >
       {/* Header */}
       <header className="border-b border-border/50 bg-background/95 backdrop-blur-sm">

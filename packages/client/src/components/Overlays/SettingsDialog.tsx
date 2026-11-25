@@ -74,7 +74,7 @@ export function SettingsDialog({
           value={tab}
           onValueChange={(value) => setTab(value as SettingsTab)}
           orientation={wide ? 'vertical' : 'horizontal'}
-          className="h-[calc(70vh-3.5rem)] gap-0"
+          className="h-[calc(var(--app-vh)*0.7_-_3.5rem)] gap-0"
         >
           {/* md:px-3 + the item's own px-3 puts the category names on the title's left edge (24px) */}
           <div className="flex shrink-0 flex-col border-b md:w-48 md:border-r md:border-b-0 md:px-3 md:py-4">

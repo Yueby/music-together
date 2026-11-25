@@ -24,7 +24,7 @@ export function ArtistDialog() {
   const close = useArtistPageStore((state) => state.close)
   return (
     <ResponsiveDialog open={target !== null} onOpenChange={(open) => !open && close()}>
-      <ResponsiveDialogContent className="flex h-[70vh] flex-col gap-0 overflow-hidden p-0 sm:max-w-2xl">
+      <ResponsiveDialogContent className="flex h-[calc(var(--app-vh)*0.7)] flex-col gap-0 overflow-hidden p-0 sm:max-w-2xl">
         {/* Only while open: the page's data and socket handlers exist for as long as someone looks at it. A different
             artist (say, a collaborator clicked inside this page) is a new page: it starts over at its songs. */}
         {target ? <ArtistDialogBody key={`${target.source}:${target.id ?? target.name}`} target={target} /> : null}

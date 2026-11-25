@@ -503,7 +503,7 @@ export function QueueDrawer({ open, onOpenChange, onRemoveFromQueue, onReorderQu
 
   return (
     <Drawer open={open} onOpenChange={onOpenChange} direction={isMobile ? 'bottom' : 'right'}>
-      <DrawerContent className={cn('flex flex-col p-0', isMobile && 'h-[70vh]')}>
+      <DrawerContent className={cn('flex flex-col p-0', isMobile && 'h-[calc(var(--app-vh)*0.7)]')}>
         <DrawerHeader className="shrink-0 border-b px-4 py-3">
           <div className="flex items-center justify-between">
             <DrawerTitle className="flex items-center gap-2 text-base">

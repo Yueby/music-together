@@ -52,6 +52,8 @@
 /* ===== Soft Zinc palette — dark, subtle blue tint ===== */
 :root {
   color-scheme: dark;
+  --app-vh: 100vh;
+  --app-dvh: 100dvh;
   --radius: 0.625rem;
   --background: oklch(0.178 0.005 265);
   --foreground: oklch(0.985 0 0);
