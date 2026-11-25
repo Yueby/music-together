@@ -14,7 +14,6 @@ import {
 
 import { MAPP_METADATA_TARGETS } from './mappMetadataTargets.js'
 export { MAPP_METADATA_MAX_BYTES, MAPP_METADATA_TARGETS } from './mappMetadataTargets.js'
-export { COVER_HOST_ALLOWLIST, MAPP_COVER_MAX_BYTES } from './mediaContracts.js'
 
 export const mappMetadataSearchQuerySchema = searchQuerySchema.strict()
 export const mappMetadataLyricQuerySchema = lyricQuerySchema.strict()

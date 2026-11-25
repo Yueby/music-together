@@ -23,13 +23,10 @@ import { CatalogError } from '../services/catalogUtils.js'
 import { coverProxyRateLimit, musicApiRateLimit } from '../middleware/httpRateLimiter.js'
 import { fetchPlatformCover, type CoverFailure, type CoverResult } from '../services/coverProxy.js'
 import { withTimeout } from '../utils/withTimeout.js'
+import { MAPP_PREFLIGHT_MAX_AGE, PREFLIGHT_HEADERS, setPlatformCorsHeaders, verifyPlatformCaller } from './platformAuth.js'
+import type { PlatformIdentityInput } from './platformAuth.js'
 
-export interface MusicMetadataIdentityInput {
-  url: string
-  origin: string | undefined
-  authorization: string | undefined
-  method: string
-}
+export type MusicMetadataIdentityInput = PlatformIdentityInput
 interface Options {
   allowedOrigin: string
   verifyIdentity: (input: MusicMetadataIdentityInput) => Promise<{ userId: string }>
@@ -60,11 +57,7 @@ type JsonHandlers = {
   ) => Promise<unknown>
 }
 
-const AUTH_TIMEOUT_MS = 6_000
 const REQUEST_TIMEOUT_MS = 20_000
-const BEARER_TOKEN = /^Bearer [A-Za-z0-9_.-]+$/
-const PLATFORM_USER_ID = /^mapp_[a-f0-9]{32}$/
-const PREFLIGHT_HEADERS = ['authorization', 'content-type']
 
 class MetadataError extends Error {
   constructor(
@@ -187,10 +180,7 @@ export function createPlatformMetadataRouter(options: Options): RouterType {
     try {
       const requestOrigin = req.headers.origin
       if (requestOrigin !== options.allowedOrigin) throw new MetadataError(403, 'METADATA_ORIGIN_REJECTED')
-      res.setHeader('Access-Control-Allow-Origin', options.allowedOrigin)
-      res.setHeader('Vary', 'Origin')
-      res.setHeader('Access-Control-Allow-Methods', 'GET, OPTIONS')
-      res.setHeader('Access-Control-Allow-Headers', 'Authorization, Content-Type')
+      setPlatformCorsHeaders(res, options.allowedOrigin)
 
       if (req.method === 'OPTIONS') {
         const names = preflightHeaders(req)
@@ -201,6 +191,7 @@ export function createPlatformMetadataRouter(options: Options): RouterType {
         ) {
           throw new MetadataError(403, 'METADATA_PREFLIGHT_REJECTED')
         }
+        res.setHeader('Access-Control-Max-Age', MAPP_PREFLIGHT_MAX_AGE)
         res.status(204).end()
         return
       }
@@ -213,23 +204,12 @@ export function createPlatformMetadataRouter(options: Options): RouterType {
         throw new MetadataError(400, 'METADATA_QUERY_REJECTED')
       }
 
-      const authorization = req.headers.authorization
-      if (!authorization || authorization.length > 8199 || !BEARER_TOKEN.test(authorization)) {
-        throw new MetadataError(401, 'METADATA_UNAUTHORIZED')
-      }
-      const unauthorized = new MetadataError(401, 'METADATA_UNAUTHORIZED')
-      const identity = await withTimeout(
-        Promise.resolve().then(() =>
-          options.verifyIdentity({ url: raw, origin: requestOrigin, authorization, method: req.method }),
-        ),
-        AUTH_TIMEOUT_MS,
-        unauthorized,
-      ).catch(() => {
-        throw unauthorized
-      })
-      if (!PLATFORM_USER_ID.test(identity?.userId)) throw unauthorized
-
-      req.identityUserId = identity.userId
+      req.identityUserId = await verifyPlatformCaller(
+        { url: raw, origin: requestOrigin, authorization: req.headers.authorization, method: req.method },
+        (input) => options.verifyIdentity(input),
+        new MetadataError(401, 'METADATA_UNAUTHORIZED'),
+        'strict',
+      )
       res.locals.metadata = parsed
       next()
     } catch (error) {

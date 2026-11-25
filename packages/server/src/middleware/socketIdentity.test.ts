@@ -224,6 +224,7 @@ describe('attachSocketIdentity', () => {
       EVENTS.ROOM_JOIN,
       EVENTS.QUEUE_ADD,
       EVENTS.PLAYER_PAUSE,
+      EVENTS.PLAYER_READY,
       EVENTS.NTP_PING,
       EVENTS.AUTH_REQUEST_QR,
       EVENTS.AUTH_CHECK_QR,

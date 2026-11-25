@@ -68,6 +68,10 @@ export class InMemoryRoomRepository implements RoomRepository {
     return this.socketToRoom.get(socketId)
   }
 
+  getRoomSocketIds(roomId: string): string[] {
+    return Array.from(this.roomToSockets.get(roomId) ?? [])
+  }
+
   deleteSocketMapping(socketId: string): void {
     // Remove from reverse index
     const mapping = this.socketToRoom.get(socketId)

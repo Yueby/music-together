@@ -11,11 +11,12 @@ import {
   discoverQuerySchema,
   dailyQuerySchema,
   homeQuerySchema,
+  limitCoverSize,
 } from '@music-together/shared'
 import { Router, type Router as RouterType, type Request, type Response } from 'express'
 import type { ZodSchema } from 'zod'
 import { musicProvider } from '../services/musicProvider.js'
-import { fetchCoverImage, limitCoverSize } from '../services/coverProxy.js'
+import { fetchCoverImage } from '../services/coverProxy.js'
 import { logger } from '../utils/logger.js'
 import { coverProxyRateLimit } from '../middleware/httpRateLimiter.js'
 import { CatalogError } from '../services/catalogUtils.js'

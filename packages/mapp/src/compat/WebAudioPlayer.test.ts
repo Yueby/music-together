@@ -17,6 +17,8 @@ function environment(loop = false) {
   }
   const context = Object.assign(new EventTarget(), {
     currentTime: 10,
+    baseLatency: 0.015,
+    outputLatency: 0.035,
     state: 'suspended' as AudioContextState,
     destination: {},
     createGain: vi.fn(() => ({ gain: { value: 1 }, connect: vi.fn(), disconnect: vi.fn() })),
@@ -187,6 +189,7 @@ describe('micro-app Web Audio player', () => {
 
   it('preserves a future start and seek deadline across rate changes', async () => {
     const { player, context, sources } = await loaded()
+    context.state = 'running'
     player.seek(2)
     await player.play(2)
     context.currentTime = 10.5
@@ -323,6 +326,7 @@ describe('micro-app Web Audio player', () => {
 
   it('schedules on the audio clock and preserves the deadline when seeking', async () => {
     const { player, context, sources } = await loaded()
+    context.state = 'running'
     await player.play(1)
     expect(sources[0].start).toHaveBeenCalledWith(11, 0)
     context.currentTime = 10.5
@@ -445,6 +449,7 @@ describe('micro-app Web Audio player', () => {
 
   it('keeps seeking and scheduled starts within a looping buffer', async () => {
     const { player, context, sources } = await loaded(true)
+    context.state = 'running'
     await player.play(1)
     context.currentTime = 10.5
     expect(player.snapshot()).toMatchObject({ status: 'scheduled', position: 0 })
@@ -504,5 +509,61 @@ describe('micro-app Web Audio player', () => {
     await expect(player.load(new Uint8Array([0]))).rejects.toThrow('EncodingError')
     expect(player.snapshot().status).toBe('empty')
     await player.dispose()
+  })
+
+  it('subtracts time spent resuming and reads the target after the context is unlocked', async () => {
+    const { player, context, sources } = await loaded()
+    const now = vi.spyOn(performance, 'now').mockReturnValue(1000)
+    try {
+      context.resume.mockImplementationOnce(async () => {
+        now.mockReturnValue(1250)
+        context.state = 'running'
+      })
+      await player.play(1, () => performance.now() / 1000)
+      expect(sources[0].start).toHaveBeenCalledExactlyOnceWith(10.75, 1.25)
+    } finally {
+      now.mockRestore()
+    }
+  })
+
+  it('reports the sum of base and output latency in milliseconds', async () => {
+    const { player, context } = await loaded()
+    expect(player.getOutputLatencyMs()).toBeCloseTo(50)
+    context.outputLatency = Number.NaN
+    expect(player.getOutputLatencyMs()).toBe(0)
+  })
+
+  it('crossfades the old and new sources and disconnects the old source after the fade', async () => {
+    const { player, context, sources } = environment()
+    const createGain = () => ({
+      gain: { value: 1, setValueAtTime: vi.fn(), linearRampToValueAtTime: vi.fn() },
+      connect: vi.fn(), disconnect: vi.fn(),
+    })
+    const master = createGain()
+    const oldGain = createGain()
+    const newGain = createGain()
+    context.createGain.mockReturnValueOnce(master).mockReturnValueOnce(oldGain).mockReturnValueOnce(newGain)
+    await player.load(new Uint8Array([1]))
+    await player.play()
+    player.crossfadeSeek(3)
+    expect(sources[0].stop).toHaveBeenCalledWith(10.025)
+    expect(oldGain.gain.linearRampToValueAtTime).toHaveBeenCalledWith(0, 10.025)
+    expect(newGain.gain.setValueAtTime).toHaveBeenCalledWith(0, 10)
+    expect(newGain.gain.linearRampToValueAtTime).toHaveBeenCalledWith(1, 10.025)
+    expect(newGain.connect).toHaveBeenCalledWith(master)
+    expect(sources[1].start).toHaveBeenCalledWith(10, 3)
+    expect(sources[0].disconnect).not.toHaveBeenCalled()
+    sources[0].onended?.()
+    expect(sources[0].disconnect).toHaveBeenCalledOnce()
+    expect(oldGain.disconnect).toHaveBeenCalledOnce()
+    expect(player.snapshot()).toMatchObject({ status: 'playing', position: 3 })
+  })
+
+  it('seeks immediately when AudioParam automation is unavailable', async () => {
+    const { player, sources } = await loaded()
+    await player.play()
+    player.crossfadeSeek(3)
+    expect(sources[0].stop).toHaveBeenCalledExactlyOnceWith()
+    expect(sources[1].start).toHaveBeenCalledExactlyOnceWith(10, 3)
   })
 })

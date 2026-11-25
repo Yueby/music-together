@@ -2,7 +2,7 @@
 import { act, cleanup, renderHook } from '@testing-library/react'
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import type { HowlOptions } from 'howler'
-import { EVENTS, type ScheduledPlayState, type Track } from '@music-together/shared'
+import { EVENTS, type RoomState, type ScheduledPlayState, type Track } from '@music-together/shared'
 import { useHowl } from './useHowl'
 import { usePlayerSync } from './usePlayerSync'
 import { usePlayerStore } from '@/stores/playerStore'
@@ -34,7 +34,7 @@ const audio = vi.hoisted(() => {
         playing = false
         options.onpause?.(1)
       }),
-      seek: vi.fn((target?: number) => {
+      seek: vi.fn<(target?: number, id?: number) => number>((target) => {
         if (target !== undefined) position = target
         return position
       }),
@@ -109,7 +109,7 @@ function setup(autoPlay = false) {
   const onTrackEnd = vi.fn()
   const hook = renderHook(() => {
     const player = useHowl(onTrackEnd)
-    usePlayerSync(player.howlRef, player.soundIdRef, player.setDesiredPlayback, player.setScheduledPlayback)
+    usePlayerSync(player.howlRef, player.soundIdRef, player.setDesiredPlayback, player.setScheduledPlayback, player.startPlayback)
     return player
   })
   act(() => hook.result.current.loadTrack(track, 42, autoPlay))
@@ -126,6 +126,7 @@ describe('scheduled playback with loading audio', () => {
     audio.handlers.clear()
     audio.clock.calibrated = true
     usePlayerStore.getState().reset()
+    usePlayerStore.getState().setAudioLatencyOffsetMs(null)
     useRoomStore.getState().reset()
   })
 
@@ -258,48 +259,111 @@ describe('scheduled playback with loading audio', () => {
     expect(howl.play).not.toHaveBeenCalled()
   })
 
-  describe('sync response drift correction', () => {
-    const respond = (currentTime: number) =>
-      act(() =>
-        (audio.handlers.get(EVENTS.PLAYER_SYNC_RESPONSE) as unknown as (data: unknown) => void)?.({
-          currentTime,
-          isPlaying: true,
-          serverTimestamp: Date.now(),
-        }),
-      )
-    const seekedTo = (howl: ReturnType<typeof setup>['howl'], target: number) =>
-      howl.seek.mock.calls.some(([position]) => position === target)
+  describe('local authoritative drift sampling', () => {
+    function setRoom() {
+      useRoomStore.setState({
+        room: {
+          currentTrack: track,
+          conductorSocketId: audio.socket.id,
+          playState: { currentTime: 42, serverTimestamp: 100_000, revision: 1, isPlaying: true },
+        } as RoomState,
+      })
+    }
 
-    it('ignores responses until the server clock is calibrated, so a skewed local clock cannot cause a hard seek', () => {
+    it('corrects sustained large drift for the conductor without reporting its media position', () => {
+      const { howl } = setup(true)
+      act(() => {
+        setRoom()
+        howl.finishLoad()
+        vi.advanceTimersByTime(1_750)
+      })
+      expect(howl.seek).toHaveBeenLastCalledWith(43.75, 1)
+
+      act(() => vi.advanceTimersByTime(13_250))
+      expect(audio.socket.emit).toHaveBeenCalledWith(EVENTS.PLAYER_SYNC_REQUEST)
+      expect(audio.socket.emit.mock.calls.some(([event]) => event === EVENTS.PLAYER_SYNC)).toBe(false)
+    })
+
+    it('waits for clock calibration before collecting drift samples', () => {
       audio.clock.calibrated = false
       const { howl } = setup(true)
-      act(() => howl.finishLoad())
-      expect(howl.playing()).toBe(true)
-
-      respond(90)
-      expect(seekedTo(howl, 90)).toBe(false)
+      act(() => {
+        setRoom()
+        howl.finishLoad()
+        vi.advanceTimersByTime(2_000)
+      })
+      expect(howl.seek.mock.calls.some(([, id]) => id === 1)).toBe(false)
       expect(usePlayerStore.getState().syncDrift).toBe(0)
-    })
-
-    it('corrects a large cold-start drift once the clock is calibrated', () => {
-      const { howl } = setup(true)
-      act(() => howl.finishLoad())
-
-      respond(90)
-      expect(seekedTo(howl, 90)).toBe(true)
-    })
-
-    it('keeps its cold-start state while uncalibrated, so the first calibrated response still corrects immediately', () => {
-      audio.clock.calibrated = false
-      const { howl } = setup(true)
-      act(() => howl.finishLoad())
-      respond(90)
-      respond(90)
-
       audio.clock.calibrated = true
-      respond(90)
-      expect(seekedTo(howl, 90)).toBe(true)
+      act(() => vi.advanceTimersByTime(1_750))
+      expect(howl.seek).toHaveBeenLastCalledWith(45.75, 1)
     })
+
+    it('treats media 200ms ahead as aligned when the device has +200ms compensation', () => {
+      const { howl } = setup(true)
+      act(() => {
+        usePlayerStore.getState().setAudioLatencyOffsetMs(200)
+        setRoom()
+        howl.finishLoad()
+        howl.seek.mockImplementation(() => 42.2 + (Date.now() - 100_000) / 1000)
+        vi.advanceTimersByTime(2_000)
+      })
+      expect(usePlayerStore.getState().syncDrift).toBeCloseTo(0)
+      expect(howl.rate.mock.calls.some(([rate]) => rate !== undefined)).toBe(false)
+    })
+
+    it('caps WebAudio rate at ±0.3% and crossfades sustained drift above 120ms', () => {
+      const { howl } = setup(true)
+      let drift = 0.07
+      const crossfadeSeek = vi.fn()
+      Object.assign(howl, { supportsPitchPreservingRate: false, crossfadeSeek })
+      act(() => {
+        setRoom()
+        howl.finishLoad()
+        howl.seek.mockImplementation(() => 42 + (Date.now() - 100_000) / 1000 + drift)
+        vi.advanceTimersByTime(1_250)
+      })
+      expect(howl.rate).toHaveBeenLastCalledWith(0.997)
+      expect(crossfadeSeek).not.toHaveBeenCalled()
+
+      drift = -0.07
+      act(() => vi.advanceTimersByTime(4_000))
+      expect(howl.rate.mock.calls.filter(([rate]) => rate !== undefined).at(-1)).toEqual([1.003])
+      expect(crossfadeSeek).not.toHaveBeenCalled()
+
+      drift = 0.25
+      act(() => vi.advanceTimersByTime(4_000))
+      expect(crossfadeSeek).toHaveBeenCalled()
+    })
+
+    it('refreshes the anchor from a newer same-track safety response', () => {
+      const { howl } = setup(true)
+      act(() => {
+        setRoom()
+        howl.finishLoad()
+        vi.advanceTimersByTime(250)
+        const respond = audio.handlers.get(EVENTS.PLAYER_SYNC_RESPONSE) as (data: unknown) => void
+        respond({ currentTime: 80, isPlaying: true, serverTimestamp: Date.now(), trackId: track.id })
+      })
+      expect(useRoomStore.getState().room?.playState.currentTime).toBe(80)
+      expect(howl.seek.mock.calls.some(([position]) => position === 80)).toBe(false)
+    })
+  })
+
+  it('schedules a loaded WebAudio resume on the hardware clock with a compensated target', () => {
+    const { howl } = setup()
+    const playScheduled = vi.fn((_delay: number, getPosition: () => number) => {
+      expect(getPosition()).toBeCloseTo(42.2)
+      return 1
+    })
+    Object.assign(howl, { playScheduled })
+    act(() => {
+      howl.finishLoad()
+      usePlayerStore.getState().setAudioLatencyOffsetMs(200)
+    })
+    dispatch(EVENTS.PLAYER_RESUME)
+    expect(playScheduled).toHaveBeenCalledExactlyOnceWith(1.1, expect.any(Function))
+    expect(howl.play).not.toHaveBeenCalled()
   })
 
   it('executes immediately without a calibrated server clock', () => {

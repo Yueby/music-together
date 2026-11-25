@@ -8,23 +8,13 @@ export const PLAYER_PLAY_DEDUP_MS = 2000
 /** Throttle interval for currentTime store updates */
 export const CURRENT_TIME_THROTTLE_MS = 100
 
-/** Interval for conductor progress reporting — normal (steady state) */
-export const CONDUCTOR_REPORT_INTERVAL_MS = 5_000
-
-/** Interval for conductor progress reporting — fast (first seconds of a new track) */
-export const CONDUCTOR_REPORT_FAST_INTERVAL_MS = 2_000
-
-/** Duration (ms) of the fast conductor reporting phase after a new track starts */
-export const CONDUCTOR_REPORT_FAST_DURATION_MS = 10_000
-
-/** Interval for client-initiated sync requests (drift correction) — fast */
-export const SYNC_REQUEST_INTERVAL_MS = 2_000
-
-/** Slow sync-request interval (ms) used while drift is consistently settled */
-export const SYNC_REQUEST_IDLE_INTERVAL_MS = 5_000
-
-/** Consecutive in-dead-zone sync responses required before slowing requests */
-export const SYNC_REQUEST_SLOWDOWN_CONFIRM_COUNT = 2
+export const SYNC_REQUEST_INTERVAL_MS = 15_000
+export const DRIFT_SAMPLE_INTERVAL_MS = 250
+export const DRIFT_SAMPLE_COUNT = 5
+export const WEB_AUDIO_SEEK_THRESHOLD_MS = 120
+export const WEB_AUDIO_MAX_RATE_ADJUSTMENT = 0.003
+export const AUDIO_LATENCY_MIN_MS = -300
+export const AUDIO_LATENCY_MAX_MS = 500
 
 /** Drift threshold (ms) before hard-seeking to correct position.
  * Native HTML5 media seeks may flush decoder buffers on mobile, so only
@@ -35,7 +25,7 @@ export const DRIFT_SEEK_THRESHOLD_MS = 500
  * Keep this small: soft rate correction is continuous and non-seeking, so it
  * must remain active for ordinary clock-rate drift instead of letting errors
  * accumulate toward the hard-seek threshold. */
-export const DRIFT_DEAD_ZONE_MS = 30
+export const DRIFT_DEAD_ZONE_MS = 15
 
 /** Proportional gain for drift correction: rate = 1 - clamp(drift * Kp) */
 export const DRIFT_RATE_KP = 0.25
@@ -49,23 +39,14 @@ export const MAX_RATE_ADJUSTMENT = 0.02
  *  Lowered from 0.3 to 0.2 for more noise suppression on high-latency links. */
 export const DRIFT_SMOOTH_ALPHA = 0.2
 
-/** Grace period (ms) after new track before drift correction activates.
- *  Allows at least one conductor report to correct estimateCurrentTime. */
-export const DRIFT_GRACE_PERIOD_MS = 3_000
-
 /** Extra margin (ms) added to the estimated one-way delay when computing
  *  the adaptive hard-seek threshold. Final threshold = max(
  *  DRIFT_SEEK_THRESHOLD_MS, medianRTT / 2 + DRIFT_SEEK_RTT_MARGIN_MS).
  *  NTP offset uncertainty is bounded by one-way delay, not the full RTT. */
 export const DRIFT_SEEK_RTT_MARGIN_MS = 100
 
-/** Number of consecutive warm-EMA sync responses whose smoothed drift
- * exceeds the hard-seek threshold before seeking. This also prevents a
- * stable browser media-clock bias from causing a seek every sync interval. */
+/** Number of consecutive filtered samples beyond the hard-seek threshold. */
 export const HARD_SEEK_CONFIRM_COUNT = 3
-
-/** Safety clamp for network delay estimation (seconds) — prevents clock-skew outliers */
-export const MAX_NETWORK_DELAY_S = 5
 
 /** Loading time threshold (seconds) before compensating with a seek */
 export const LOAD_COMPENSATION_THRESHOLD_S = 0.15

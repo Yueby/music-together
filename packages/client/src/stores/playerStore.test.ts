@@ -9,4 +9,13 @@ describe('playerStore playback time', () => {
 
     expect(usePlayerStore.getState().currentTime).toBe(42)
   })
+
+  it('keeps the device offset through playback resets', () => {
+    const { setAudioLatencyOffsetMs, reset } = usePlayerStore.getState()
+    setAudioLatencyOffsetMs(-500)
+    reset()
+    expect(usePlayerStore.getState().audioLatencyOffsetMs).toBe(-300)
+    setAudioLatencyOffsetMs(null)
+    expect(usePlayerStore.getState().audioLatencyOffsetMs).toBeNull()
+  })
 })

@@ -9,6 +9,18 @@ import type {
   User,
 } from '@music-together/shared'
 
+export interface PendingPrepare {
+  track: Track
+  revision: number
+  startAt: number
+  pendingSockets: Set<string>
+  readyCount: number
+  failedCount: number
+  deadlineAt: number
+  generation: number
+  timer: ReturnType<typeof setTimeout>
+}
+
 /** 服务端内部房间数据模型 -- 含密码（仅通过 owner 专用 RoomState 发送给客户端） */
 export interface RoomData {
   id: string
@@ -16,9 +28,9 @@ export interface RoomData {
   password: string | null
   /** 原始房间创建者 ID（永久不变；重新上线后恢复 owner 和当前房主身份） */
   creatorId: string
-  /** 当前在线主持人身份，同时承担自动下一首和投票否决职责 */
+  /** 当前在线主持人身份，承担投票否决职责 */
   hostId: string
-  /** 唯一允许提交播放进度的 Socket；同一身份多标签页时只有一个写入者 */
+  /** 当前主持人的代表 Socket，供旧客户端兼容使用 */
   conductorSocketId: string | null
   /** 持久化 admin 用户 ID 集合（离开/回来自动恢复 admin） */
   adminUserIds: Set<string>
@@ -29,6 +41,7 @@ export interface RoomData {
   queue: Track[]
   currentTrack: Track | null
   playState: PlayState
+  pendingPrepare?: PendingPrepare | null
   /** Latest scheduled action, kept separate until its execution time. */
   pendingPlayback?: {
     type: 'play' | 'pause' | 'resume' | 'seek' | 'stop'
@@ -54,6 +67,7 @@ export interface RoomRepository {
   getAllAsList(): RoomListItem[]
   setSocketMapping(socketId: string, roomId: string, userId: string): void
   getSocketMapping(socketId: string): SocketMapping | undefined
+  getRoomSocketIds(roomId: string): string[]
   deleteSocketMapping(socketId: string): void
   /** Check if a user has another active socket in the same room (excluding a specific socket) */
   hasOtherSocketForUser(roomId: string, userId: string, excludeSocketId: string): boolean

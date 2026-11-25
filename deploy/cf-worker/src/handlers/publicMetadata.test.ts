@@ -1,4 +1,4 @@
-import { describe, expect, it } from 'vitest'
+import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import { fixture } from '../../test/runtime.js'
 
 const zone = 'https://mt.agou.mom'
@@ -6,6 +6,9 @@ const search = zone + '/api/music/search'
 const ttml = zone + '/api/music/ttml'
 
 describe('public metadata edge cache', () => {
+  beforeEach(() => { vi.spyOn(Date, 'now').mockReturnValue(1_800_000_000_000) })
+  afterEach(() => vi.restoreAllMocks())
+
   it.each([
     ['/api/music/ttml', 21_600],
     ['/api/music/lyric', 1_800],
@@ -56,7 +59,7 @@ describe('public metadata edge cache', () => {
     [503, 'public, max-age=300'],
     [302, 'public, max-age=300'],
   ])('keeps the origin cache policy and avoids cache writes for status %s and %s', async (status, cacheControl) => {
-    const { handler, runtime, ctx } = fixture()
+    const { handler, runtime, ctx, pending } = fixture()
     runtime.fetch.mockResolvedValueOnce(Response.json({ lines: null }, { status, headers: {
       'Cache-Control': cacheControl, 'Set-Cookie': 'ignored=1',
     } }))
@@ -66,7 +69,7 @@ describe('public metadata edge cache', () => {
     expect(response.headers.get('Set-Cookie')).toBeNull()
     expect(response.headers.get('X-MT-Edge-Cache')).toBe('MISS')
     expect(runtime.cache.put).not.toHaveBeenCalled()
-    expect(ctx.waitUntil).not.toHaveBeenCalled()
+    await Promise.all(pending)
   })
 
   it('canonicalizes query order and isolates origin and cache headers', async () => {
@@ -93,8 +96,9 @@ describe('public metadata edge cache', () => {
     await Promise.all(pending)
     const key = zone + '/__mt_edge_cache/meta/api/music/search?foo=2&foo=1&query=music&source=netease'
     expect(Object.fromEntries(entries.get(key)!.headers)).toEqual({
-      'cache-control': 'public, s-maxage=180, max-age=180',
+      'cache-control': 'public, s-maxage=360, max-age=360',
       'content-type': 'application/json',
+      'x-mt-edge-fresh-until': expect.stringMatching(/^\d+$/),
       'x-mt-edge-ttl': '180',
     })
     expect(entries.has(search + '?foo=2&foo=1&query=music&source=netease')).toBe(false)

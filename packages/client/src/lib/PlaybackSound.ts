@@ -8,6 +8,10 @@ export interface PlaybackSound {
   /** No position means read. Pass a sound ID as the second argument to avoid ID/position ambiguity. */
   seek(position?: number, soundId?: number): unknown
   play(soundId?: number): number
+  playScheduled?(delaySeconds: number, getPosition?: () => number): number
+  supportsPitchPreservingRate?: boolean
+  getOutputLatencyMs?(): number
+  crossfadeSeek?(position: number): void
   pause(soundId?: number): unknown
   rate(): number
   rate(value: number): unknown
@@ -30,6 +34,8 @@ export interface AudioLoadProgress {
 export interface PlaybackSoundOptions {
   src: string[]
   html5?: boolean
+  preload?: boolean
+  autoplay?: boolean
   format?: string[]
   volume?: number
   onload?: () => void

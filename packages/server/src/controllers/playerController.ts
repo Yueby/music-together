@@ -1,13 +1,12 @@
-import { EVENTS, ERROR_CODE, ntpPingSchema, playerNextSchema, playerPlaySchema, playerSeekSchema, playerSetModeSchema, playerSyncSchema } from '@music-together/shared'
+import { EVENTS, ERROR_CODE, ntpPingSchema, playerNextSchema, playerPlaySchema, playerReadySchema, playerSeekSchema, playerSetModeSchema, playerSyncSchema } from '@music-together/shared'
 import type { HandlerContext, TypedServer, TypedSocket } from '../middleware/types.js'
 import { createWithPermission, withRateLimitedPermission } from '../middleware/withControl.js'
 import { createWithRoom } from '../middleware/withRoom.js'
 import { roomRepo } from '../repositories/roomRepository.js'
 import * as playerService from '../services/playerService.js'
 import * as roomService from '../services/roomService.js'
-import { resolveConductorSampleTimestamp } from '../services/conductorSample.js'
 import { estimateCurrentTime } from '../services/syncService.js'
-import { logger } from '../utils/logger.js'
+import { baseLogger, logger } from '../utils/logger.js'
 
 export function registerPlayerController(io: TypedServer, socket: TypedSocket) {
   const withPermission = createWithPermission(io)
@@ -69,14 +68,29 @@ export function registerPlayerController(io: TypedServer, socket: TypedSocket) {
       const data = parsed.data
       if (!data?.auto) return manualNext(ctx, undefined)
 
-      const latest = playerService.getLatestPlayback(ctx.room)
-      if (!latest.track || latest.track.id !== data.trackId || latest.playState.revision !== data.revision) return
-      if (ctx.user.id !== ctx.room.hostId) {
-        ctx.socket.emit(EVENTS.ROOM_ERROR, { code: ERROR_CODE.NO_PERMISSION, message: '你没有权限执行此操作' })
+      const { currentTrack, playState } = ctx.room
+      if (!currentTrack || !playState.isPlaying || currentTrack.id !== data.trackId || playState.revision !== data.revision) return
+      if (currentTrack.duration > 0) {
+        if (estimateCurrentTime(ctx.roomId) < Math.max(0, currentTrack.duration - 5)) return
+      } else if (ctx.user.id !== ctx.room.hostId || ctx.socket.id !== ctx.room.conductorSocketId) {
         return
       }
 
-      await playerService.playNextTrackInRoom(ctx.io, ctx.roomId, ctx.room.playMode)
+      await playerService.playNextTrackInRoom(ctx.io, ctx.roomId, ctx.room.playMode, {
+        expectedTrackId: currentTrack.id,
+        expectedRevision: playState.revision,
+        skipDebounce: true,
+      })
+    }),
+  )
+
+  socket.on(
+    EVENTS.PLAYER_READY,
+    withRoom((ctx, raw) => {
+      const parsed = playerReadySchema.safeParse(raw)
+      if (!parsed.success) return
+      const { trackId, revision, failed } = parsed.data
+      playerService.markClientReady(ctx.io, ctx.roomId, ctx.socket.id, trackId, revision, failed)
     }),
   )
 
@@ -126,53 +140,12 @@ export function registerPlayerController(io: TypedServer, socket: TypedSocket) {
     }
   })
 
-  // Conductor reports real playback position (keeps server-side playState accurate
-  // for mid-song joiners and reconnection recovery — no forwarding to clients)
+  // Older clients still send position reports. The server clock drives playback.
   socket.on(EVENTS.PLAYER_SYNC, (raw) => {
-    try {
-      const parsed = playerSyncSchema.safeParse(raw)
-      if (!parsed.success) return
-      const mapping = roomRepo.getSocketMapping(socket.id)
-      if (!mapping) return
-      const room = roomRepo.get(mapping.roomId)
-      if (!room?.currentTrack || room.pendingPlayback) return
-      // Only the elected conductor socket may write playback progress. A user
-      // can have multiple tabs, but only the most recently elected socket owns
-      // the authoritative clock.
-      if (room.hostId !== mapping.userId || room.conductorSocketId !== socket.id) return
-
-      if (parsed.data.revision !== room.playState.revision || parsed.data.trackId !== room.currentTrack.id) return
-
-      const duration = room.currentTrack.duration
-      const currentTime = duration > 0 ? Math.min(parsed.data.currentTime, duration) : parsed.data.currentTime
-
-      // Reject stale reports from a sleeping conductor: if the reported position is
-      // far behind the server's estimate, the conductor likely just woke from sleep
-      // and hasn't drift-corrected yet.  Accepting this would poison the server
-      // state and cause all other clients to seek backwards.
-      if (room.playState.isPlaying) {
-        const estimated = estimateCurrentTime(mapping.roomId)
-        if (!playerService.validateConductorReport(mapping.roomId, currentTime, estimated)) {
-          return
-        }
-      }
-
-      // Keep the media sample and its timestamp on the same time axis. The
-      // conductor sampled currentTime at hostServerTime; anchoring that older
-      // position at server receive time introduces a fixed follower lag. Do
-      // not add the timestamp delta to currentTime either — retain the exact
-      // historical zero-drift model and let estimateCurrentTime advance it.
-      const serverNow = Date.now()
-      const sampleTimestamp = resolveConductorSampleTimestamp(parsed.data.hostServerTime, serverNow)
-      room.playState = {
-        ...room.playState,
-        currentTime,
-        serverTimestamp: sampleTimestamp,
-      }
-    } catch (err) {
-      // Sync is best-effort; log but don't emit error to avoid noise
-      logger.error('PLAYER_SYNC handler error', err, { socketId: socket.id })
-    }
+    if (!playerSyncSchema.safeParse(raw).success) return
+    const mapping = roomRepo.getSocketMapping(socket.id)
+    if (!mapping || !roomRepo.get(mapping.roomId)?.users.some((user) => user.id === mapping.userId)) return
+    baseLogger.debug({ roomId: mapping.roomId, socketId: socket.id }, 'Received legacy playback report')
   })
 
   socket.on(EVENTS.PLAYER_SYNC_REQUEST, () => {

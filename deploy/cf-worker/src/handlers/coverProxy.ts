@@ -3,6 +3,7 @@ import {
   MAPP_COVER_MAX_BYTES,
   MAX_WEB_COVER_BYTES,
   RASTER_IMAGE_TYPES,
+  limitCoverSize,
 } from '../../../../packages/shared/src/mediaContracts.js'
 import type { WorkerEnv, WorkerRuntime } from '../types.js'
 
@@ -16,18 +17,14 @@ type CoverRejection =
   | { kind: 'host'; status: 403; error: string }
   | { kind: 'invalid'; status: 413 | 415; error: string }
 
+type CoverImage = { kind: 'image'; body: ArrayBuffer; contentType: string }
+type CoverResult = CoverImage | CoverRejection | { kind: 'upstream' }
+
+const inFlight = new Map<string, Promise<{ result: CoverResult; maxBytes: number }>>()
+
 const HOST_REJECTED: CoverRejection = { kind: 'host', status: 403, error: 'Host not allowed' }
 const IMAGE_TOO_LARGE: CoverRejection = { kind: 'invalid', status: 413, error: 'Image too large' }
 const INVALID_TYPE: CoverRejection = { kind: 'invalid', status: 415, error: 'Unsupported image type' }
-
-export function limitCoverSize(imageUrl: URL): string {
-  if (/^p[1-4]\.music\.126\.net$/.test(imageUrl.hostname) && !imageUrl.searchParams.has('param')) {
-    const resized = new URL(imageUrl)
-    resized.searchParams.set('param', '600y600')
-    return resized.href
-  }
-  return imageUrl.href
-}
 
 function readCoverTarget(url: URL, mapp: boolean): URL | null {
   const values = url.searchParams.getAll('url')
@@ -90,7 +87,7 @@ async function fetchCover(
   url: string,
   maxBytes: number,
   fetcher: typeof fetch,
-): Promise<Response | CoverRejection | { kind: 'upstream' }> {
+): Promise<CoverResult> {
   let target = new URL(url)
   const signal = AbortSignal.timeout(10_000)
   try {
@@ -130,14 +127,20 @@ async function fetchCover(
       }
       const read = await readBoundedImage(upstream, maxBytes)
       if (!read.ok) return read.reason === 'too-large' ? IMAGE_TOO_LARGE : { kind: 'upstream' }
-      return new Response(read.body, {
-        headers: { 'Content-Type': type, 'Content-Length': String(read.body.byteLength), 'Cache-Control': PUBLIC_CACHE },
-      })
+      return { kind: 'image', body: read.body, contentType: type }
     }
   } catch {
     return { kind: 'upstream' }
   }
   return { kind: 'upstream' }
+}
+
+function imageResponse(image: CoverImage): Response {
+  return new Response(image.body, { headers: {
+    'Content-Type': image.contentType,
+    'Content-Length': String(image.body.byteLength),
+    'Cache-Control': PUBLIC_CACHE,
+  } })
 }
 
 function mappHeaders(origin: string): Headers {
@@ -208,7 +211,11 @@ export async function handleCoverProxy(
     if (
       request.headers.get('Access-Control-Request-Method') === 'GET' && requested.includes('authorization') &&
       requested.every((header) => header === 'authorization' || header === 'content-type')
-    ) return new Response(null, { status: 204, headers: mappHeaders(allowedOrigin) })
+    ) {
+      const headers = mappHeaders(allowedOrigin)
+      headers.set('Access-Control-Max-Age', '86400')
+      return new Response(null, { status: 204, headers })
+    }
   }
   if (request.method !== 'GET') return fetcher(request)
 
@@ -237,10 +244,44 @@ export async function handleCoverProxy(
     return cover ? coverResponse(cover, 'HIT', mappOrigin) : coverError(IMAGE_TOO_LARGE, mappOrigin)
   }
 
-  const result = await fetchCover(normalized, mappOrigin ? MAPP_COVER_MAX_BYTES : MAX_WEB_COVER_BYTES, fetcher)
-  if (result instanceof Response) {
-    ctx.waitUntil(cache.put(cacheKey, result.clone()).catch(() => {}))
-    return coverResponse(result, 'MISS', mappOrigin)
+  function startFetch(maxBytes: number) {
+    const flight = fetchCover(normalized, maxBytes, fetcher).then((result) => ({ result, maxBytes }))
+    inFlight.set(cacheKey, flight)
+    // Keep the owning request alive if its client disconnects while other requests are waiting.
+    ctx.waitUntil(flight.then(({ result }) => {
+      if (result.kind === 'image') {
+        return cache.put(cacheKey, imageResponse(result))
+      }
+      if (inFlight.get(cacheKey) === flight) inFlight.delete(cacheKey)
+    }).catch(() => {}).finally(() => {
+      if (inFlight.get(cacheKey) === flight) inFlight.delete(cacheKey)
+    }))
+    return flight
+  }
+
+  async function awaitFlight(flight: Promise<{ result: CoverResult; maxBytes: number }>, isOwner: boolean) {
+    if (isOwner) return flight
+    const timedOut = Symbol('timeout')
+    let timer: ReturnType<typeof setTimeout> | undefined
+    const raced = await Promise.race([
+      flight,
+      new Promise<typeof timedOut>((resolve) => { timer = setTimeout(() => resolve(timedOut), 11_000) }),
+    ]).finally(() => clearTimeout(timer))
+    return raced === timedOut ? fetchCover(normalized, maxBytes, fetcher).then((res) => ({ result: res, maxBytes })) : raced
+  }
+
+  const maxBytes = mappOrigin ? MAPP_COVER_MAX_BYTES : MAX_WEB_COVER_BYTES
+  const existing = inFlight.get(cacheKey)
+  let cover = await awaitFlight(existing ?? startFetch(maxBytes), !existing)
+  // A Web request can retry if the shared upstream read stopped at the smaller mini-app limit.
+  while (cover.result === IMAGE_TOO_LARGE && cover.maxBytes < maxBytes) {
+    const retryExisting = inFlight.get(cacheKey)
+    cover = await awaitFlight(retryExisting ?? startFetch(maxBytes), !retryExisting)
+  }
+  const { result } = cover
+  if (result.kind === 'image') {
+    if (result.body.byteLength > maxBytes) return coverError(IMAGE_TOO_LARGE, mappOrigin)
+    return coverResponse(imageResponse(result), 'MISS', mappOrigin)
   }
   if (result.kind !== 'upstream') return coverError(result, mappOrigin)
 

@@ -1,3 +1,4 @@
+import type { ReactElement } from 'react'
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@/components/ui/select'
 import { PLATFORM_DOT, PLATFORM_LABELS, PLATFORM_SHORT_LABELS } from '@/lib/platform'
 import { cn } from '@/lib/utils'
@@ -17,7 +18,7 @@ interface PlatformSelectProps {
  * webfont/fallback switches (e.g. Plus Jakarta Sans on web vs system-ui in the mini-app sandbox).
  * Explicit `size-5` and `text-white` classes prevent SelectTrigger / SelectItem SVG rules from overriding size/color.
  */
-function PlatformGlyphSvg({ platform }: { platform: MusicSource }) {
+function PlatformGlyphSvg({ platform }: { platform: MusicSource }): ReactElement {
   switch (platform) {
     case 'netease':
       return (

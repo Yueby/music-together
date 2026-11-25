@@ -5,27 +5,21 @@ import {
   DRIFT_RATE_KP,
   MAX_RATE_ADJUSTMENT,
   DRIFT_SMOOTH_ALPHA,
-  CONDUCTOR_REPORT_INTERVAL_MS,
-  CONDUCTOR_REPORT_FAST_INTERVAL_MS,
-  CONDUCTOR_REPORT_FAST_DURATION_MS,
-  MAX_NETWORK_DELAY_S,
   SYNC_REQUEST_INTERVAL_MS,
-  SYNC_REQUEST_IDLE_INTERVAL_MS,
-  SYNC_REQUEST_SLOWDOWN_CONFIRM_COUNT,
-  DRIFT_GRACE_PERIOD_MS,
+  DRIFT_SAMPLE_INTERVAL_MS,
+  DRIFT_SAMPLE_COUNT,
   DRIFT_SEEK_RTT_MARGIN_MS,
   HARD_SEEK_CONFIRM_COUNT,
+  WEB_AUDIO_SEEK_THRESHOLD_MS,
+  WEB_AUDIO_MAX_RATE_ADJUSTMENT,
 } from '@/lib/constants'
 import { lyricPlayerBridge } from '@/lib/lyricPlayerBridge'
 import { setHowlPosition } from '@/lib/howlPosition'
 import {
+  compensatePlaybackPosition,
   getHardSeekThresholdMs,
-  getScheduledPlaybackPosition,
-  getScheduledServerNow,
-  getSyncExpectedPosition,
-  getSyncRequestIntervalMs,
-  isDriftSettled,
-  shouldRearmSyncRequest,
+  getCompensatedScheduledPosition,
+  medianDrift,
 } from '@/lib/playbackSync'
 import { cancelScheduledPlay } from '@/lib/scheduledPlayback'
 import { useSocketContext } from '@/providers/SocketProvider'
@@ -36,513 +30,236 @@ import { EVENTS } from '@music-together/shared'
 import type { PlaybackSound } from '@/lib/PlaybackSound'
 import { useEffect, useRef, type RefObject } from 'react'
 
-// ---------------------------------------------------------------------------
-// Helpers
-// ---------------------------------------------------------------------------
-
-/**
- * Compute the delay (ms) until `serverTimeToExecute`, using our
- * NTP-calibrated clock.  Returns 0 if the time has already passed.
- * Falls back to 0 (immediate execution) when NTP is not yet calibrated
- * to avoid wildly inaccurate scheduling from uncorrected local clocks.
- */
-function scheduleDelay(serverTimeToExecute: number): number {
-  if (!isCalibrated()) return 0
-  return Math.max(0, serverTimeToExecute - getServerTime())
-}
-
-/** Clamp a value between -limit and +limit. */
-function clamp(value: number, limit: number): number {
-  return Math.max(-limit, Math.min(limit, value))
-}
-
-// ---------------------------------------------------------------------------
-// Hook
-// ---------------------------------------------------------------------------
-
-/**
- * Manages playback sync via **event-driven Scheduled Execution**
- * with periodic **proportional drift correction + EMA smoothing**:
- *
- *   |smoothedDrift| > adaptive 500ms → confirmed hard seek (rare)
- *   |smoothedDrift| 30ms~hard threshold → proportional rate adjustment
- *                                         rate = 1 - clamp(drift * Kp, ±0.02)
- *   |smoothedDrift| < 30ms → normal rate 1.0x (dead zone)
- *
- * The EMA low-pass filter smooths noisy drift measurements to prevent
- * the control loop from oscillating between speed-up and slow-down.
- *
- * If a browser speed plugin (e.g. Global Speed) overrides the rate,
- * rate correction is automatically disabled and only hard seek is used.
- */
 export function usePlayerSync(
   howlRef: RefObject<PlaybackSound | null>,
   soundIdRef: RefObject<number | undefined>,
   setDesiredPlayback: (shouldPlay: boolean, getSeekTime?: () => number) => void,
   setScheduledPlayback: (getSeekTime: () => number) => void,
+  startPlayback?: (getSeekTime: () => number, delayMs?: number) => void,
 ) {
   const { socket } = useSocketContext()
-  const setCurrentTime = usePlayerStore((s) => s.setCurrentTime)
+  const pendingRevisionRef = useRef(-1)
 
-  // Pending scheduled action timers (so we can cancel on unmount / new action)
-  const scheduledTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null)
-  // Monotonic action ID — guards against stale setTimeout(fn, 0) callbacks
-  // when rapid events arrive in the same event loop tick.
-  const actionIdRef = useRef(0)
-  // Identity of the last PLAYER_PLAY handled, to recognise a repeated delivery of the same one.
-  const lastPlayKeyRef = useRef<string | null>(null)
-  // When true, rate() micro-adjustment is disabled (browser plugin detected)
-  const rateDisabledRef = useRef(false)
-  // Consecutive count of rate override detections (require 3 to confirm plugin)
-  const rateOverrideCountRef = useRef(0)
-  // Timer for the 50ms rate-override detection check (stored so we can clear it)
-  const rateCheckTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null)
-  // EMA-smoothed drift value (seconds) — persists across sync responses
-  const smoothedDriftRef = useRef(0)
-  // When true, next sync response seeds EMA directly instead of blending,
-  // avoiding the cold-start lag after pause/resume/new-track.
-  const emaColdStartRef = useRef(true)
-  // Timestamp when the current track started playing (for adaptive conductor reporting)
-  const trackStartTimeRef = useRef(0)
-  // Consecutive hard-seek triggers — require HARD_SEEK_CONFIRM_COUNT before actually seeking
-  const hardSeekCountRef = useRef(0)
-  // Consecutive in-dead-zone sync responses — gates the adaptive request slowdown
-  const lowDriftStreakRef = useRef(0)
-  // The sync-request effect owns the timer; the response handler can use this
-  // callback to replace a previously scheduled slow poll after fresh drift.
-  const rearmSyncRequestRef = useRef<(() => void) | null>(null)
-
-  const isStaleAction = (playState: ScheduledPlayState) =>
-    playState.revision < (useRoomStore.getState().room?.playState.revision ?? -1)
-
-  const clearScheduled = () => {
-    if (scheduledTimerRef.current) {
-      clearTimeout(scheduledTimerRef.current)
-      scheduledTimerRef.current = null
-    }
-  }
-
-  // -----------------------------------------------------------------------
-  // Scheduled action handlers
-  // -----------------------------------------------------------------------
   useEffect(() => {
-    // -- SEEK ---------------------------------------------------------------
-    const onSeek = (data: { playState: ScheduledPlayState }) => {
-      if (isStaleAction(data.playState)) return
-      // Keep an in-flight load paused until this action's execution time.
+    let scheduledTimer: ReturnType<typeof setTimeout> | undefined
+    let lastPlayKey: string | undefined
+    let anchorKey: string | undefined
+    let samples: number[] = []
+    let smoothedDrift: number | undefined
+    let hardSeekCount = 0
+    let rateCheckTimer: ReturnType<typeof setTimeout> | undefined
+    let rateOverrideCount = 0
+    let rateDisabled = false
+
+    const clearScheduled = () => {
+      clearTimeout(scheduledTimer)
+      scheduledTimer = undefined
+      pendingRevisionRef.current = -1
+    }
+
+    const resetDrift = () => {
+      samples = []
+      smoothedDrift = undefined
+      hardSeekCount = 0
+      clearTimeout(rateCheckTimer)
+      usePlayerStore.getState().setSyncDrift(0)
+    }
+
+    const isStale = (revision: number) =>
+      revision < Math.max(pendingRevisionRef.current, useRoomStore.getState().room?.playState.revision ?? -1)
+
+    const scheduleAction = ({ playState }: { playState: ScheduledPlayState }) => {
+      if (isStale(playState.revision)) return
       setDesiredPlayback(false)
       cancelScheduledPlay()
       clearScheduled()
-      const id = ++actionIdRef.current
-      const delay = scheduleDelay(data.playState.serverTimeToExecute)
-
-      scheduledTimerRef.current = setTimeout(() => {
-        if (actionIdRef.current !== id) return // stale callback
-        const getSeekTime = () => getScheduledPlaybackPosition(
-          data.playState.currentTime,
-          data.playState.serverTimeToExecute,
-          getScheduledServerNow(data.playState.serverTimeToExecute),
-        )
-        if (data.playState.isPlaying) setScheduledPlayback(getSeekTime)
-        else setDesiredPlayback(false, () => data.playState.currentTime)
-        const targetTime = data.playState.isPlaying ? getSeekTime() : data.playState.currentTime
-        // A late load starts once from onload, using the elapsed position.
-        if (howlRef.current && (!data.playState.isPlaying || howlRef.current.state() === 'loaded')) {
-          setHowlPosition(howlRef.current, targetTime, soundIdRef.current)
-          if (howlRef.current.rate() !== 1) howlRef.current.rate(1)
-          if (data.playState.isPlaying) {
-            if (!howlRef.current.playing()) {
-              soundIdRef.current =
-                soundIdRef.current !== undefined
-                  ? howlRef.current.play(soundIdRef.current)
-                  : howlRef.current.play()
-            }
-          } else if (howlRef.current.playing()) {
-            howlRef.current.pause(soundIdRef.current)
-          }
-        }
-        setCurrentTime(targetTime)
-        lyricPlayerBridge.seek(targetTime)
-        smoothedDriftRef.current = 0
-        emaColdStartRef.current = true
-        // Keep roomStore.playState in sync for recovery effect
-        useRoomStore.getState().updateRoom({
-          playState: {
-            isPlaying: data.playState.isPlaying,
-            currentTime: data.playState.currentTime,
-            serverTimestamp: data.playState.serverTimestamp,
-            revision: data.playState.revision,
-          },
-        })
-      }, delay)
-    }
-
-    // -- PAUSE --------------------------------------------------------------
-    const onPause = (data: { playState: ScheduledPlayState }) => {
-      if (isStaleAction(data.playState)) return
-      setDesiredPlayback(false)
-      cancelScheduledPlay()
-      clearScheduled()
-      const id = ++actionIdRef.current
-      const delay = scheduleDelay(data.playState.serverTimeToExecute)
-
-      scheduledTimerRef.current = setTimeout(() => {
-        if (actionIdRef.current !== id) return // stale callback
-        setDesiredPlayback(false, () => data.playState.currentTime)
-        if (howlRef.current) {
-          if (soundIdRef.current !== undefined) howlRef.current.pause(soundIdRef.current)
-          // Sync to the server's authoritative time snapshot even when the
-          // preloaded sound has not started and has no sound ID yet.
-          setHowlPosition(howlRef.current, data.playState.currentTime, soundIdRef.current)
-          if (howlRef.current.rate() !== 1) howlRef.current.rate(1)
-        }
-        setCurrentTime(data.playState.currentTime)
-        lyricPlayerBridge.seek(data.playState.currentTime)
-        // Reset drift state — paused means no drift
-        smoothedDriftRef.current = 0
-        emaColdStartRef.current = true
-        usePlayerStore.getState().setSyncDrift(0)
-        // Keep roomStore.playState in sync for recovery effect
-        useRoomStore.getState().updateRoom({
-          playState: {
-            isPlaying: data.playState.isPlaying,
-            currentTime: data.playState.currentTime,
-            serverTimestamp: data.playState.serverTimestamp,
-            revision: data.playState.revision,
-          },
-        })
-      }, delay)
-    }
-
-    // -- RESUME -------------------------------------------------------------
-    const onResume = (data: { playState: ScheduledPlayState }) => {
-      if (isStaleAction(data.playState)) return
-      setDesiredPlayback(false)
-      cancelScheduledPlay()
-      clearScheduled()
-      const id = ++actionIdRef.current
-      const delay = scheduleDelay(data.playState.serverTimeToExecute)
-
-      scheduledTimerRef.current = setTimeout(() => {
-        if (actionIdRef.current !== id) return // stale callback
-        const getSeekTime = () => getScheduledPlaybackPosition(
-          data.playState.currentTime,
-          data.playState.serverTimeToExecute,
-          getScheduledServerNow(data.playState.serverTimeToExecute),
-        )
-        setScheduledPlayback(getSeekTime)
-        if (!howlRef.current) return
-        const targetTime = getSeekTime()
-        if (howlRef.current.state() === 'loaded') {
-          setHowlPosition(howlRef.current, targetTime, soundIdRef.current)
-          if (howlRef.current.rate() !== 1) howlRef.current.rate(1)
-          if (soundIdRef.current !== undefined) {
-            howlRef.current.play(soundIdRef.current)
-          } else {
-            soundIdRef.current = howlRef.current.play()
-          }
-        }
-        setCurrentTime(targetTime)
-        lyricPlayerBridge.seek(targetTime)
-        smoothedDriftRef.current = 0
-        emaColdStartRef.current = true
-        // Keep roomStore.playState in sync for recovery effect
-        useRoomStore.getState().updateRoom({
-          playState: {
-            isPlaying: data.playState.isPlaying,
-            currentTime: data.playState.currentTime,
-            serverTimestamp: data.playState.serverTimestamp,
-            revision: data.playState.revision,
-          },
-        })
-      }, delay)
-    }
-
-    // -- NEW TRACK (PLAYER_PLAY) ---------------------------------------------
-    // When a new track loads, cancel any pending action from the previous track
-    // so it doesn't accidentally seek/pause/resume the new Howl instance.
-    // Also reset rate-disabled flag to give the new track a fresh chance.
-    const onPlay = (data: { track?: { id: string }; playState: ScheduledPlayState }) => {
-      if (isStaleAction(data.playState)) return
-      // The same announcement delivered twice (room broadcast + a join/recovery sync) is dropped by `usePlayer`;
-      // cancelling here would then discard the start timer it armed for the first copy.
-      const playKey = `${data.track?.id}:${data.playState.revision}:${data.playState.serverTimestamp}`
-      if (lastPlayKeyRef.current === playKey) return
-      lastPlayKeyRef.current = playKey
-      cancelScheduledPlay()
-      clearScheduled()
-      ++actionIdRef.current // invalidate any pending stale callbacks
-      // A new track resets the rate; cancel any pending plugin-override check
-      // that captured a stale target rate from the previous track.
-      if (rateCheckTimerRef.current) {
-        clearTimeout(rateCheckTimerRef.current)
-        rateCheckTimerRef.current = null
-      }
-      rateDisabledRef.current = false
-      rateOverrideCountRef.current = 0
-      hardSeekCountRef.current = 0
-      // A new track has unknown drift — re-arm the fast request interval.
-      lowDriftStreakRef.current = 0
-      smoothedDriftRef.current = 0
-      emaColdStartRef.current = true
-      trackStartTimeRef.current = Date.now()
-    }
-
-    // -- SYNC RESPONSE (proportional drift correction + EMA smoothing) ------
-    type SyncResponse = Parameters<ServerToClientEvents[typeof EVENTS.PLAYER_SYNC_RESPONSE]>[0]
-    const onSyncResponse = (data: SyncResponse) => {
-      if (!howlRef.current) return
-      if (!howlRef.current.playing()) return
-      // Drift is measured against server-time extrapolation. Until NTP has converged,
-      // getServerTime() is just the local clock, so a skewed device clock would look like
-      // up to several seconds of drift and trigger a bogus cold-start hard seek.
-      // Ignore the response without touching the EMA / cold-start state; the periodic
-      // sync request keeps polling and the next response after calibration is used.
-      if (!isCalibrated()) return
-
-      // Only the elected conductor socket is authoritative. Other tabs that
-      // share the same identity remain followers and must still self-correct.
-      const { room: syncRoom } = useRoomStore.getState()
-      if (syncRoom?.conductorSocketId === socket.id) return
-
-      // Drop responses computed for a different track — an in-flight response
-      // can race a track change (request sent for track A, room switched to B
-      // before the server answered). Missing trackId (older server) is tolerated.
-      const currentTrackId = syncRoom?.currentTrack?.id
-      if (data.trackId != null && data.trackId !== currentTrackId) return
-
-      // Grace period after new track: skip rate micro-adjustments
-      // (estimateCurrentTime is unreliable until conductor submits at least
-      // one progress report), but still allow hard seek for large drifts.
-      const inGracePeriod = Date.now() - trackStartTimeRef.current < DRIFT_GRACE_PERIOD_MS
-
-      const expectedTime = getSyncExpectedPosition(
-        data.currentTime,
-        data.isPlaying,
-        data.serverTimestamp,
-        getServerTime(),
-        MAX_NETWORK_DELAY_S,
+      pendingRevisionRef.current = playState.revision
+      const { currentTime, isPlaying, serverTimestamp, revision, serverTimeToExecute } = playState
+      const delay = isCalibrated() ? Math.max(0, serverTimeToExecute - getServerTime()) : 0
+      const duration = useRoomStore.getState().room?.currentTrack?.duration ??
+        usePlayerStore.getState().currentTrack?.duration ?? 0
+      const getSeekTime = () => getCompensatedScheduledPosition(currentTime, serverTimeToExecute, duration, howlRef.current)
+      const sound = howlRef.current
+      const hardwareStart = Boolean(
+        isPlaying && delay > 0 && sound?.playScheduled && sound.state() === 'loaded' &&
+        !sound.playing() && startPlayback,
       )
+      if (hardwareStart) startPlayback?.(getSeekTime, delay)
 
-      const currentSeek = howlRef.current.seek() as number
-      const rawDrift = currentSeek - expectedTime
+      scheduledTimer = setTimeout(() => {
+        clearScheduled()
+        if (isStale(revision)) return
+        const target = isPlaying ? getSeekTime() : currentTime
+        if (isPlaying) setScheduledPlayback(getSeekTime)
+        else setDesiredPlayback(false, () => currentTime)
 
-      // EMA low-pass filter: smooths noisy measurements to prevent oscillation.
-      // On cold start (after pause/resume/new-track), seed with raw value
-      // directly so the first correction is immediate, not dampened by stale 0.
-      const wasColdStart = emaColdStartRef.current
-      if (wasColdStart) {
-        smoothedDriftRef.current = rawDrift
-        emaColdStartRef.current = false
-      } else {
-        smoothedDriftRef.current = DRIFT_SMOOTH_ALPHA * rawDrift + (1 - DRIFT_SMOOTH_ALPHA) * smoothedDriftRef.current
-      }
-      const sd = smoothedDriftRef.current
-      const absDrift = Math.abs(sd)
-
-      // Adaptive sync-request frequency: only consecutive settled readings may
-      // slow the request loop; any fresh drift re-arms the fast interval.
-      const settled = isDriftSettled(absDrift, DRIFT_DEAD_ZONE_MS)
-      const wasLowDrift = lowDriftStreakRef.current >= SYNC_REQUEST_SLOWDOWN_CONFIRM_COUNT
-      if (settled) lowDriftStreakRef.current++
-      else lowDriftStreakRef.current = 0
-      if (shouldRearmSyncRequest(wasLowDrift, settled)) rearmSyncRequestRef.current?.()
-
-      // Update store with smoothed value so UI shows stable drift reading
-      usePlayerStore.getState().setSyncDrift(sd)
-
-      // Adaptive hard-seek threshold: on high-latency links the NTP offset
-      // error (asymmetric routing) and extrapolation jitter can easily reach
-      // the static 200ms threshold, triggering repeated backward jumps.
-      // Raising the threshold proportionally to the observed RTT avoids this.
-      const medianRtt = getMedianRTT()
-      const hardSeekThreshold =
-        getHardSeekThresholdMs(DRIFT_SEEK_THRESHOLD_MS, medianRtt, DRIFT_SEEK_RTT_MARGIN_MS) / 1000
-
-      if (absDrift > hardSeekThreshold) {
-        // Only very large cold-start errors are corrected immediately. Borderline
-        // media-clock bias must persist across multiple responses before a native
-        // media seek is allowed because that operation can stall mobile audio.
-        const requiredConfirmations =
-          wasColdStart && absDrift > hardSeekThreshold * 2 ? 1 : HARD_SEEK_CONFIRM_COUNT
-        hardSeekCountRef.current++
-        if (hardSeekCountRef.current < requiredConfirmations) return
-        // Confirmed: large sustained drift — hard seek
-        hardSeekCountRef.current = 0
-        setHowlPosition(howlRef.current, expectedTime, soundIdRef.current)
-        if (howlRef.current.rate() !== 1) howlRef.current.rate(1)
-        // A hard seek resets the rate — cancel any pending plugin-override
-        // check that captured a stale target rate from a proportional step.
-        if (rateCheckTimerRef.current) {
-          clearTimeout(rateCheckTimerRef.current)
-          rateCheckTimerRef.current = null
-        }
-        smoothedDriftRef.current = 0
-        // A hard seek is itself a valid synchronization sample. Keep the EMA
-        // warm so a persistent media-clock bias cannot trigger another seek on
-        // every 2-second response and repeatedly stall HTML5 Audio on mobile.
-        emaColdStartRef.current = false
-        usePlayerStore.getState().setSyncDrift(0)
-      } else if (absDrift > DRIFT_DEAD_ZONE_MS / 1000 && !rateDisabledRef.current) {
-        // Drift fell below hard-seek threshold — reset consecutive counter
-        // so only truly consecutive above-threshold measurements trigger a seek.
-        hardSeekCountRef.current = 0
-        // 宽限期内跳过 rate 微调 — 等 conductor report 稳定后再启用
-        if (inGracePeriod) return
-        // Proportional rate correction: larger drift → stronger correction,
-        // naturally decelerating as we approach the target — no oscillation.
-        const adj = clamp(sd * DRIFT_RATE_KP, MAX_RATE_ADJUSTMENT)
-        const targetRate = 1 - adj
-        if (Math.abs(howlRef.current.rate() - targetRate) > 0.001) {
-          howlRef.current.rate(targetRate)
-        }
-        // Verify rate was applied — detect browser speed plugin interference.
-        // Use setTimeout instead of rAF to avoid false positives when the tab
-        // is in background (rAF is throttled/paused by browsers).
-        // Require 3 consecutive detections to confirm a plugin, not just one.
-        // Clear previous check timer to avoid stacking on rapid sync responses.
-        if (rateCheckTimerRef.current) clearTimeout(rateCheckTimerRef.current)
-        rateCheckTimerRef.current = setTimeout(() => {
-          rateCheckTimerRef.current = null
-          if (!howlRef.current) return
-          if (Math.abs(howlRef.current.rate() - targetRate) > 0.005) {
-            rateOverrideCountRef.current++
-            if (rateOverrideCountRef.current >= 3) {
-              rateDisabledRef.current = true
-              console.warn(
-                'Rate correction disabled: external plugin detected (confirmed after 3 consecutive overrides)',
-              )
-            }
+        const activeSound = howlRef.current
+        if (activeSound && !hardwareStart && (!isPlaying || activeSound.state() === 'loaded')) {
+          if (!isPlaying && activeSound.playing()) activeSound.pause(soundIdRef.current)
+          if (isPlaying && !activeSound.playing() && activeSound.playScheduled && startPlayback) {
+            startPlayback(getSeekTime)
           } else {
-            // Rate applied successfully — reset counter
-            rateOverrideCountRef.current = 0
+            setHowlPosition(activeSound, target, soundIdRef.current)
+            if (activeSound.rate() !== 1) activeSound.rate(1)
+            if (isPlaying && !activeSound.playing()) {
+              soundIdRef.current = activeSound.play(soundIdRef.current)
+            }
           }
+        }
+        usePlayerStore.getState().setCurrentTime(target)
+        lyricPlayerBridge.seek(target)
+        resetDrift()
+        useRoomStore.getState().updateRoom({
+          playState: { currentTime, isPlaying, serverTimestamp, revision },
+          serverTimeToExecute: undefined,
+        })
+      }, delay)
+    }
+
+    const resetForTrack = (revision: number) => {
+      if (isStale(revision)) return
+      setDesiredPlayback(false)
+      cancelScheduledPlay()
+      clearScheduled()
+      rateOverrideCount = 0
+      rateDisabled = false
+      resetDrift()
+    }
+
+    const onPlay: ServerToClientEvents[typeof EVENTS.PLAYER_PLAY] = ({ track, playState }) => {
+      const key = `${track?.id}:${playState.revision}:${playState.serverTimestamp}`
+      if (isStale(playState.revision) || lastPlayKey === key) return
+      lastPlayKey = key
+      resetForTrack(playState.revision)
+    }
+
+    const onPrepare: ServerToClientEvents[typeof EVENTS.PLAYER_PREPARE] = ({ track, revision }) => {
+      const key = `${track.id}:${revision}:prepare`
+      if (isStale(revision) || lastPlayKey === key || lastPlayKey?.startsWith(`${track.id}:${revision}:`)) return
+      lastPlayKey = key
+      resetForTrack(revision)
+    }
+
+    const sampleDrift = () => {
+      const room = useRoomStore.getState().room
+      const sound = howlRef.current
+      const now = getServerTime()
+      if (!isCalibrated() || !room?.currentTrack || !room.playState.isPlaying || !sound?.playing() ||
+          now < room.playState.serverTimestamp) return
+
+      const { currentTime, serverTimestamp, revision } = room.playState
+      const key = `${room.currentTrack.id}:${revision}`
+      if (anchorKey !== key) {
+        resetDrift()
+        anchorKey = key
+      }
+      const expected = compensatePlaybackPosition(
+        currentTime + (now - serverTimestamp) / 1000,
+        room.currentTrack.duration,
+        sound,
+      )
+      const current = sound.seek()
+      if (typeof current !== 'number' || !Number.isFinite(current)) return
+      samples = [...samples.slice(1 - DRIFT_SAMPLE_COUNT), current - expected]
+      if (samples.length < DRIFT_SAMPLE_COUNT) return
+
+      const median = medianDrift(samples)
+      smoothedDrift = smoothedDrift === undefined
+        ? median
+        : DRIFT_SMOOTH_ALPHA * median + (1 - DRIFT_SMOOTH_ALPHA) * smoothedDrift
+      usePlayerStore.getState().setSyncDrift(smoothedDrift)
+
+      const pitchSafeRate = sound.supportsPitchPreservingRate !== false
+      const seekThreshold = (pitchSafeRate
+        ? getHardSeekThresholdMs(DRIFT_SEEK_THRESHOLD_MS, getMedianRTT(), DRIFT_SEEK_RTT_MARGIN_MS)
+        : WEB_AUDIO_SEEK_THRESHOLD_MS) / 1000
+      if (Math.abs(smoothedDrift) > seekThreshold && Math.abs(median) > seekThreshold) {
+        if (++hardSeekCount < HARD_SEEK_CONFIRM_COUNT) return
+        // Let the current source finish naturally when compensation reaches the end.
+        if (room.currentTrack.duration > 0 && expected >= room.currentTrack.duration) return
+        if (sound.rate() !== 1) sound.rate(1)
+        if (!pitchSafeRate && sound.crossfadeSeek) sound.crossfadeSeek(expected)
+        else setHowlPosition(sound, expected, soundIdRef.current)
+        resetDrift()
+        return
+      }
+
+      hardSeekCount = 0
+      if (rateDisabled) return
+      const limit = pitchSafeRate ? MAX_RATE_ADJUSTMENT : WEB_AUDIO_MAX_RATE_ADJUSTMENT
+      const adjustment = Math.abs(smoothedDrift) <= DRIFT_DEAD_ZONE_MS / 1000
+        ? 0
+        : Math.max(-limit, Math.min(limit, smoothedDrift * DRIFT_RATE_KP))
+      const rate = 1 - adjustment
+      if (Math.abs(sound.rate() - rate) > 0.0005) sound.rate(rate)
+      if (pitchSafeRate && adjustment !== 0) {
+        clearTimeout(rateCheckTimer)
+        rateCheckTimer = setTimeout(() => {
+          if (howlRef.current !== sound) return
+          rateOverrideCount = Math.abs(sound.rate() - rate) > 0.005 ? rateOverrideCount + 1 : 0
+          if (rateOverrideCount >= 3) rateDisabled = true
         }, 50)
-      } else {
-        // Within dead zone: ensure normal playback rate
-        hardSeekCountRef.current = 0
-        if (howlRef.current.rate() !== 1) howlRef.current.rate(1)
       }
     }
 
-    socket.on(EVENTS.PLAYER_SEEK, onSeek)
-    socket.on(EVENTS.PLAYER_PAUSE, onPause)
-    socket.on(EVENTS.PLAYER_RESUME, onResume)
-    socket.on(EVENTS.PLAYER_PLAY, onPlay)
-    socket.on(EVENTS.PLAYER_SYNC_RESPONSE, onSyncResponse)
-    // After a reconnect the same announcement is legitimate again (mirrors the dedup reset in `usePlayer`).
-    const onDisconnect = () => {
-      lastPlayKeyRef.current = null
+    const onSyncResponse: ServerToClientEvents[typeof EVENTS.PLAYER_SYNC_RESPONSE] = (data) => {
+      const { room } = useRoomStore.getState()
+      if (!room?.currentTrack || !isCalibrated() || data.trackId !== room.currentTrack.id ||
+          pendingRevisionRef.current !== -1 || data.serverTimestamp <= room.playState.serverTimestamp) return
+
+      const { currentTime, isPlaying, serverTimestamp } = data
+      if (room.playState.isPlaying !== isPlaying) {
+        scheduleAction({
+          playState: {
+            ...room.playState,
+            currentTime,
+            isPlaying,
+            serverTimestamp,
+            serverTimeToExecute: serverTimestamp,
+          },
+        })
+      } else {
+        useRoomStore.getState().updateRoom({ playState: { ...room.playState, currentTime, serverTimestamp } })
+        if (isPlaying) {
+          const duration = room.currentTrack.duration
+          setScheduledPlayback(() => getCompensatedScheduledPosition(currentTime, serverTimestamp, duration, howlRef.current))
+        }
+      }
     }
+
+    const onDisconnect = () => {
+      lastPlayKey = undefined
+      anchorKey = undefined
+      clearScheduled()
+      resetDrift()
+    }
+    const driftTimer = setInterval(sampleDrift, DRIFT_SAMPLE_INTERVAL_MS)
+    const syncTimer = setInterval(() => {
+      if (useRoomStore.getState().room) socket.emit(EVENTS.PLAYER_SYNC_REQUEST)
+    }, SYNC_REQUEST_INTERVAL_MS)
+
+    socket.on(EVENTS.PLAYER_SEEK, scheduleAction)
+    socket.on(EVENTS.PLAYER_PAUSE, scheduleAction)
+    socket.on(EVENTS.PLAYER_RESUME, scheduleAction)
+    socket.on(EVENTS.PLAYER_PLAY, onPlay)
+    socket.on(EVENTS.PLAYER_PREPARE, onPrepare)
+    socket.on(EVENTS.PLAYER_SYNC_RESPONSE, onSyncResponse)
     socket.on('disconnect', onDisconnect)
 
     return () => {
+      clearInterval(driftTimer)
+      clearInterval(syncTimer)
       clearScheduled()
-      if (rateCheckTimerRef.current) {
-        clearTimeout(rateCheckTimerRef.current)
-        rateCheckTimerRef.current = null
-      }
-      socket.off(EVENTS.PLAYER_SEEK, onSeek)
-      socket.off(EVENTS.PLAYER_PAUSE, onPause)
-      socket.off(EVENTS.PLAYER_RESUME, onResume)
+      clearTimeout(rateCheckTimer)
+      socket.off(EVENTS.PLAYER_SEEK, scheduleAction)
+      socket.off(EVENTS.PLAYER_PAUSE, scheduleAction)
+      socket.off(EVENTS.PLAYER_RESUME, scheduleAction)
       socket.off(EVENTS.PLAYER_PLAY, onPlay)
+      socket.off(EVENTS.PLAYER_PREPARE, onPrepare)
       socket.off(EVENTS.PLAYER_SYNC_RESPONSE, onSyncResponse)
       socket.off('disconnect', onDisconnect)
     }
-  }, [socket, howlRef, soundIdRef, setCurrentTime, setDesiredPlayback, setScheduledPlayback])
+  }, [socket, howlRef, soundIdRef, setDesiredPlayback, setScheduledPlayback, startPlayback])
 
-  // -----------------------------------------------------------------------
-  // Periodic sync request (client-initiated drift correction).
-  // Host skips: it is the authoritative source and reports its own position.
-  // Adaptive frequency: fast while drift is unsettled or the media is paused;
-  // consecutive settled responses slow the loop to SYNC_REQUEST_IDLE_INTERVAL_MS.
-  // -----------------------------------------------------------------------
-  useEffect(() => {
-    let timerId: ReturnType<typeof setTimeout> | null = null
-
-    const scheduleNext = (delay: number) => {
-      if (timerId) clearTimeout(timerId)
-      timerId = setTimeout(request, delay)
-    }
-
-    const request = () => {
-      const { room: r2 } = useRoomStore.getState()
-      // Skip entirely outside a room; followers (incl. non-elected tabs of the
-      // conductor identity) request drift correction, the conductor does not.
-      if (r2 && r2.conductorSocketId !== socket.id) socket.emit(EVENTS.PLAYER_SYNC_REQUEST)
-      const isPlaying = howlRef.current?.playing() ?? false
-      scheduleNext(getSyncRequestIntervalMs(
-          isPlaying,
-          lowDriftStreakRef.current,
-          SYNC_REQUEST_INTERVAL_MS,
-          SYNC_REQUEST_IDLE_INTERVAL_MS,
-          SYNC_REQUEST_SLOWDOWN_CONFIRM_COUNT,
-        ))
-    }
-
-    rearmSyncRequestRef.current = () => scheduleNext(SYNC_REQUEST_INTERVAL_MS)
-    scheduleNext(SYNC_REQUEST_INTERVAL_MS)
-    return () => {
-      if (timerId) clearTimeout(timerId)
-      rearmSyncRequestRef.current = null
-    }
-  }, [socket, howlRef])
-
-  // -----------------------------------------------------------------------
-  // Conductor progress reporting (keeps server-side playState accurate for
-  // mid-song joiners and reconnection recovery).
-  // Adaptive: fast interval (2s) for the first 10s of a new track,
-  // then slows to the normal interval (5s) to reduce overhead.
-  // -----------------------------------------------------------------------
-  useEffect(() => {
-    let timerId: ReturnType<typeof setTimeout> | null = null
-
-    const report = () => {
-      const { room } = useRoomStore.getState()
-      if (room && room.conductorSocketId === socket.id && room.currentTrack && howlRef.current?.playing()) {
-        socket.emit(EVENTS.PLAYER_SYNC, {
-          currentTime: howlRef.current.seek() as number,
-          // Only attach a calibrated server-time anchor. While NTP is still
-          // converging, omit it so the server falls back to its receive-time
-          // anchor (bounded by one-way latency) instead of a skewed wall clock.
-          hostServerTime: isCalibrated() ? getServerTime() : undefined,
-          revision: room.playState.revision,
-          trackId: room.currentTrack.id,
-        })
-        // Schedule next report — fast if within the initial window, slow otherwise
-        const elapsed = Date.now() - trackStartTimeRef.current
-        const interval =
-          elapsed < CONDUCTOR_REPORT_FAST_DURATION_MS ? CONDUCTOR_REPORT_FAST_INTERVAL_MS : CONDUCTOR_REPORT_INTERVAL_MS
-        timerId = setTimeout(report, interval)
-      } else {
-        // Not reporting right now (outside a room / not the elected conductor /
-        // media paused): keep a slow heartbeat so the chain re-engages when the
-        // role or playback state changes, without spinning at the fast interval.
-        timerId = setTimeout(report, CONDUCTOR_REPORT_INTERVAL_MS)
-      }
-    }
-
-    // When the tab returns from background, immediately send a conductor report
-    // so the server's playState is refreshed after potential setTimeout throttling.
-    const onVisibilityChange = () => {
-      if (document.visibilityState !== 'visible') return
-      const { room: r } = useRoomStore.getState()
-      if (r && r.conductorSocketId === socket.id && r.currentTrack && howlRef.current?.playing()) {
-        socket.emit(EVENTS.PLAYER_SYNC, {
-          currentTime: howlRef.current.seek() as number,
-          hostServerTime: isCalibrated() ? getServerTime() : undefined,
-          revision: r.playState.revision,
-          trackId: r.currentTrack.id,
-        })
-      }
-    }
-    document.addEventListener('visibilitychange', onVisibilityChange)
-
-    timerId = setTimeout(report, CONDUCTOR_REPORT_FAST_INTERVAL_MS)
-
-    return () => {
-      if (timerId) clearTimeout(timerId)
-      document.removeEventListener('visibilitychange', onVisibilityChange)
-    }
-  }, [socket, howlRef])
+  return pendingRevisionRef
 }

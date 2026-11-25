@@ -19,6 +19,12 @@ export function normalizeKugouTemplateCoverUrl(url: string): string {
   return url.replace('{size}', '5000')
 }
 
+export function normalizeCoverUrl(source: MusicSource, url: string): string {
+  if (source === 'netease') return normalizeNeteaseCoverUrl(url)
+  if (source === 'kugou') return normalizeKugouTemplateCoverUrl(url)
+  return url
+}
+
 /**
  * Derive a separately cacheable 120px artwork URL without changing the
  * maximum-quality URL used for playback/detail views. NetEase can resize to any

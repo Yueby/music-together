@@ -10,14 +10,10 @@ import {
 import { MediaError } from '../services/mediaSourceRequest.js'
 import { mediaStreamRateLimit } from '../middleware/httpRateLimiter.js'
 import { logger } from '../utils/logger.js'
-import { withTimeout } from '../utils/withTimeout.js'
+import { MAPP_PREFLIGHT_MAX_AGE, PREFLIGHT_HEADERS, setPlatformCorsHeaders, verifyPlatformCaller } from './platformAuth.js'
+import type { PlatformIdentityInput } from './platformAuth.js'
 
-export interface RoomMediaIdentityInput {
-  url: string
-  origin: string | undefined
-  authorization: string | undefined
-  method: string
-}
+export type RoomMediaIdentityInput = PlatformIdentityInput
 type PlatformMediaService = ReturnType<typeof createPlatformMediaService>
 interface Options {
   allowedOrigin: string
@@ -32,9 +28,6 @@ interface Options {
 }
 
 const PATH = '/api/mapp/audio'
-const AUTH_TIMEOUT_MS = 6_000
-const PLATFORM_USER_ID = /^mapp_[a-f0-9]{32}$/
-const PREFLIGHT_HEADERS = ['authorization', 'content-type']
 const RELAY_MODE_RESOLVE = 'resolve-v1'
 const RELAY_MODE_FALLBACK = 'fallback-v1'
 
@@ -90,10 +83,7 @@ export function createPlatformMediaRouter(options: Options): RouterType {
     const origin = req.get('Origin')
     try {
       if (origin !== options.allowedOrigin) throw new MediaError('MEDIA_ORIGIN_REJECTED', 403)
-      res.setHeader('Access-Control-Allow-Origin', options.allowedOrigin)
-      res.setHeader('Vary', 'Origin')
-      res.setHeader('Access-Control-Allow-Methods', 'GET, OPTIONS')
-      res.setHeader('Access-Control-Allow-Headers', 'Authorization, Content-Type')
+      setPlatformCorsHeaders(res, options.allowedOrigin)
       res.setHeader('Access-Control-Expose-Headers', 'Content-Length, Content-Type, Content-Encoding')
 
       // originalUrl survives mounting prefixes; never rebuild it from req.url/Host/forwarded headers.
@@ -108,6 +98,7 @@ export function createPlatformMediaRouter(options: Options): RouterType {
         ) {
           throw new MediaError('MEDIA_PREFLIGHT_REJECTED', 403)
         }
+        res.setHeader('Access-Control-Max-Age', MAPP_PREFLIGHT_MAX_AGE)
         res.status(204).end()
         return
       }
@@ -120,21 +111,12 @@ export function createPlatformMediaRouter(options: Options): RouterType {
         throw new MediaError('MEDIA_QUERY_REJECTED', 400)
       }
 
-      const authorization = req.get('Authorization')
-      if (!authorization?.startsWith('Bearer ') || authorization.length > 8199) {
-        throw new MediaError('MEDIA_UNAUTHORIZED', 401)
-      }
-      const unauthorized = new MediaError('MEDIA_UNAUTHORIZED', 401)
-      const identity = await withTimeout(
-        Promise.resolve().then(() => options.verifyIdentity({ url: raw, origin, authorization, method: req.method })),
-        AUTH_TIMEOUT_MS,
-        unauthorized,
-      ).catch(() => {
-        throw unauthorized
-      })
-      if (!PLATFORM_USER_ID.test(identity?.userId)) throw unauthorized
-
-      req.identityUserId = identity.userId
+      req.identityUserId = await verifyPlatformCaller(
+        { url: raw, origin, authorization: req.get('Authorization'), method: req.method },
+        (input) => options.verifyIdentity(input),
+        new MediaError('MEDIA_UNAUTHORIZED', 401),
+        'prefix',
+      )
       res.locals.mediaQuery = query.data
       const relayHeader = req.get('X-MT-Relay')
       const secretValid = verifyRelaySecret(req.get('X-MT-Relay-Secret'), options.relaySecret)

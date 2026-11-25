@@ -1,6 +1,7 @@
 import { UNKNOWN_ARTIST } from '@music-together/shared'
 import type { MusicSource, Track } from '@music-together/shared'
 import { nanoid } from 'nanoid'
+import { normalizeKugouTemplateCoverUrl } from './coverUrls.js'
 
 /**
  * Raw song data of each music platform → our `Track`. Pure: no cache, no network. Each platform names its fields
@@ -45,6 +46,7 @@ export function kugouSongToTrack(song: Record<string, unknown>): Track | null {
   // VIP / privilege
   const privilege = song_.privilege ?? song_.pay_type ?? 0
   const isVip = privilege > 0
+  const rawCover = song_.trans_param?.union_cover || song_.sizable_cover || song_.cover
 
   return {
     id: nanoid(),
@@ -54,7 +56,7 @@ export function kugouSongToTrack(song: Record<string, unknown>): Track | null {
     artist: artists,
     album: String(song_.album_name || song_.remark || ''),
     duration,
-    cover: '',
+    cover: typeof rawCover === 'string' ? normalizeKugouTemplateCoverUrl(rawCover) : '',
     lyricId: hash,
     urlId: hash,
     picId: hash,

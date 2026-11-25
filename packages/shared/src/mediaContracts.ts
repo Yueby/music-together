@@ -52,6 +52,19 @@ export const COVER_HOST_ALLOWLIST: readonly string[] = [
 /** Platform cover responses are capped lower than the Web proxy: they are held in memory as Blob URLs. */
 export const MAPP_COVER_MAX_BYTES = 2 * 1024 * 1024
 
+/** Request player-sized NetEase artwork when the caller has not already chosen a size. */
+export function limitCoverSize(url: URL | string): string {
+  const original = typeof url === 'string' ? url : url.href
+  try {
+    const parsed = new URL(original)
+    if (!/^p[1-4]\.music\.126\.net$/.test(parsed.hostname) || parsed.searchParams.has('param')) return original
+    parsed.searchParams.set('param', '600y600')
+    return parsed.href
+  } catch {
+    return original
+  }
+}
+
 /** Maximum cover image payload size served to Web clients (3 MiB). */
 export const MAX_WEB_COVER_BYTES = 3 * 1024 * 1024
 

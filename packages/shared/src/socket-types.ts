@@ -50,6 +50,7 @@ export interface ServerToClientEvents {
   [EVENTS.ADMISSION_CANCELLED]: (data: AdmissionCancelledEvent) => void
 
   [EVENTS.PLAYER_PLAY]: (data: { track: Track; playState: ScheduledPlayState }) => void
+  [EVENTS.PLAYER_PREPARE]: (data: { track: Track; revision: number; deadlineAt: number }) => void
   [EVENTS.PLAYER_PRELOAD]: (data: { track: Track }) => void
   [EVENTS.PLAYER_PAUSE]: (data: { playState: ScheduledPlayState }) => void
   [EVENTS.PLAYER_RESUME]: (data: { playState: ScheduledPlayState }) => void
@@ -102,6 +103,7 @@ export interface ClientToServerEvents {
   [EVENTS.ROOM_SET_ROLE]: (data: { userId: string; role: 'admin' | 'member' }) => void
 
   [EVENTS.PLAYER_PLAY]: (data?: { track?: Track }) => void
+  [EVENTS.PLAYER_READY]: (data: { trackId: string; revision: number; failed?: boolean }) => void
   [EVENTS.PLAYER_PAUSE]: () => void
   [EVENTS.PLAYER_SEEK]: (data: { currentTime: number }) => void
   [EVENTS.PLAYER_NEXT]: (data?: { auto?: boolean; trackId?: string; revision?: number }) => void

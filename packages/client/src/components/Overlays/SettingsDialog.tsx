@@ -10,19 +10,20 @@ import { ScrollArea } from '@/components/ui/scroll-area'
 import { Tabs, TabsContent, TabsList, TabsTrigger } from '@/components/ui/tabs'
 import { useMediaQuery } from '@/hooks/useMediaQuery'
 import type { RoomSettingsUpdate } from '@music-together/shared'
-import { Palette, Settings2, Type, Users, type LucideIcon } from 'lucide-react'
+import { AudioLines, Palette, Settings2, Type, Users, type LucideIcon } from 'lucide-react'
 import { useEffect, useState } from 'react'
 import { RoomSettingsSection } from './Settings/RoomSettingsSection'
 import { MembersSection } from './Settings/MembersSection'
 import { AppearanceSection } from './Settings/AppearanceSection'
 import { LyricsSection } from './Settings/LyricsSection'
+import { SyncSection } from './Settings/SyncSection'
 
 // ---------------------------------------------------------------------------
 // Types
 // ---------------------------------------------------------------------------
 
 /** Music accounts live in their own dialog (`AccountDialog`), not here. */
-export type SettingsTab = 'room' | 'members' | 'appearance' | 'lyrics'
+export type SettingsTab = 'room' | 'members' | 'appearance' | 'lyrics' | 'sync'
 
 interface SettingsDialogProps {
   open: boolean
@@ -41,6 +42,7 @@ const TABS: { id: SettingsTab; icon: LucideIcon; label: string }[] = [
   { id: 'members', icon: Users, label: '成员' },
   { id: 'appearance', icon: Palette, label: '外观' },
   { id: 'lyrics', icon: Type, label: '歌词' },
+  { id: 'sync', icon: AudioLines, label: '同步' },
 ]
 
 // ---------------------------------------------------------------------------
@@ -106,6 +108,9 @@ export function SettingsDialog({
               </TabsContent>
               <TabsContent value="lyrics">
                 <LyricsSection />
+              </TabsContent>
+              <TabsContent value="sync">
+                <SyncSection />
               </TabsContent>
             </div>
           </ScrollArea>

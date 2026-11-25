@@ -1,4 +1,5 @@
 import QRCode from 'qrcode'
+import { LRUCache } from 'lru-cache'
 import type { Playlist } from '@music-together/shared'
 import type { GetUserInfoResult } from './authProvider.js'
 import { logger } from '../utils/logger.js'
@@ -700,7 +701,27 @@ async function fetchMusicKeySession(code: string): Promise<string | null> {
  * 获取加密过的 user id (encrypt_uin)
  * 部分歌单和用户信息接口如今不认纯数字 QQ 号
  */
+const encryptUinCache = new LRUCache<string, string>({ max: 200, ttl: 30 * 60_000 })
+const encryptUinInflight = new Map<string, Promise<string>>()
+
 async function getEncryptUin(musicid: string | number): Promise<string> {
+  const key = String(musicid)
+  const cached = encryptUinCache.get(key)
+  if (cached) return cached
+  const running = encryptUinInflight.get(key)
+  if (running) return running
+
+  const lookup = fetchEncryptUin(key)
+    .then((value) => {
+      if (value) encryptUinCache.set(key, value)
+      return value
+    })
+    .finally(() => encryptUinInflight.delete(key))
+  encryptUinInflight.set(key, lookup)
+  return lookup
+}
+
+async function fetchEncryptUin(musicid: string): Promise<string> {
   const url = `https://c6.y.qq.com/rsc/fcgi-bin/fcg_get_profile_homepage.fcg?ct=20&cv=4747474&cid=205360838&userid=${musicid}`
   const response = await fetch(url, {
     headers: {
@@ -709,6 +730,7 @@ async function getEncryptUin(musicid: string | number): Promise<string> {
     },
     signal: AbortSignal.timeout(10_000),
   })
+  if (!response.ok) return ''
   const data = await readBoundedJson<{ data?: ProfileData }>(response)
   return data?.data?.creator?.encrypt_uin || ''
 }
@@ -827,7 +849,7 @@ export async function getPlaylistTracks(
     })
 
     const songlist = data?.songlist || []
-    const total = data?.total_song_num || songlist.length || 0
+    const total = data?.total_song_num ?? 0
 
     return { songs: songlist, total }
   } catch (err) {

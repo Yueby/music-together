@@ -19,6 +19,8 @@ export class WebAudioPlayer {
   private gain: GainNode | null = null
   private buffer: AudioBuffer | null = null
   private source: AudioBufferSourceNode | null = null
+  private sourceGain: GainNode | null = null
+  private readonly fadingSources = new Map<AudioBufferSourceNode, GainNode>()
   private status: WebAudioPlayerStatus = 'empty'
   private offset = 0
   private startedAt = 0
@@ -50,6 +52,11 @@ export class WebAudioPlayer {
 
   getVolume(): number {
     return this.storedVolume
+  }
+
+  getOutputLatencyMs(): number {
+    const latency = ((this.context?.baseLatency ?? 0) + (this.context?.outputLatency ?? 0)) * 1000
+    return Number.isFinite(latency) && latency >= 0 ? latency : 0
   }
 
   setVolume(volume: number): void {
@@ -127,6 +134,8 @@ export class WebAudioPlayer {
     if (!this.buffer) throw new Error('AUDIO_NOT_LOADED')
     if (!Number.isFinite(delaySeconds) || delaySeconds < 0 || delaySeconds > 60) throw new Error('INVALID_DELAY')
     const context = this.getContext()
+    const wallDeadline = performance.now() + delaySeconds * 1000
+    const audioDeadline = context.state === 'running' ? context.currentTime + delaySeconds : undefined
     const generation = ++this.generation
     const position = this.snapshot().position
     this.stopSource()
@@ -144,7 +153,10 @@ export class WebAudioPlayer {
           ? ((target % this.buffer!.duration) + this.buffer!.duration) % this.buffer!.duration
           : Math.max(0, Math.min(target, this.buffer!.duration))
       }
-      this.startSource(delaySeconds)
+      const remainingDelay = audioDeadline === undefined
+        ? (wallDeadline - performance.now()) / 1000
+        : audioDeadline - context.currentTime
+      this.startSource(Math.max(0, remainingDelay))
       return true
     } catch (error) {
       if (generation !== this.generation) return false
@@ -174,6 +186,31 @@ export class WebAudioPlayer {
     else if (wasActive) this.startSource(delay)
     else this.status = this.status === 'ready' ? 'ready' : 'paused'
     this.notify()
+  }
+
+  crossfadeSeek(position: number, fadeSeconds = 0.025): void {
+    this.assertOpen()
+    const context = this.context
+    const oldSource = this.source
+    const oldGain = this.sourceGain
+    if (!context || !oldSource || !oldGain || !this.buffer || !Number.isFinite(position) ||
+        position >= this.buffer.duration || context.currentTime < this.startedAt ||
+        !Number.isFinite(fadeSeconds) || fadeSeconds <= 0 ||
+        typeof oldGain.gain.linearRampToValueAtTime !== 'function' ||
+        typeof oldGain.gain.setValueAtTime !== 'function') {
+      this.seek(position)
+      return
+    }
+
+    ++this.generation
+    const now = context.currentTime
+    this.offset = Math.max(0, position)
+    this.fadingSources.set(oldSource, oldGain)
+    oldSource.onended = () => this.releaseFadingSource(oldSource)
+    oldGain.gain.setValueAtTime(oldGain.gain.value, now)
+    oldGain.gain.linearRampToValueAtTime(0, now + fadeSeconds)
+    oldSource.stop(now + fadeSeconds)
+    this.startSource(0, fadeSeconds)
   }
 
   /** Release a track while retaining this app's unlocked context and controls. */
@@ -217,20 +254,32 @@ export class WebAudioPlayer {
     return this.context
   }
 
-  private startSource(delay: number): void {
+  private startSource(delay: number, fadeSeconds = 0): void {
     const context = this.context!
     const source = context.createBufferSource()
+    const gain = context.createGain()
     source.buffer = this.buffer
     source.loop = this.loop
     source.playbackRate.value = this.storedRate
-    source.connect(this.gain!)
+    source.connect(gain)
+    gain.connect(this.gain!)
     this.startedAt = context.currentTime + delay
+    if (fadeSeconds > 0 && typeof gain.gain.setValueAtTime === 'function' &&
+        typeof gain.gain.linearRampToValueAtTime === 'function') {
+      gain.gain.setValueAtTime(0, this.startedAt)
+      gain.gain.linearRampToValueAtTime(1, this.startedAt + fadeSeconds)
+    } else {
+      gain.gain.value = 1
+    }
     this.source = source
+    this.sourceGain = gain
     this.status = 'playing'
     source.onended = () => {
       if (this.source !== source) return
       this.source = null
+      this.sourceGain = null
       source.disconnect()
+      gain.disconnect()
       this.offset = this.buffer?.duration ?? 0
       this.status = 'ended'
       this.notify()
@@ -247,7 +296,12 @@ export class WebAudioPlayer {
 
   private stopSource(): void {
     const source = this.source
+    const gain = this.sourceGain
     this.source = null
+    this.sourceGain = null
+    for (const fadingSource of this.fadingSources.keys()) {
+      this.releaseFadingSource(fadingSource, true)
+    }
     if (!source) return
     source.onended = null
     try {
@@ -256,6 +310,22 @@ export class WebAudioPlayer {
       /* It may have already ended. */
     }
     source.disconnect()
+    gain?.disconnect()
+  }
+
+  private releaseFadingSource(source: AudioBufferSourceNode, stop = false): void {
+    const gain = this.fadingSources.get(source)
+    this.fadingSources.delete(source)
+    source.onended = null
+    if (stop) {
+      try {
+        source.stop()
+      } catch {
+        /* It may have already ended. */
+      }
+    }
+    source.disconnect()
+    gain?.disconnect()
   }
 
   private readonly notify = (): void => this.onChange(this.snapshot())
