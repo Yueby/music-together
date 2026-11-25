@@ -143,49 +143,44 @@ describe('roomService role and host reconciliation', () => {
     expect(room.conductorSocketId).toBe('socket-owner')
   })
 
-  it('re-anchors playback time when only the conductor socket changes, without bumping revision', () => {
+  it('preserves the playback timeline when only the conductor socket changes', () => {
     const room = createTestRoom()
     room.playState = { isPlaying: true, currentTime: 10, serverTimestamp: Date.now() - 5_000, revision: 0 }
-    const before = Date.now()
+    const before = room.playState
 
     const result = joinRoom('socket-owner-new', ROOM_ID, 'Owner New Socket', 'owner')
 
     expect(result?.hostChanged).toBe(true)
     expect(room.conductorSocketId).toBe('socket-owner-new')
-    // Socket-only switch is not a new action — the generation must stay put.
-    expect(room.playState.revision).toBe(0)
-    expect(room.playState.currentTime).toBeCloseTo(15, 1)
-    expect(room.playState.serverTimestamp).toBeGreaterThanOrEqual(before)
+    expect(room.playState).toBe(before)
   })
 
-  it('re-anchors playback time when the conductor transfers to a stale successor socket', () => {
+  it('preserves the playback timeline when the conductor transfers to another tab', () => {
     const room = createTestRoom()
     joinRoom('socket-owner-new', ROOM_ID, 'Owner New Socket', 'owner')
     room.playState = { isPlaying: true, currentTime: 20, serverTimestamp: Date.now() - 4_000, revision: 1 }
-    const before = Date.now()
+    const before = room.playState
 
     const result = leaveRoom('socket-owner-new')
 
     expect(result?.staleSocketOnly).toBe(true)
     expect(result?.hostChanged).toBe(true)
     expect(room.conductorSocketId).toBe('socket-owner')
-    expect(room.playState.revision).toBe(1)
-    expect(room.playState.currentTime).toBeCloseTo(24, 1)
-    expect(room.playState.serverTimestamp).toBeGreaterThanOrEqual(before)
+    expect(room.playState).toBe(before)
   })
 
-  it('still bumps the revision when a different user takes over as host', () => {
+  it('preserves the playback timeline when a different user takes over as host', () => {
     const room = createTestRoom()
     joinRoom('socket-admin', ROOM_ID, 'Admin', 'admin')
     setUserRole(ROOM_ID, 'admin', 'admin')
     room.playState = { isPlaying: true, currentTime: 30, serverTimestamp: Date.now() - 2_000, revision: 4 }
+    const before = room.playState
 
     const result = leaveRoom('socket-owner')
 
     expect(result?.hostChanged).toBe(true)
     expect(room.hostId).toBe('admin')
-    expect(room.playState.revision).toBe(5)
-    expect(room.playState.currentTime).toBeCloseTo(32, 1)
+    expect(room.playState).toBe(before)
   })
 })
 

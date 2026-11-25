@@ -514,6 +514,7 @@ function handleLeave(io: TypedServer, socket: TypedSocket, reason?: string, revo
   }
   socket.leave(roomId)
   socket.join('lobby')
+  if (room?.pendingPrepare) playerService.handleSocketLeftRoom(io, roomId, socket.id)
 
   // Stale socket cleanup (e.g. page refresh) should only remove this socket
   // from the Socket.IO room; the user remains present via another socket.

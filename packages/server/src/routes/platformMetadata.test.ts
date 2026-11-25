@@ -478,6 +478,7 @@ describe('platform cover target', () => {
     await f.run()
     expect(f.res.statusCode).toBe(204)
     expect(f.res.headers['access-control-allow-origin']).toBe(origin)
+    expect(f.res.headers['access-control-max-age']).toBe('86400')
     expect(f.verifyIdentity).not.toHaveBeenCalled()
   })
 
@@ -670,6 +671,7 @@ describe('unmounted platform metadata router', () => {
     await f.run()
     expect(f.res.statusCode).toBe(204)
     expect(f.res.headers['access-control-allow-origin']).toBe(origin)
+    expect(f.res.headers['access-control-max-age']).toBe('86400')
     expect(f.verifyIdentity).not.toHaveBeenCalled()
   })
 

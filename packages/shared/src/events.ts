@@ -28,6 +28,10 @@ export const EVENTS = {
 
   // Player controls
   PLAYER_PLAY: 'player:play',
+  /** Server → clients: load and decode the incoming track before unified playback begins. */
+  PLAYER_PREPARE: 'player:prepare',
+  /** Client → server: acknowledge that the prepared track is loaded (or cannot load) so the ready-gate can advance. */
+  PLAYER_READY: 'player:ready',
   /** Server → clients: the track that will most likely play next, with a resolved stream URL, to fetch ahead of time. */
   PLAYER_PRELOAD: 'player:preload',
   PLAYER_PAUSE: 'player:pause',

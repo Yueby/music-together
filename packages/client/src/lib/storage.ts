@@ -1,7 +1,13 @@
 import { MUSIC_SOURCES, type MusicSource } from '@music-together/shared'
 import storageBackend from '@/lib/storageBackend'
+import { AUDIO_LATENCY_MAX_MS, AUDIO_LATENCY_MIN_MS } from './constants'
 
 const PREFIX = 'mt-'
+
+export function normalizeAudioLatencyOffset(value: unknown): number | null {
+  if (typeof value !== 'number' || !Number.isFinite(value)) return null
+  return Math.min(AUDIO_LATENCY_MAX_MS, Math.max(AUDIO_LATENCY_MIN_MS, value))
+}
 
 function safeGet(key: string): string | null {
   try {
@@ -145,6 +151,9 @@ export const storage = {
     return Math.max(0, Math.min(1, vol))
   },
   setVolume: (v: number) => safeSet('volume', String(v)),
+  getAudioLatencyOffsetMs: () => safeGetJSON('audioLatencyOffsetMs', normalizeAudioLatencyOffset),
+  setAudioLatencyOffsetMs: (value: number | null) =>
+    safeSetJSON('audioLatencyOffsetMs', normalizeAudioLatencyOffset(value)),
 
   // Lyric settings
   getLyricAlignAnchor: () => safeEnum('lyricAlignAnchor', LYRIC_ANCHORS, SETTING_DEFAULTS.lyricAlignAnchor),

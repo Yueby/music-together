@@ -7,6 +7,16 @@ import * as kugouAuth from './kugouAuthService.js'
 import * as tencentAuth from './tencentAuthService.js'
 import { kugouSongToTrack, navigatePath, rawToTrackOrNull } from './trackMapping.js'
 
+type NeteaseRequestOptions = { timestamp: number; cookie?: string }
+const neteasePlaylistApi = ncmApi as typeof ncmApi & {
+  playlist_detail(params: { id: string } & NeteaseRequestOptions): Promise<{
+    body: { code: number; playlist?: { tracks?: Record<string, unknown>[]; trackIds?: { id: number | string }[] } }
+  }>
+  song_detail(params: { ids: string } & NeteaseRequestOptions): Promise<{
+    body: { code: number; songs?: Record<string, unknown>[] }
+  }>
+}
+
 /**
  * Where each platform's whole playlist or album comes from. Every fetcher answers the tracks in list order, or an empty
  * list when there is nothing, the request timed out or failed (logged). Pure fetching: no registry, no cache;
@@ -17,6 +27,7 @@ import { kugouSongToTrack, navigatePath, rawToTrackOrNull } from './trackMapping
  */
 
 export type PlaylistKind = 'playlist' | 'album'
+export type PlaylistBatchCallback = (batch: Track[], knownTotal?: number) => void
 
 export interface FetchedTracks {
   tracks: Track[]
@@ -31,6 +42,9 @@ type MetingJson = Record<string, unknown>
 
 /** NetEase's song-detail endpoint cannot take more than about 1000 ids, so `playlist_track_all` is read in chunks. */
 const NETEASE_CHUNK_SIZE = 1000
+const NETEASE_DETAIL_CHUNK_SIZE = 500
+const NETEASE_PLAYLIST_HEAD_TIMEOUT_MS = 5_000
+const PLAYLIST_PAGE_CONCURRENCY = 3
 const KUGOU_PAGE_SIZE = 300
 const TENCENT_PAGE_SIZE = 100
 
@@ -65,45 +79,112 @@ export async function fetchNeteaseAlbumTracks(albumId: string): Promise<Track[]>
   }
 }
 
-/**
- * The whole NetEase playlist through `playlist_track_all`, no 1000-track limit, with the full song data (duration, album,
- * artists); the caller's cookie reads private lists. The size is never taken from the caller (it comes in over the
- * wire, and the result is shared): the list is read until a chunk comes up short.
- */
-export async function fetchNeteasePlaylistTracks(playlistId: string, cookie?: string | null): Promise<FetchedTracks> {
-  const baseParams = { id: playlistId, timestamp: Date.now(), ...(cookie ? { cookie } : {}) }
+function mapNeteaseSongs(songs: Record<string, unknown>[]): Track[] {
+  return songs
+    .map((song) => (song && typeof song === 'object' ? rawToTrackOrNull(song, 'netease') : null))
+    .filter((track): track is Track => track !== null)
+}
+
+export async function fetchNeteasePlaylistTracks(
+  playlistId: string,
+  cookie?: string | null,
+  onBatch?: PlaylistBatchCallback,
+): Promise<FetchedTracks> {
+  const options = { timestamp: Date.now(), ...(cookie ? { cookie } : {}) }
+  const baseParams = { id: playlistId, ...options }
+  const detail = await withTimeoutOrNull(
+    Promise.resolve().then(() => neteasePlaylistApi.playlist_detail(baseParams)),
+    NETEASE_PLAYLIST_HEAD_TIMEOUT_MS,
+  ).catch(() => null)
+  const playlist = detail?.body?.code === 200 ? detail.body.playlist : undefined
+  if (
+    !Array.isArray(playlist?.tracks) ||
+    !Array.isArray(playlist.trackIds) ||
+    playlist.trackIds.some((entry) => !entry || !/^\d+$/.test(String(entry.id)))
+  ) {
+    return fetchNeteasePlaylistChunks(baseParams, onBatch)
+  }
+
+  const knownTotal = playlist.trackIds.length
+  const ids = playlist.trackIds.slice(0, MAX_PLAYLIST_TRACKS).map(({ id }) => String(id))
+  const byId = new Map(mapNeteaseSongs(playlist.tracks).map((track) => [track.sourceId, track]))
   const tracks: Track[] = []
-  let complete = true
+  // Publish only the contiguous prefix, so an omitted head song cannot shift later pages.
+  for (const id of ids) {
+    const track = byId.get(id)
+    if (!track) break
+    tracks.push(track)
+  }
+  onBatch?.(tracks.slice(), knownTotal)
+
+  const windowSize = NETEASE_DETAIL_CHUNK_SIZE * PLAYLIST_PAGE_CONCURRENCY
+  for (let start = tracks.length; start < ids.length; start += windowSize) {
+    const chunks: string[][] = []
+    for (let offset = start; offset < Math.min(start + windowSize, ids.length); offset += NETEASE_DETAIL_CHUNK_SIZE) {
+      chunks.push(ids.slice(offset, offset + NETEASE_DETAIL_CHUNK_SIZE))
+    }
+    const batches = await Promise.all(chunks.map(async (chunk) => {
+      const missing = chunk.filter((id) => !byId.has(id))
+      if (!missing.length) return byId
+      try {
+        const res = await withTimeoutOrNull(
+          neteasePlaylistApi.song_detail({ ids: missing.join(','), ...options }),
+          15_000,
+        )
+        const songs = res?.body?.code === 200 ? res.body.songs : undefined
+        if (!Array.isArray(songs)) return null
+        const fetched = new Map(mapNeteaseSongs(songs).map((track) => [track.sourceId, track]))
+        return { get: (id: string) => byId.get(id) ?? fetched.get(id) }
+      } catch {
+        return null
+      }
+    }))
+    for (const [index, batch] of batches.entries()) {
+      if (!batch) {
+        logger.warn(`Netease playlist ${playlistId} cut short at ${tracks.length} tracks`)
+        return { tracks, complete: false }
+      }
+      const ordered: Track[] = []
+      for (const id of chunks[index]) {
+        const track = batch.get(id)
+        if (track) ordered.push(track)
+      }
+      tracks.push(...ordered)
+      if (ordered.length) onBatch?.(ordered, knownTotal)
+    }
+  }
+  return { tracks, complete: true }
+}
+
+async function fetchNeteasePlaylistChunks(
+  baseParams: { id: string; timestamp: number; cookie?: string },
+  onBatch?: PlaylistBatchCallback,
+): Promise<FetchedTracks> {
+  const playlistId = baseParams.id
+  const tracks: Track[] = []
   try {
     for (let offset = 0; offset < MAX_PLAYLIST_TRACKS; offset += NETEASE_CHUNK_SIZE) {
       const res = await withTimeoutOrNull(
         ncmApi.playlist_track_all({ ...baseParams, limit: NETEASE_CHUNK_SIZE, offset }),
-        60_000,
+        12_000,
       )
       if (res === null) {
         logger.warn(`Netease playlist_track_all timeout: ${playlistId} (offset=${offset})`)
-        complete = false
-        break
+        return { tracks, complete: false }
       }
       const songs = res?.body?.songs
-      if (!Array.isArray(songs) || songs.length === 0) {
-        // Nothing after a full chunk is the end of a list whose length is a multiple of the chunk size.
-        if (offset === 0) logger.warn(`Netease playlist_track_all empty: ${playlistId}`, { code: res?.body?.code })
-        break
+      const code = res?.body?.code
+      if ((code !== undefined && code !== 200) || !Array.isArray(songs)) {
+        logger.warn(`Netease playlist_track_all failed: ${playlistId} (offset=${offset})`, { code })
+        return { tracks, complete: false }
       }
-      for (const song of songs as Record<string, unknown>[]) {
-        const track = rawToTrackOrNull(song, 'netease')
-        if (track) tracks.push(track)
-      }
-      // A short chunk is the end of the list.
-      if (songs.length < NETEASE_CHUNK_SIZE) break
+      const batch = mapNeteaseSongs(songs)
+      tracks.push(...batch)
+      const short = songs.length < NETEASE_CHUNK_SIZE
+      onBatch?.(batch, short ? tracks.length : undefined)
+      if (short) return { tracks, complete: true }
     }
-    if (tracks.length > 0) {
-      logger.info(
-        `Netease playlist ${playlistId}: ${tracks.length} tracks (via ncmApi, ${Math.ceil(tracks.length / NETEASE_CHUNK_SIZE)} chunks)`,
-      )
-    }
-    return { tracks, complete }
+    return { tracks, complete: false }
   } catch (err) {
     logger.error(`Netease playlist_track_all failed: ${playlistId}`, err)
     return { tracks, complete: false }
@@ -111,69 +192,82 @@ export async function fetchNeteasePlaylistTracks(playlistId: string, cookie?: st
 }
 
 /** Kugou's native API (by global_collection_id): reaches user playlists Meting cannot. */
-export async function fetchKugouPlaylistTracks(playlistId: string, cookie?: string | null): Promise<FetchedTracks> {
-  const tracks: Track[] = []
-  let complete = true
-  try {
-    let page = 1
-    let totalFromApi = 0
-    let fetched = 0
-    while (fetched < MAX_PLAYLIST_TRACKS) {
-      const { songs, total } = await kugouAuth.getPlaylistTracks(playlistId, page, KUGOU_PAGE_SIZE, cookie)
-      if (page === 1) totalFromApi = total
-      if (songs.length === 0) {
-        // The API answers an empty page for a failure too: short of the size it announced, the list was cut off.
-        complete = fetched >= totalFromApi
-        break
-      }
-      fetched += songs.length
-      for (const song of songs) {
-        const track = kugouSongToTrack(song)
-        if (track) tracks.push(track)
-      }
-      // Only a short page ends the list: the announced size may be missing or wrong.
-      if (songs.length < KUGOU_PAGE_SIZE) break
-      page++
-    }
-    if (tracks.length > 0)
-      logger.info(`Kugou playlist ${playlistId}: ${tracks.length} tracks (via native API, ${page} pages)`)
-    if (!complete) logger.warn(`Kugou playlist ${playlistId} cut short at ${tracks.length} tracks`)
-    return { tracks, complete }
-  } catch (err) {
-    logger.error(`Kugou playlist fetch failed: ${playlistId}`, err)
-    return { tracks, complete: false }
-  }
+export function fetchKugouPlaylistTracks(
+  playlistId: string,
+  cookie?: string | null,
+  onBatch?: PlaylistBatchCallback,
+): Promise<FetchedTracks> {
+  return fetchNativePlaylist(
+    'kugou',
+    playlistId,
+    KUGOU_PAGE_SIZE,
+    (page) => kugouAuth.getPlaylistTracks(playlistId, page, KUGOU_PAGE_SIZE, cookie),
+    kugouSongToTrack,
+    onBatch,
+  )
 }
 
 /** QQ Music's native API (favourites and custom lists, through the encrypted-uin implementation). */
-export async function fetchTencentPlaylistTracks(playlistId: string, cookie?: string | null): Promise<FetchedTracks> {
+export function fetchTencentPlaylistTracks(
+  playlistId: string,
+  cookie?: string | null,
+  onBatch?: PlaylistBatchCallback,
+): Promise<FetchedTracks> {
+  return fetchNativePlaylist(
+    'tencent',
+    playlistId,
+    TENCENT_PAGE_SIZE,
+    (page) => tencentAuth.getPlaylistTracks(playlistId, page, TENCENT_PAGE_SIZE, cookie),
+    (song) => rawToTrackOrNull(song, 'tencent'),
+    onBatch,
+  )
+}
+
+async function fetchNativePlaylist(
+  source: 'kugou' | 'tencent',
+  playlistId: string,
+  pageSize: number,
+  getPage: (page: number) => Promise<{ songs: Record<string, unknown>[]; total: number }>,
+  mapSong: (song: Record<string, unknown>) => Track | null,
+  onBatch?: PlaylistBatchCallback,
+): Promise<FetchedTracks> {
   const tracks: Track[] = []
-  let complete = true
-  try {
-    let page = 1
-    let totalFromApi = 0
-    while (tracks.length < MAX_PLAYLIST_TRACKS) {
-      const { songs, total } = await tencentAuth.getPlaylistTracks(playlistId, page, TENCENT_PAGE_SIZE, cookie)
-      if (page === 1) totalFromApi = total
-      if (songs.length === 0) {
-        // The API answers an empty page for a failure too: short of the size it announced, the list was cut off.
-        complete = tracks.length >= totalFromApi
-        break
-      }
-      for (const song of songs) {
-        const track = rawToTrackOrNull(song, 'tencent')
-        if (track) tracks.push(track)
-      }
-      // Only a short page ends the list: the announced size may be missing or wrong.
-      if (songs.length < TENCENT_PAGE_SIZE) break
-      page++
+  let fetched = 0
+  let knownTotal = 0
+  const append = (songs: Record<string, unknown>[]) => {
+    fetched += songs.length
+    const batch = songs.map(mapSong).filter((track): track is Track => track !== null)
+    tracks.push(...batch)
+    if (batch.length > 0) onBatch?.(batch, knownTotal || undefined)
+  }
+  const readPage = async (page: number) => {
+    try {
+      return await getPage(page)
+    } catch {
+      return null
     }
-    if (tracks.length > 0)
-      logger.info(`Tencent playlist ${playlistId}: ${tracks.length} tracks (via native API, ${page} pages)`)
-    if (!complete) logger.warn(`Tencent playlist ${playlistId} cut short at ${tracks.length} tracks`)
-    return { tracks, complete }
+  }
+  try {
+    const head = await readPage(1)
+    if (!head) return { tracks, complete: false }
+    knownTotal = head.total > 0 && Number.isFinite(head.total) ? head.total : 0
+    append(head.songs)
+    if (head.songs.length < pageSize) return { tracks, complete: fetched >= knownTotal }
+
+    const expectedTracks = knownTotal >= fetched ? knownTotal : MAX_PLAYLIST_TRACKS
+    const maxPages = Math.ceil(Math.min(expectedTracks, MAX_PLAYLIST_TRACKS) / pageSize)
+    for (let page = 2; page <= maxPages; page += PLAYLIST_PAGE_CONCURRENCY) {
+      const count = Math.min(PLAYLIST_PAGE_CONCURRENCY, maxPages - page + 1)
+      const pages = await Promise.all(Array.from({ length: count }, (_, index) => readPage(page + index)))
+      for (const result of pages) {
+        if (!result) return { tracks, complete: false }
+        append(result.songs)
+        if (result.songs.length < pageSize) return { tracks, complete: fetched >= knownTotal }
+      }
+    }
+    return { tracks, complete: expectedTracks === knownTotal && fetched >= knownTotal && knownTotal <= MAX_PLAYLIST_TRACKS }
   } catch (err) {
-    logger.error(`Tencent playlist fetch failed: ${playlistId}`, err)
+    logger.error(`${source} playlist fetch failed: ${playlistId}`, err)
     return { tracks, complete: false }
   }
 }
@@ -231,19 +325,23 @@ export async function fetchPlaylistTracks(
   playlistId: string,
   type: PlaylistKind,
   cookie?: string | null,
+  onBatch?: PlaylistBatchCallback,
 ): Promise<FetchedTracks> {
   if (source === 'netease') {
-    return type === 'album'
-      ? { tracks: await fetchNeteaseAlbumTracks(playlistId), complete: true }
-      : fetchNeteasePlaylistTracks(playlistId, cookie)
+    if (type === 'playlist') return fetchNeteasePlaylistTracks(playlistId, cookie, onBatch)
+    const tracks = await fetchNeteaseAlbumTracks(playlistId)
+    onBatch?.(tracks, tracks.length)
+    return { tracks, complete: true }
   }
   if (type === 'playlist' && (source === 'kugou' || source === 'tencent')) {
     const native =
       source === 'kugou'
-        ? await fetchKugouPlaylistTracks(playlistId, cookie)
-        : await fetchTencentPlaylistTracks(playlistId, cookie)
+        ? await fetchKugouPlaylistTracks(playlistId, cookie, onBatch)
+        : await fetchTencentPlaylistTracks(playlistId, cookie, onBatch)
     if (native.tracks.length > 0) return native
     logger.info(`${source} native API returned empty for ${playlistId}, falling back to Meting`)
   }
-  return { tracks: await fetchMetingTracks(source, playlistId, type), complete: true }
+  const tracks = await fetchMetingTracks(source, playlistId, type)
+  onBatch?.(tracks, tracks.length)
+  return { tracks, complete: true }
 }

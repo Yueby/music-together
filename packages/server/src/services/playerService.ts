@@ -1,5 +1,5 @@
 import type { AudioQuality, MusicSource, PlayMode, PlayState, ScheduledPlayState, Track } from '@music-together/shared'
-import { EVENTS, ERROR_CODE, NTP, effectivePlayMode } from '@music-together/shared'
+import { EVENTS, ERROR_CODE, NTP, TIMING, effectivePlayMode } from '@music-together/shared'
 import { roomRepo } from '../repositories/roomRepository.js'
 import { musicProvider } from './musicProvider.js'
 import * as queueService from './queueService.js'
@@ -14,7 +14,7 @@ import { toPublicRoomState } from '../utils/roomUtils.js'
 import { config } from '../config.js'
 import { logger } from '../utils/logger.js'
 import { fallbackCooldown } from './fallbackCooldown.js'
-import type { RoomData } from '../repositories/types.js'
+import type { PendingPrepare, RoomData } from '../repositories/types.js'
 import type { TypedServer, TypedSocket } from '../middleware/types.js'
 
 // ---------------------------------------------------------------------------
@@ -23,11 +23,28 @@ import type { TypedServer, TypedSocket } from '../middleware/types.js'
 
 const playMutexes = new Map<string, Promise<unknown>>()
 const controlGenerations = new Map<string, number>()
+type PrepareSnapshot = Pick<PendingPrepare, 'track' | 'startAt'>
+const interruptedPrepares = new WeakMap<RoomData, PrepareSnapshot>()
+const endOfTrackTimers = new Map<string, ReturnType<typeof setTimeout>>()
+const END_OF_TRACK_GRACE_MS = 5_000
 
-function beginControl(roomId: string): number {
+function beginControl(roomId: string, room: RoomData): number {
+  interruptedPrepares.delete(room)
+  cancelPrepare(room)
+  cancelEndOfTrack(roomId)
   const generation = (controlGenerations.get(roomId) ?? 0) + 1
   controlGenerations.set(roomId, generation)
   return generation
+}
+
+function beginTrackSwitch(roomId: string, room: RoomData) {
+  const activePrepare = room.pendingPrepare
+  const prepare = activePrepare
+    ? { track: activePrepare.track, startAt: activePrepare.startAt }
+    : interruptedPrepares.get(room)
+  const generation = beginControl(roomId, room)
+  if (prepare) interruptedPrepares.set(room, prepare)
+  return { prepare, generation }
 }
 
 function playbackGuard(roomId: string, room: RoomData, generation = controlGenerations.get(roomId)) {
@@ -61,6 +78,7 @@ async function refreshPlayback(
   room: RoomData,
   generation: number,
   seekTime?: number,
+  wasPreparing = false,
 ): Promise<void> {
   const valid = playbackGuard(roomId, room, generation)
   const track = getLatestPlayback(room).track!
@@ -71,6 +89,10 @@ async function refreshPlayback(
       emitStreamError(io.to(roomId).emit.bind(io.to(roomId)))
       return
     }
+    if (wasPreparing) {
+      scheduleTrackStart(io, roomId, room, fresh, seekTime)
+      return
+    }
     const latest = getLatestPlayback(room)
     const scheduleTime = getScheduleTime(roomId)
     const elapsed = latest.playState.isPlaying
@@ -78,7 +100,7 @@ async function refreshPlayback(
       : 0
     const playState = scheduled(
       {
-        isPlaying: seekTime === undefined ? true : latest.playState.isPlaying,
+        isPlaying: seekTime === undefined || latest.playState.isPlaying,
         currentTime: Math.min(
           fresh.duration > 0 ? fresh.duration : Infinity,
           seekTime ?? latest.playState.currentTime + elapsed,
@@ -89,10 +111,12 @@ async function refreshPlayback(
       roomId,
       scheduleTime,
     )
-    schedulePlaybackCommit(room, 'play', fresh, playState)
+    schedulePlaybackCommit(io, room, 'play', fresh, playState)
     io.to(roomId).emit(EVENTS.PLAYER_PLAY, { track: fresh, playState })
   } catch {
     if (valid()) emitStreamError(io.to(roomId).emit.bind(io.to(roomId)))
+  } finally {
+    restoreEndOfTrack(io, room, generation)
   }
 }
 
@@ -129,21 +153,71 @@ function scheduled(ps: PlayState, roomId: string, scheduleTime?: number): Schedu
 }
 
 export function getLatestPlayback(room: RoomData): { track: Track | null; playState: PlayState } {
+  if (room.pendingPrepare) return { track: room.pendingPrepare.track, playState: room.playState }
   return room.pendingPlayback
     ? { track: room.pendingPlayback.track, playState: room.pendingPlayback.playState }
     : { track: room.currentTrack, playState: room.playState }
 }
 
 function getNextRevision(room: RoomData): number {
-  return Math.max(room.playState.revision, room.pendingPlayback?.playState.revision ?? -1) + 1
+  return Math.max(room.playState.revision, room.pendingPlayback?.playState.revision ?? -1, room.pendingPrepare?.revision ?? -1) + 1
+}
+
+function cancelPrepare(room: RoomData): void {
+  if (!room.pendingPrepare) return
+  clearTimeout(room.pendingPrepare.timer)
+  room.pendingPrepare = null
+}
+
+function cancelEndOfTrack(roomId: string): void {
+  const timer = endOfTrackTimers.get(roomId)
+  if (timer === undefined) return
+  clearTimeout(timer)
+  endOfTrackTimers.delete(roomId)
+}
+
+function scheduleEndOfTrack(io: TypedServer, room: RoomData, track: Track | null, playState: PlayState, elapsedMs = 0): void {
+  const roomId = room.id
+  cancelEndOfTrack(roomId)
+  if (!playState.isPlaying || !track || track.duration <= 0) return
+
+  const delay = Math.max(0, (track.duration - playState.currentTime) * 1000) + END_OF_TRACK_GRACE_MS
+  const timer = setTimeout(() => {
+    if (endOfTrackTimers.get(roomId) !== timer) return
+    endOfTrackTimers.delete(roomId)
+    if (
+      roomRepo.get(roomId) !== room || room.pendingPrepare || room.pendingPlayback ||
+      room.currentTrack?.id !== track.id || !room.playState.isPlaying || room.playState.revision !== playState.revision
+    ) return
+    void playNextTrackInRoom(io, roomId, room.playMode, {
+      expectedTrackId: track.id,
+      expectedRevision: playState.revision,
+      skipDebounce: true,
+    })
+  }, Math.max(0, delay - elapsedMs))
+  timer.unref?.()
+  endOfTrackTimers.set(roomId, timer)
+}
+
+/** Keep the original end time when a control leaves the current playback running. */
+function restoreEndOfTrack(io: TypedServer, room: RoomData, generation: number): void {
+  if (roomRepo.get(room.id) !== room || controlGenerations.get(room.id) !== generation) return
+  if (room.pendingPrepare || room.pendingPlayback || endOfTrackTimers.has(room.id)) return
+  const track = room.currentTrack
+  if (!room.playState.isPlaying || !track || track.duration <= 0) return
+  const elapsedMs = Math.max(0, Date.now() - room.playState.serverTimestamp)
+  if (elapsedMs >= Math.max(0, (track.duration - room.playState.currentTime) * 1000) + END_OF_TRACK_GRACE_MS) return
+  scheduleEndOfTrack(io, room, track, room.playState, elapsedMs)
 }
 
 function cancelPendingPlayback(room: RoomData): void {
+  cancelEndOfTrack(room.id)
   if (room.pendingPlayback?.timer) clearTimeout(room.pendingPlayback.timer)
   room.pendingPlayback = null
 }
 
 function schedulePlaybackCommit(
+  io: TypedServer,
   room: RoomData,
   type: NonNullable<RoomData['pendingPlayback']>['type'],
   track: Track | null,
@@ -153,7 +227,7 @@ function schedulePlaybackCommit(
   cancelPendingPlayback(room)
   const delay = Math.max(0, playState.serverTimeToExecute - Date.now())
   const timer = setTimeout(() => {
-    if (room.pendingPlayback?.playState !== playState) return
+    if (roomRepo.get(room.id) !== room || room.pendingPlayback?.playState !== playState) return
     room.currentTrack = track
     room.playState = {
       isPlaying: playState.isPlaying,
@@ -162,6 +236,7 @@ function schedulePlaybackCommit(
       revision: playState.revision,
     }
     room.pendingPlayback = null
+    scheduleEndOfTrack(io, room, track, playState)
     onCommit?.()
   }, delay)
   room.pendingPlayback = { type, track, playState, timer }
@@ -182,12 +257,13 @@ const resolveStreamUrl = (source: MusicSource, urlId: string, bitrate: AudioQual
 export function playTrackInRoom(io: TypedServer, roomId: string, track: Track): Promise<boolean> {
   const room = roomRepo.get(roomId)
   if (!room) return Promise.resolve(false)
-  const generation = beginControl(roomId)
-  return withPlayMutex(roomId, () =>
-    roomRepo.get(roomId) === room && controlGenerations.get(roomId) === generation
-      ? _playTrackInRoom(io, roomId, track, generation)
-      : Promise.resolve(false),
-  )
+  const { prepare, generation } = beginTrackSwitch(roomId, room)
+  return withPlayMutex(roomId, async () => {
+    if (roomRepo.get(roomId) !== room || controlGenerations.get(roomId) !== generation) return false
+    const played = await _playTrackInRoom(io, roomId, track, generation)
+    if (!played) restorePlaybackAfterFailedSwitch(io, room, generation, prepare)
+    return played
+  })
 }
 
 /**
@@ -199,7 +275,7 @@ export function autoPlayIfEmpty(io: TypedServer, roomId: string, track: Track): 
   return withPlayMutex(roomId, async () => {
     const room = roomRepo.get(roomId)
     if (!room || getLatestPlayback(room).track) return false
-    return _playTrackInRoom(io, roomId, track, beginControl(roomId))
+    return _playTrackInRoom(io, roomId, track, beginControl(roomId, room))
   })
 }
 
@@ -235,20 +311,110 @@ async function _playTrackInRoom(io: TypedServer, roomId: string, track: Track, g
     return false
   }
 
-  // Update room state — align serverTimestamp with the scheduled execution time
-  // so that estimateCurrentTime() is accurate before the first conductor report.
+  interruptedPrepares.delete(room)
+  plannedShuffleNext.delete(roomId)
+  announcedPreloads.delete(roomId)
+  const socketIds = roomRepo.getRoomSocketIds(roomId)
+  if (socketIds.length === 0) {
+    scheduleTrackStart(io, roomId, room, resolved)
+    return true
+  }
+
+  const revision = getNextRevision(room)
+  cancelPrepare(room)
+  cancelPendingPlayback(room)
+
+  const now = Date.now()
+  const deadlineAt = now + TIMING.READY_GATE_TIMEOUT_MS
+  room.currentTrack = resolved
+  room.playState = { isPlaying: false, currentTime: 0, serverTimestamp: now, revision }
+  const prepare: PendingPrepare = {
+    track: resolved,
+    revision,
+    startAt: 0,
+    pendingSockets: new Set(socketIds),
+    readyCount: 0,
+    failedCount: 0,
+    deadlineAt,
+    generation,
+    timer: setTimeout(() => releasePreparedPlayback(io, roomId, room, prepare), TIMING.READY_GATE_TIMEOUT_MS),
+  }
+  room.pendingPrepare = prepare
+  io.to(roomId).emit(EVENTS.PLAYER_PREPARE, { track: resolved, revision, deadlineAt })
+  broadcastRoomList(io)
+  return true
+}
+
+function releasePreparedPlayback(io: TypedServer, roomId: string, room: RoomData, prepare: PendingPrepare): void {
+  if (room.pendingPrepare !== prepare) return
+  cancelPrepare(room)
+  if (roomRepo.get(roomId) !== room || controlGenerations.get(roomId) !== prepare.generation) return
+  if (!room.queue.some((item) => item.id === prepare.track.id)) return
+  if (prepare.pendingSockets.size === 0 && prepare.readyCount === 0 && prepare.failedCount > 0) {
+    void playNextTrackInRoom(io, roomId, room.playMode, {
+      expectedTrackId: prepare.track.id,
+      expectedRevision: prepare.revision,
+      skipDebounce: true,
+      prepareFailed: true,
+    })
+    return
+  }
+  if (hasExpiredUrl(prepare.track)) {
+    void refreshPlayback(io, roomId, room, prepare.generation, prepare.startAt, true)
+    return
+  }
+  scheduleTrackStart(io, roomId, room, prepare.track, prepare.startAt)
+}
+
+export function markClientReady(
+  io: TypedServer,
+  roomId: string,
+  socketId: string,
+  trackId: string,
+  revision: number,
+  failed = false,
+): void {
+  const room = roomRepo.get(roomId)
+  if (!room) return
+  const prepare = room.pendingPrepare
+  if (prepare?.track.id !== trackId || prepare.revision !== revision) return
+  removePrepareSocket(io, roomId, room, prepare, socketId, failed)
+}
+
+export function handleSocketLeftRoom(io: TypedServer, roomId: string, socketId: string): void {
+  const room = roomRepo.get(roomId)
+  if (room?.pendingPrepare) removePrepareSocket(io, roomId, room, room.pendingPrepare, socketId)
+}
+
+function removePrepareSocket(
+  io: TypedServer,
+  roomId: string,
+  room: RoomData,
+  prepare: PendingPrepare,
+  socketId: string,
+  failed?: boolean,
+): void {
+  if (!prepare.pendingSockets.delete(socketId)) return
+  if (failed === true) prepare.failedCount++
+  if (failed === false) prepare.readyCount++
+  if (prepare.pendingSockets.size === 0) {
+    releasePreparedPlayback(io, roomId, room, prepare)
+  }
+}
+
+function scheduleTrackStart(io: TypedServer, roomId: string, room: RoomData, resolved: Track, startAt = 0): void {
   const scheduleTime = getScheduleTime(roomId)
   const playState = scheduled(
     {
       isPlaying: true,
-      currentTime: 0,
+      currentTime: startAt,
       serverTimestamp: scheduleTime,
       revision: getNextRevision(room),
     },
     roomId,
     scheduleTime,
   )
-  schedulePlaybackCommit(room, 'play', resolved, playState)
+  schedulePlaybackCommit(io, room, 'play', resolved, playState)
 
   io.to(roomId).emit(EVENTS.PLAYER_PLAY, {
     track: resolved,
@@ -260,7 +426,25 @@ async function _playTrackInRoom(io: TypedServer, roomId: string, track: Track, g
 
   logger.info(`Playing: ${resolved.title} in room ${roomId}`, { roomId })
   void preloadUpcoming(io, roomId)
-  return true
+}
+
+function restorePlaybackAfterFailedSwitch(
+  io: TypedServer,
+  room: RoomData,
+  generation: number,
+  prepare?: PrepareSnapshot,
+): void {
+  if (roomRepo.get(room.id) !== room || controlGenerations.get(room.id) !== generation) return
+  interruptedPrepares.delete(room)
+  if (prepare?.track.streamUrl && room.queue.some((item) => item.id === prepare.track.id)) {
+    if (hasExpiredUrl(prepare.track)) {
+      void refreshPlayback(io, room.id, room, generation, prepare.startAt, true)
+    } else {
+      scheduleTrackStart(io, room.id, room, prepare.track, prepare.startAt)
+    }
+    return
+  }
+  restoreEndOfTrack(io, room, generation)
 }
 
 // ---------------------------------------------------------------------------
@@ -272,44 +456,64 @@ async function _playTrackInRoom(io: TypedServer, roomId: string, track: Track, g
  * joins mid-track (and so missed it) is told when it syncs.
  */
 const announcedPreloads = new Map<string, { key: string; track: Track }>()
+const plannedShuffleNext = new Map<string, { afterTrackId: string; nextTrackId: string }>()
+
+function getPlannedShuffleNext(room: RoomData, currentId: string): Track | undefined {
+  const plan = plannedShuffleNext.get(room.id)
+  if (!plan) return
+  const next = room.queue.find((item) => item.id === plan.nextTrackId)
+  if (plan.afterTrackId === currentId && next && next.id !== currentId) return next
+  plannedShuffleNext.delete(room.id)
+}
 
 /**
  * Resolve the stream URL of the track that will most likely follow the current one and announce it, so clients can
  * fetch it while the current track plays. A member whose client has to download the whole file first (the mini-app)
  * would otherwise start several seconds into every new track.
  *
- * Only transitions that are known in advance qualify: shuffle is picked at the moment of the change and loop-one
- * replays the current track. The resolved URL is also kept on the queue item, which makes the real transition skip
+ * Shuffle chooses its successor here. Loop-one reuses the current buffer.
+ * The resolved URL is kept on the queue item, which makes the real transition skip
  * the provider round trip. A failure here is silent: the normal play path still resolves, falls back and reports.
  */
 export async function preloadUpcoming(io: TypedServer, roomId: string): Promise<void> {
   const room = roomRepo.get(roomId)
   if (!room) {
     announcedPreloads.delete(roomId)
+    plannedShuffleNext.delete(roomId)
     return
   }
   const current = getLatestPlayback(room).track
   const mode = effectivePlayMode(room.queueMode, room.playMode)
-  if (!current || mode === 'shuffle' || mode === 'loop-one') return
-  const next = queueService.getNextTrack(roomId, room.playMode, current.id)
+  if (mode !== 'shuffle' || !current) plannedShuffleNext.delete(roomId)
+  if (!current || mode === 'loop-one') {
+    announcedPreloads.delete(roomId)
+    return
+  }
+  const planned = mode === 'shuffle' ? getPlannedShuffleNext(room, current.id) : undefined
+  const next = planned ?? queueService.getNextTrack(roomId, room.playMode, current.id)
   if (!next || next.id === current.id) {
     announcedPreloads.delete(roomId)
     return
   }
+  if (mode === 'shuffle') plannedShuffleNext.set(roomId, { afterTrackId: current.id, nextTrackId: next.id })
   const key = `${next.id}:${next.urlId}:${room.audioQuality}`
   if (announcedPreloads.get(roomId)?.key === key && next.streamUrl && !hasExpiredUrl(next)) return
+  announcedPreloads.delete(roomId)
 
   const quality = room.audioQuality
   try {
     // Always resolve afresh: a URL left on the item may belong to another audio quality.
     const fresh = await refreshTrackUrl(roomId, room, next)
     // Anything may have changed while the provider answered (including the audio quality the URL was resolved for).
-    const latest = roomRepo.get(roomId)
-    if (!fresh || latest !== room || room.audioQuality !== quality || getLatestPlayback(room).track?.id !== current.id) {
+    if (!fresh || roomRepo.get(roomId) !== room || room.audioQuality !== quality ||
+      getLatestPlayback(room).track !== current || effectivePlayMode(room.queueMode, room.playMode) !== mode) {
       return
     }
-    const item = room.queue.find((track) => track.id === next.id)
-    if (!item) return
+    const item = mode === 'shuffle'
+      ? getPlannedShuffleNext(room, current.id)
+      : queueService.getNextTrack(roomId, room.playMode, current.id)
+    if (!item || item.id !== next.id || item.urlId !== next.urlId) return
+    if (announcedPreloads.get(roomId)?.key === key && item.streamUrl && !hasExpiredUrl(item)) return
     item.streamUrl = fresh.streamUrl
     announcedPreloads.set(roomId, { key, track: item })
     io.to(roomId).emit(EVENTS.PLAYER_PRELOAD, { track: item })
@@ -320,13 +524,11 @@ export async function preloadUpcoming(io: TypedServer, roomId: string): Promise<
 
 export function resumeTrack(io: TypedServer, roomId: string, _initiatorSocket?: TypedSocket): void {
   const room = roomRepo.get(roomId)
-  if (!room) return
+  if (!room || room.pendingPrepare) return
   const latest = getLatestPlayback(room)
   if (!latest.track) return
-  // Already playing (a second admin pressing play, or a resume vote that passes after somebody else resumed): there
-  // is nothing to resume, and re-anchoring on the last reported position would send everybody back to it.
   if (latest.playState.isPlaying) return
-  const generation = beginControl(roomId)
+  const generation = beginControl(roomId, room)
   if (hasExpiredUrl(latest.track)) {
     void refreshPlayback(io, roomId, room, generation)
     return
@@ -343,7 +545,7 @@ export function resumeTrack(io: TypedServer, roomId: string, _initiatorSocket?: 
     roomId,
     scheduleTime,
   )
-  schedulePlaybackCommit(room, 'resume', latest.track, playState)
+  schedulePlaybackCommit(io, room, 'resume', latest.track, playState)
   io.to(roomId).emit(EVENTS.PLAYER_RESUME, { playState })
 }
 
@@ -353,7 +555,7 @@ export function pauseTrack(io: TypedServer, roomId: string, _initiatorSocket?: T
 
   const latest = getLatestPlayback(room)
   if (!latest.track) return
-  beginControl(roomId)
+  beginControl(roomId, room)
   const scheduleTime = getScheduleTime(roomId)
   // Base replacements on the latest planned state, not an older committed action.
   const effectiveStartTime = Math.max(Date.now(), latest.playState.serverTimestamp)
@@ -375,7 +577,7 @@ export function pauseTrack(io: TypedServer, roomId: string, _initiatorSocket?: T
     roomId,
     scheduleTime,
   )
-  schedulePlaybackCommit(room, 'pause', latest.track, playState)
+  schedulePlaybackCommit(io, room, 'pause', latest.track, playState)
   io.to(roomId).emit(EVENTS.PLAYER_PAUSE, { playState })
 }
 
@@ -386,16 +588,21 @@ export function seekTrack(io: TypedServer, roomId: string, currentTime: number, 
 
   const latest = getLatestPlayback(room)
   if (!latest.track) return
-  const generation = beginControl(roomId)
-  if (hasExpiredUrl(latest.track)) {
-    void refreshPlayback(io, roomId, room, generation, currentTime)
-    return
-  }
-  const scheduleTime = getScheduleTime(roomId)
   // Duration metadata can be missing (0) for some sources; retain finite,
   // non-negative validation without imposing an arbitrary upper bound.
   const seekCap = latest.track.duration > 0 ? latest.track.duration : Number.POSITIVE_INFINITY
-  const clampedTime = Math.min(Math.max(0, currentTime), seekCap)
+  const clampedTime = Math.min(currentTime, seekCap)
+  if (room.pendingPrepare) {
+    room.pendingPrepare.startAt = clampedTime
+    room.playState.currentTime = clampedTime
+    return
+  }
+  const generation = beginControl(roomId, room)
+  if (hasExpiredUrl(latest.track)) {
+    void refreshPlayback(io, roomId, room, generation, clampedTime)
+    return
+  }
+  const scheduleTime = getScheduleTime(roomId)
   const playState = scheduled(
     {
       ...latest.playState,
@@ -406,28 +613,24 @@ export function seekTrack(io: TypedServer, roomId: string, currentTime: number, 
     roomId,
     scheduleTime,
   )
-  schedulePlaybackCommit(room, 'seek', latest.track, playState)
+  schedulePlaybackCommit(io, room, 'seek', latest.track, playState)
   io.to(roomId).emit(EVENTS.PLAYER_SEEK, { playState })
-}
-
-export function updatePlayState(roomId: string, update: Partial<PlayState>): void {
-  const room = roomRepo.get(roomId)
-  if (room) {
-    room.playState = { ...room.playState, ...update, serverTimestamp: Date.now() }
-  }
 }
 
 export function setCurrentTrack(roomId: string, track: Track | null): void {
   const room = roomRepo.get(roomId)
   if (room) {
-    beginControl(roomId)
+    beginControl(roomId, room)
+    const revision = getNextRevision(room)
     cancelPendingPlayback(room)
+    plannedShuffleNext.delete(roomId)
+    announcedPreloads.delete(roomId)
     room.currentTrack = track
     room.playState = {
       isPlaying: track !== null,
       currentTime: 0,
       serverTimestamp: Date.now(),
-      revision: getNextRevision(room),
+      revision,
     }
   }
 }
@@ -440,7 +643,9 @@ export function setCurrentTrack(roomId: string, track: Track | null): void {
 export function stopPlayback(io: TypedServer, roomId: string): void {
   const room = roomRepo.get(roomId)
   if (!room) return
-  beginControl(roomId)
+  beginControl(roomId, room)
+  plannedShuffleNext.delete(roomId)
+  announcedPreloads.delete(roomId)
 
   const scheduleTime = getScheduleTime(roomId)
   const playState = scheduled(
@@ -453,7 +658,7 @@ export function stopPlayback(io: TypedServer, roomId: string): void {
     roomId,
     scheduleTime,
   )
-  schedulePlaybackCommit(room, 'stop', null, playState, () => {
+  schedulePlaybackCommit(io, room, 'stop', null, playState, () => {
     io.to(roomId).emit(EVENTS.ROOM_STATE, toPublicRoomState(room))
     broadcastRoomList(io)
   })
@@ -468,7 +673,7 @@ export function stopPlayback(io: TypedServer, roomId: string): void {
 export function stopPlaybackSafe(io: TypedServer, roomId: string): Promise<void> {
   const room = roomRepo.get(roomId)
   if (!room) return Promise.resolve()
-  const generation = beginControl(roomId)
+  const generation = beginControl(roomId, room)
   return withPlayMutex(roomId, async () => {
     if (roomRepo.get(roomId) === room && controlGenerations.get(roomId) === generation) stopPlayback(io, roomId)
   })
@@ -479,29 +684,44 @@ export function stopPlaybackSafe(io: TypedServer, roomId: string): Promise<void>
 // ---------------------------------------------------------------------------
 
 /**
- * Accept controls before entering the mutex so in-flight URL requests become
- * stale immediately; queue navigation remains serialized.
+ * Manual skips supersede in-flight controls immediately. Automatic skips wait
+ * for the mutex and recheck the playback they were reported against.
  */
 export function playNextTrackInRoom(
   io: TypedServer,
   roomId: string,
   playMode: PlayMode,
-  options?: { skipDebounce?: boolean; expectedTrackId?: string },
+  options?: { skipDebounce?: boolean; expectedTrackId?: string; expectedRevision?: number; prepareFailed?: boolean },
 ): Promise<void> {
   const room = roomRepo.get(roomId)
-  if (!room || (!options?.skipDebounce && _isSkipDebounced(roomId, 'next'))) return Promise.resolve()
-  lastSkipTimestamp.set(roomId, { action: 'next', timestamp: Date.now() })
-  const generation = beginControl(roomId)
-  const valid = () => roomRepo.get(roomId) === room && controlGenerations.get(roomId) === generation
+  if (!room) return Promise.resolve()
+  const prepareFailed = options?.prepareFailed ?? false
+  const expectedRevision = options?.expectedRevision
+  const matchesExpectedPlayback = () =>
+    (options?.expectedTrackId === undefined || getLatestPlayback(room).track?.id === options.expectedTrackId) &&
+    (expectedRevision === undefined || (
+      !room.pendingPrepare && !room.pendingPlayback &&
+      room.playState.isPlaying !== prepareFailed && room.playState.revision === expectedRevision
+    ))
+  if (!matchesExpectedPlayback()) return Promise.resolve()
+  if (!options?.skipDebounce && _isSkipDebounced(roomId, 'next')) return Promise.resolve()
+  const manual = expectedRevision === undefined ? beginTrackSwitch(roomId, room) : undefined
+  const acceptedGeneration = controlGenerations.get(roomId)
   return withPlayMutex(roomId, async () => {
-    if (!valid()) return
+    if (roomRepo.get(roomId) !== room || controlGenerations.get(roomId) !== acceptedGeneration || !matchesExpectedPlayback()) return
+    const generation = manual?.generation ?? beginControl(roomId, room)
+    const prepare = manual?.prepare
+    const valid = () => roomRepo.get(roomId) === room && controlGenerations.get(roomId) === generation
+    lastSkipTimestamp.set(roomId, { action: 'next', timestamp: Date.now() })
     const consume = room.queueMode === 'consume'
     // What is (about to be) playing is the track being left.
     const leaving = getLatestPlayback(room).track
-    if (options?.expectedTrackId !== undefined && leaving?.id !== options.expectedTrackId) return
-    // Count on from the track being left, which is not `room.currentTrack` while a switch is still pending.
-    let nextTrack = queueService.getNextTrack(roomId, playMode, leaving?.id)
-    if (consume && nextTrack && nextTrack.id === leaving?.id) nextTrack = null // a lone track has no "next"
+    const nextMode = prepareFailed && playMode === 'loop-one' ? 'sequential' : playMode
+    const mode = effectivePlayMode(room.queueMode, nextMode)
+    const planned = mode === 'shuffle' && leaving ? getPlannedShuffleNext(room, leaving.id) : undefined
+    plannedShuffleNext.delete(roomId)
+    let nextTrack = planned ?? queueService.getNextTrack(roomId, nextMode, leaving?.id)
+    if ((consume || prepareFailed) && nextTrack?.id === leaving?.id) nextTrack = null
 
     if (consume && leaving) {
       // A queue that is consumed as it plays: the one just heard (or skipped) is done with and leaves it for good, so
@@ -519,16 +739,20 @@ export function playNextTrackInRoom(
     if (!valid()) return
     if (!success) {
       // Past the one that failed (the track left behind is no longer in a consumed queue to count from).
-      const skipTrack = queueService.getNextTrack(roomId, playMode, consume ? nextTrack.id : undefined)
-      const skipped = skipTrack ? await _playTrackInRoom(io, roomId, skipTrack, generation) : false
+      const skipTrack = queueService.getNextTrack(roomId, nextMode, consume ? nextTrack.id : undefined)
+      const skipped = skipTrack && skipTrack.id !== prepare?.track.id && !(prepareFailed && skipTrack.id === leaving?.id)
+        ? await _playTrackInRoom(io, roomId, skipTrack, generation)
+        : false
       if (!valid()) return
-      // The track just left was already removed from a consumed queue; with nothing left to play, do not keep
-      // presenting it as current (an empty queue with a current track blocks auto-play on the next add).
-      if (!skipped && consume) stopPlayback(io, roomId)
+      if (!skipped) {
+        if (consume || prepareFailed) stopPlayback(io, roomId)
+        else restorePlaybackAfterFailedSwitch(io, room, generation, prepare)
+      }
     }
 
     // Keep duplicate controls debounced immediately after URL resolution too.
     lastSkipTimestamp.set(roomId, { action: 'next', timestamp: Date.now() })
+    restoreEndOfTrack(io, room, generation)
   })
 }
 
@@ -541,9 +765,19 @@ export function playPrevTrackInRoom(
   options?: { skipDebounce?: boolean; expectedTrackId?: string },
 ): Promise<void> {
   const room = roomRepo.get(roomId)
-  if (!room || (!options?.skipDebounce && _isSkipDebounced(roomId, 'prev'))) return Promise.resolve()
+  if (!room) return Promise.resolve()
+  if (options?.expectedTrackId !== undefined && getLatestPlayback(room).track?.id !== options.expectedTrackId) return Promise.resolve()
+  const activePrepare = room.pendingPrepare
+  const hasNoPreparedPredecessor = activePrepare && !queueService.getPreviousTrack(roomId, activePrepare.track.id)
+  // A previous command with no destination must not abort preparation.
+  if (hasNoPreparedPredecessor && room.queueMode !== 'consume') return Promise.resolve()
+  if (!options?.skipDebounce && _isSkipDebounced(roomId, 'prev')) return Promise.resolve()
   lastSkipTimestamp.set(roomId, { action: 'prev', timestamp: Date.now() })
-  const generation = beginControl(roomId)
+  if (hasNoPreparedPredecessor) {
+    seekTrack(io, roomId, 0)
+    return Promise.resolve()
+  }
+  const { prepare, generation } = beginTrackSwitch(roomId, room)
   const valid = () => roomRepo.get(roomId) === room && controlGenerations.get(roomId) === generation
   return withPlayMutex(roomId, async () => {
     if (!valid()) return
@@ -554,7 +788,11 @@ export function playPrevTrackInRoom(
     if (!prevTrack) {
       // In a consumed queue what was heard has left it, so there is nothing to go back to: "previous" starts the
       // current track over instead of doing nothing.
-      if (room.queueMode === 'consume' && getLatestPlayback(room).track) seekTrack(io, roomId, 0)
+      if (room.queueMode === 'consume' && leavingId && !prepare) seekTrack(io, roomId, 0)
+      restorePlaybackAfterFailedSwitch(io, room, generation, prepare && {
+        track: prepare.track,
+        startAt: room.queueMode === 'consume' ? 0 : prepare.startAt,
+      })
       return
     }
 
@@ -562,11 +800,16 @@ export function playPrevTrackInRoom(
     if (!valid()) return
     if (!success) {
       const skipTrack = queueService.getPreviousTrack(roomId, leavingId)
-      if (skipTrack) await _playTrackInRoom(io, roomId, skipTrack, generation)
+      const skipped = skipTrack && skipTrack.id !== prepare?.track.id
+        ? await _playTrackInRoom(io, roomId, skipTrack, generation)
+        : false
+      if (!valid()) return
+      if (!skipped) restorePlaybackAfterFailedSwitch(io, room, generation, prepare)
     }
 
     // Refresh debounce timestamp after async work (same rationale as playNextTrackInRoom)
     lastSkipTimestamp.set(roomId, { action: 'prev', timestamp: Date.now() })
+    restoreEndOfTrack(io, room, generation)
   })
 }
 
@@ -584,11 +827,18 @@ export async function syncPlaybackToSocket(
   roomId: string,
   room: RoomData,
 ): Promise<void> {
+  const prepare = room.pendingPrepare
+  if (prepare) {
+    const { track, revision, deadlineAt } = prepare
+    socket.emit(EVENTS.PLAYER_PREPARE, { track, revision, deadlineAt })
+    return
+  }
   await syncCurrentPlayback(io, socket, roomId, room)
   // Someone who joins mid-track missed the announcement of the next one: without it their client would still
   // start the next track cold, seconds behind everybody else.
   const upcoming = announcedPreloads.get(roomId)
-  if (upcoming && roomRepo.getSocketMapping(socket.id)?.roomId === roomId) {
+  if (upcoming && room.queue.includes(upcoming.track) && !hasExpiredUrl(upcoming.track) &&
+    roomRepo.getSocketMapping(socket.id)?.roomId === roomId) {
     socket.emit(EVENTS.PLAYER_PRELOAD, { track: upcoming.track })
   }
 }
@@ -675,14 +925,11 @@ async function syncCurrentPlayback(
 }
 
 // ---------------------------------------------------------------------------
-// Room cleanup, debounce & conductor report validation
+// Room cleanup and debounce
 // ---------------------------------------------------------------------------
 
 /** Debounce repeated skip actions without blocking an immediate direction reversal. */
 const lastSkipTimestamp = new Map<string, { action: 'next' | 'prev'; timestamp: number }>()
-
-/** Max allowed backward drift (seconds) between conductor report and server estimate. */
-const CONDUCTOR_REJECT_DRIFT_THRESHOLD_S = 3
 
 /** Remove per-room entries for a deleted room */
 export function cleanupRoom(roomId: string): void {
@@ -695,16 +942,17 @@ function cleanupPlayerRoom(roomId: string): void {
   playMutexes.delete(roomId)
   controlGenerations.delete(roomId)
   announcedPreloads.delete(roomId)
+  plannedShuffleNext.delete(roomId)
+  cancelEndOfTrack(roomId)
   const room = roomRepo.get(roomId)
-  if (room) cancelPendingPlayback(room)
+  if (room) {
+    interruptedPrepares.delete(room)
+    cancelPrepare(room)
+    cancelPendingPlayback(room)
+  }
 }
 
 registerRoomCleanup('player', cleanupPlayerRoom)
-
-/** Reject reports that would move the authoritative room position backwards by seconds. */
-export function validateConductorReport(_roomId: string, reportedTime: number, estimatedTime: number): boolean {
-  return estimatedTime - reportedTime <= CONDUCTOR_REJECT_DRIFT_THRESHOLD_S
-}
 
 /** Debounce only duplicate NEXT or duplicate PREV actions for a room. */
 function _isSkipDebounced(roomId: string, action: 'next' | 'prev'): boolean {

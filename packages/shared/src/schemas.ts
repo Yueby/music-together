@@ -66,6 +66,12 @@ export const playerSeekSchema = z.object({
   currentTime: z.number().finite().nonnegative(),
 })
 
+export const playerReadySchema = z.object({
+  trackId: z.string().min(1).max(200),
+  revision: z.number().int().nonnegative(),
+  failed: z.boolean().optional(),
+})
+
 export const playerSyncSchema = z.object({
   currentTime: z.number().finite().nonnegative(),
   hostServerTime: z.number().finite().positive().optional(),

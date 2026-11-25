@@ -1,4 +1,5 @@
 import { MEDIA_CDN_SUFFIXES } from '../../../../packages/shared/src/mediaContracts.js'
+import type { MusicSource } from '../../../../packages/shared/src/types.js'
 
 export interface SourceRelayProfile {
   cdnSuffixes: readonly string[]
@@ -11,7 +12,7 @@ function audioHeaders(): Record<string, string> {
 
 // Add future sources here with their CDN suffixes and required headers. For
 // example, a Bilibili profile can extend audioHeaders() with its fixed Referer.
-export const SOURCE_RELAY_PROFILES: Readonly<Record<string, SourceRelayProfile>> = {
+export const SOURCE_RELAY_PROFILES: Readonly<Record<MusicSource, SourceRelayProfile>> = {
   netease: { cdnSuffixes: MEDIA_CDN_SUFFIXES.netease, buildUpstreamHeaders: audioHeaders },
   tencent: { cdnSuffixes: MEDIA_CDN_SUFFIXES.tencent, buildUpstreamHeaders: audioHeaders },
   kugou: { cdnSuffixes: MEDIA_CDN_SUFFIXES.kugou, buildUpstreamHeaders: audioHeaders },
@@ -21,11 +22,11 @@ export function validateRelayMediaUrl(
   source: string,
   rawUrl: string,
 ): { profile: SourceRelayProfile; url: URL } | null {
-  if (!Object.hasOwn(SOURCE_RELAY_PROFILES, source)) return null
+  if (!Object.prototype.hasOwnProperty.call(SOURCE_RELAY_PROFILES, source)) return null
   // Inspect the raw authority too, since URL normalizes explicit default ports away.
   if (!/^https:\/\/[^/?#: @\\]+(?:[/?]|$)/i.test(rawUrl) || rawUrl.includes('#')) return null
 
-  const profile = SOURCE_RELAY_PROFILES[source]
+  const profile = SOURCE_RELAY_PROFILES[source as MusicSource]
   try {
     const url = new URL(rawUrl)
     if (url.protocol !== 'https:' || url.username || url.password || url.port) return null

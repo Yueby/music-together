@@ -3,6 +3,22 @@
 import { beforeEach, describe, expect, it } from 'vitest'
 import { SETTING_DEFAULTS, storage } from './storage'
 
+describe('audio latency storage', () => {
+  beforeEach(() => localStorage.clear())
+
+  it('defaults to auto, preserves manual precision and constrains stored values', () => {
+    expect(storage.getAudioLatencyOffsetMs()).toBeNull()
+    storage.setAudioLatencyOffsetMs(123.5)
+    expect(storage.getAudioLatencyOffsetMs()).toBe(123.5)
+    storage.setAudioLatencyOffsetMs(900)
+    expect(storage.getAudioLatencyOffsetMs()).toBe(500)
+    localStorage.setItem('mt-audioLatencyOffsetMs', '-900')
+    expect(storage.getAudioLatencyOffsetMs()).toBe(-300)
+    localStorage.setItem('mt-audioLatencyOffsetMs', '"100"')
+    expect(storage.getAudioLatencyOffsetMs()).toBeNull()
+  })
+})
+
 describe('AMLL settings storage', () => {
   beforeEach(() => localStorage.clear())
 

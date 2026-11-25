@@ -76,6 +76,30 @@ afterEach(() => {
 })
 
 describe('MappAudioEngine thin WebAudioPlayer adapter', () => {
+  it('resets a decoded same-room track for replay without a second download or decode', async () => {
+    const f = environment()
+    await f.engine.loadRoomTrack(input())
+    await f.engine.play()
+    f.context.currentTime += 3
+    expect(await f.engine.loadRoomTrack(input())).toBe(true)
+    expect(f.sources[0].stop).toHaveBeenCalledOnce()
+    expect(f.engine.snapshot().audio).toMatchObject({ status: 'paused', position: 0, duration: 8 })
+    expect(f.request).toHaveBeenCalledOnce()
+    expect(f.context.decodeAudioData).toHaveBeenCalledOnce()
+    await f.engine.dispose()
+  })
+
+  it('exposes hardware latency and delegates fade seeks on the active track', async () => {
+    const f = environment()
+    Object.assign(f.context, { baseLatency: 0.01, outputLatency: 0.03 })
+    await f.engine.loadRoomTrack(input())
+    await f.engine.play()
+    expect(f.engine.getOutputLatencyMs()).toBe(40)
+    f.engine.crossfadeSeek(2)
+    expect(f.sources[1].start).toHaveBeenCalledWith(f.context.currentTime, 2)
+    await f.engine.dispose()
+  })
+
   it('reports buffering, downloaded bytes and decoding in order', async () => {
     const f = environment()
     const onLoadProgress = vi.fn()

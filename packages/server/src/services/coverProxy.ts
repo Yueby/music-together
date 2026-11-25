@@ -3,6 +3,7 @@ import {
   MAPP_COVER_MAX_BYTES,
   MAX_WEB_COVER_BYTES,
   RASTER_IMAGE_TYPES,
+  limitCoverSize,
 } from '@music-together/shared'
 import { readBounded } from '../utils/readBounded.js'
 
@@ -15,25 +16,6 @@ export const ALLOWED_COVER_HOSTS: readonly string[] = COVER_HOST_ALLOWLIST
 export { MAX_WEB_COVER_BYTES }
 
 const RASTER_IMAGE_TYPE_SET = new Set(RASTER_IMAGE_TYPES)
-
-const NETEASE_COVER_HOST = /^p[1-4]\.music\.126\.net$/
-/** Player-sized artwork: ~0.5 MB instead of the multi-megabyte original. */
-const PLATFORM_COVER_SIZE = '600y600'
-
-/**
- * NetEase serves the multi-megabyte original unless asked for a size. Request a player-sized image
- * unless the caller already chose one (list thumbnails carry `param=120y120`). Other hosts are untouched.
- */
-export function limitCoverSize(imageUrl: string): string {
-  try {
-    const parsed = new URL(imageUrl)
-    if (!NETEASE_COVER_HOST.test(parsed.hostname) || parsed.searchParams.has('param')) return imageUrl
-    parsed.searchParams.set('param', PLATFORM_COVER_SIZE)
-    return parsed.toString()
-  } catch {
-    return imageUrl
-  }
-}
 
 /**
  * Why a fetch failed, independent of HTTP numbers: an upstream 403 (expired or hotlink-protected image) must not be

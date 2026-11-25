@@ -79,7 +79,9 @@ function computeWeightedMedian(now: number): number {
 
   // Build (offset, weight) pairs
   const pairs: { offset: number; weight: number }[] = []
-  for (const s of samples) {
+  const count = Math.max(3, Math.ceil(samples.length / 4))
+  const lowestRtt = [...samples].sort((a, b) => a.rttMs - b.rttMs).slice(0, count)
+  for (const s of lowestRtt) {
     const age = now - s.timestamp
     const weight = Math.exp((-age * Math.LN2) / DECAY_HALF_LIFE_MS)
     pairs.push({ offset: s.offsetMs, weight })

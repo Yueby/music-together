@@ -49,6 +49,7 @@ describe('useHowl track loading', () => {
   let playback: ReturnType<typeof useHowl>
   let sound: ReturnType<typeof fakeSound>
   let options: PlaybackSoundOptions
+  let onTrackEnd: ReturnType<typeof vi.fn<() => void>>
 
   beforeEach(async () => {
     vi.clearAllMocks()
@@ -58,6 +59,7 @@ describe('useHowl track loading', () => {
     usePlayerStore.getState().reset()
     usePlayerStore.getState().setVolume(0.8)
     sound = fakeSound()
+    onTrackEnd = vi.fn()
     bridge.create.mockImplementation((_track: Track, opts: PlaybackSoundOptions) => {
       options = opts
       return sound
@@ -65,7 +67,7 @@ describe('useHowl track loading', () => {
     container = document.createElement('div')
     root = createRoot(container)
     function Harness() {
-      playback = useHowl(vi.fn())
+      playback = useHowl(onTrackEnd)
       return null
     }
     await act(async () => root.render(<Harness />))
@@ -116,6 +118,27 @@ describe('useHowl track loading', () => {
     act(() => playback.stopAndUnload())
     act(() => options.onprogress?.({ phase: 'downloading', loadedBytes: 2 }))
     expect(usePlayerStore.getState().audioLoadPhase).toBe('idle')
+    expect(onTrackEnd).not.toHaveBeenCalled()
+  })
+
+  it('keeps an unlock timeout local and resumes from the latest authoritative target', () => {
+    vi.useFakeTimers()
+    try {
+      act(() => playback.loadTrack(track, 0, false))
+      act(() => options.onload?.())
+      let target = 10
+      act(() => playback.startPlayback(() => target))
+      act(() => options.onplayerror?.(1))
+      act(() => vi.advanceTimersByTime(3_000))
+      expect(onTrackEnd).not.toHaveBeenCalled()
+      target = 13
+      const unlock = sound.once.mock.calls.find(([event]) => event === 'unlock')?.[1]
+      act(() => unlock?.(1))
+      expect(sound.seek).toHaveBeenCalledWith(13, 1)
+      expect(sound.play).toHaveBeenLastCalledWith(1)
+    } finally {
+      vi.useRealTimers()
+    }
   })
 
   it('clears loading after a terminal load failure', () => {

@@ -1,5 +1,5 @@
 import { useCallback, useEffect, useRef } from 'react'
-import type { PlaybackSound } from '@/lib/PlaybackSound'
+import type { PlaybackSound, PlaybackSoundOptions } from '@/lib/PlaybackSound'
 import { playbackSoundFactory } from '@/lib/playbackSoundFactory'
 import type { Track } from '@music-together/shared'
 import { usePlayerStore } from '@/stores/playerStore'
@@ -8,13 +8,16 @@ import { toast } from 'sonner'
 import { lyricPlayerBridge } from '@/lib/lyricPlayerBridge'
 import { registerActivePlaybackStop } from '@/lib/audioPlaybackLifecycle'
 import { setHowlPosition } from '@/lib/howlPosition'
+import { getSoundOutputLatencyMs } from '@/lib/playbackSync'
 
-/** Max wait (ms) for Howler `unlock` event before giving up and skipping */
+/** Show local recovery guidance if Howler's unlock is still pending. */
 const PLAY_ERROR_TIMEOUT_MS = 3000
 
 /** If playback reports playing() but currentTime doesn't advance for this
  *  many milliseconds, treat it as stalled (network drop mid-stream). */
 const STALLED_TIMEOUT_MS = 8000
+
+type LoadSettled = (failed: boolean) => void
 
 /**
  * Manages a Howl audio instance with two-phase loading strategy:
@@ -26,20 +29,27 @@ export function useHowl(onTrackEnd: () => void) {
   const soundIdRef = useRef<number | undefined>(undefined)
   const animFrameRef = useRef<number>(0)
   const syncReadyRef = useRef(false)
-  const unmuteTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null)
+  const hardwareStartRef = useRef<{ howl: PlaybackSound; until: number } | null>(null)
+  const preloadRef = useRef<{
+    track: Track
+    sound: PlaybackSound
+    callbacks?: PlaybackSoundOptions
+  } | null>(null)
   const playErrorTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null)
+  const unlockAttemptRef = useRef(0)
   const lastTimeUpdateRef = useRef(0)
   const stalledRef = useRef<{ lastSeek: number; since: number }>({ lastSeek: -1, since: 0 })
   const trackTitleRef = useRef<string>('')
-  const retryRef = useRef(false)
   const analyserRef = useRef<AnalyserNode | null>(null)
   const audioContextRef = useRef<AudioContext | null>(null)
   const frequencyDataRef = useRef<Uint8Array<ArrayBuffer> | null>(null)
   const lowFreqUpdateRef = useRef(0)
   const desiredPlaybackRef = useRef<{
     howl: PlaybackSound
+    track: Track
     autoPlay: boolean
     getSeekTime?: () => number
+    onLoadSettled?: LoadSettled
   } | null>(null)
 
   // Use selectors for the one reactive value we need (volume sync effect)
@@ -76,11 +86,12 @@ export function useHowl(onTrackEnd: () => void) {
           const st = stalledRef.current
           if (Math.abs(seekVal - st.lastSeek) < 0.05) {
             if (st.since > 0 && now - st.since > STALLED_TIMEOUT_MS) {
-              console.warn('Playback stalled, skipping track')
-              toast.error('播放中断，已跳到下一首')
-              stalledRef.current = { lastSeek: -1, since: 0 }
-              onTrackEnd()
-              return
+              toast.error('本机播放中断，正在尝试重新同步')
+              stalledRef.current = { lastSeek: seekVal, since: now }
+              const target = desiredPlaybackRef.current?.getSeekTime?.()
+              if (target !== undefined && target < howlRef.current.duration()) {
+                setHowlPosition(howlRef.current, target, soundIdRef.current)
+              }
             }
             // still stalled but not timed out yet — keep since
           } else {
@@ -92,36 +103,90 @@ export function useHowl(onTrackEnd: () => void) {
       animFrameRef.current = requestAnimationFrame(update)
     }
     animFrameRef.current = requestAnimationFrame(update)
-  }, [onTrackEnd])
+  }, [])
 
   const stopTimeUpdate = useCallback(() => {
     cancelAnimationFrame(animFrameRef.current)
   }, [])
 
+  const discardPreload = useCallback(() => {
+    const preload = preloadRef.current
+    preloadRef.current = null
+    preload?.sound.unload()
+  }, [])
+
+  const preloadTrack = useCallback((track: Track) => {
+    // The mini-app factory prefetches compressed bytes via the platform SDK.
+    if (!playbackSoundFactory.supportsHtml5Analysis && playbackSoundFactory.preload) {
+      playbackSoundFactory.preload(track)
+      return
+    }
+    if (!track.streamUrl) return
+    const previous = preloadRef.current
+    if (previous?.track.id === track.id && previous.track.streamUrl === track.streamUrl) return
+    discardPreload()
+    const sound = playbackSoundFactory.create(track, {
+      src: [track.streamUrl],
+      html5: true,
+      preload: true,
+      autoplay: false,
+      format: ['flac', 'm4a', 'ogg', 'mp3'],
+      volume: 0,
+      onload: () => preload.callbacks?.onload?.(),
+      onprogress: (info) => preload.callbacks?.onprogress?.(info),
+      onloaderror: (id, error) => {
+        if (preload.callbacks) preload.callbacks.onloaderror?.(id, error)
+        else if (preloadRef.current === preload) discardPreload()
+      },
+      onplay: () => preload.callbacks?.onplay?.(),
+      onplayerror: (id, error) => preload.callbacks?.onplayerror?.(id, error),
+      onpause: () => preload.callbacks?.onpause?.(),
+      onend: () => preload.callbacks?.onend?.(),
+    })
+    const preload: NonNullable<typeof preloadRef.current> = { track, sound }
+    preloadRef.current = preload
+  }, [discardPreload])
+
+  const reuseTrackLoad = useCallback((track: Track, onLoadSettled: LoadSettled) => {
+    const active = desiredPlaybackRef.current
+    if (!active || active.track.id !== track.id || active.track.streamUrl !== track.streamUrl) return false
+    const state = active.howl.state()
+    if (state === 'unloaded') return false
+
+    active.autoPlay = false
+    if (state === 'loaded') {
+      active.getSeekTime = undefined
+      if (active.howl.playing()) active.howl.pause(soundIdRef.current)
+      setHowlPosition(active.howl, 0, soundIdRef.current)
+      if (active.howl.rate() !== 1) active.howl.rate(1)
+      usePlayerStore.getState().setCurrentTime(0)
+      onLoadSettled(false)
+    } else {
+      active.getSeekTime = () => 0
+      active.onLoadSettled = onLoadSettled
+    }
+    return true
+  }, [])
+
   // Load and play a track
   const loadTrack = useCallback(
-    (track: Track, seekTo?: number, autoPlay = true) => {
-      if (unmuteTimerRef.current) {
-        clearTimeout(unmuteTimerRef.current)
-        unmuteTimerRef.current = null
-      }
-      // Clear any pending play-error timeout from the previous track so it
-      // doesn't fire onTrackEnd() and skip the new track being loaded.
+    function loadTrack(
+      track: Track,
+      seekTo?: number,
+      autoPlay = true,
+      onLoadSettled?: LoadSettled,
+      retry?: { startedAt: number; getSeekTime?: () => number },
+    ) {
       if (playErrorTimerRef.current) {
         clearTimeout(playErrorTimerRef.current)
         playErrorTimerRef.current = null
       }
 
-      if (howlRef.current) {
-        try {
-          howlRef.current.unload()
-        } catch {
-          /* ignore */
-        }
-        howlRef.current = null
-        stopTimeUpdate()
-      }
-
+      const previous = howlRef.current
+      ++unlockAttemptRef.current
+      howlRef.current = null
+      hardwareStartRef.current = null
+      stopTimeUpdate()
       syncReadyRef.current = false
       soundIdRef.current = undefined
       analyserRef.current?.disconnect()
@@ -130,28 +195,40 @@ export function useHowl(onTrackEnd: () => void) {
       audioContextRef.current = null
       frequencyDataRef.current = null
       usePlayerStore.getState().setLowFreqVolume(1)
+      usePlayerStore.getState().setDetectedAudioLatencyMs(0)
       trackTitleRef.current = track.title
-      retryRef.current = false
 
-      const { setAudioLoadState, setCurrentTime, setDuration } = usePlayerStore.getState()
+      const { setAudioLoadState, setCurrentTime, setDuration, setIsPlaying, setCurrentTrack } = usePlayerStore.getState()
+      setCurrentTrack(track)
+      setIsPlaying(false)
       if (!track.streamUrl) {
+        previous?.unload()
+        desiredPlaybackRef.current = null
         setAudioLoadState({ phase: 'idle' })
+        onLoadSettled?.(true)
         return
       }
 
-      const loadStartTime = Date.now()
+      const loadStartTime = retry?.startedAt ?? Date.now()
       setAudioLoadState({ phase: 'buffering', progress: null, loadedBytes: null, startedAt: loadStartTime })
       setCurrentTime(seekTo ?? 0)
       setDuration(Number.isFinite(track.duration) && track.duration > 0 ? track.duration : 0)
 
-      const desiredPlayback = { howl: null as unknown as PlaybackSound, autoPlay, getSeekTime: undefined as (() => number) | undefined }
-      const howl = playbackSoundFactory.create(track, {
+      let initialized = false
+      const settleLoad = (failed: boolean) => {
+        const active = desiredPlaybackRef.current
+        if (active?.howl !== howl) return
+        const callback = active.onLoadSettled
+        active.onLoadSettled = undefined
+        callback?.(failed)
+      }
+      const callbacks: PlaybackSoundOptions = {
         src: [track.streamUrl],
         html5: true,
         format: ['flac', 'm4a', 'ogg', 'mp3'],
         volume: 0,
         onprogress: (info) => {
-          if (howlRef.current !== howl) return
+          if (howlRef.current !== howl || initialized) return
           setAudioLoadState({
             phase: info.phase,
             progress: info.progress ?? null,
@@ -159,7 +236,8 @@ export function useHowl(onTrackEnd: () => void) {
           })
         },
         onload: () => {
-          if (howlRef.current !== howl) return // Stale instance guard
+          if (howlRef.current !== howl || initialized) return
+          initialized = true
           setAudioLoadState({ phase: 'idle' })
           const d = howl.duration()
           if (Number.isFinite(d) && d > 0) {
@@ -196,6 +274,8 @@ export function useHowl(onTrackEnd: () => void) {
             }
           }
 
+          usePlayerStore.getState().setDetectedAudioLatencyMs(getSoundOutputLatencyMs(howl))
+          settleLoad(false)
           if (desiredPlaybackRef.current?.howl !== howl) return
           if (desiredPlaybackRef.current.autoPlay) {
             const scheduledSeekTarget = desiredPlaybackRef.current.getSeekTime?.()
@@ -207,12 +287,15 @@ export function useHowl(onTrackEnd: () => void) {
               usePlayerStore.getState().setCurrentTime(seekTarget)
               howl.seek(seekTarget)
             }
-            const soundId = howl.play()
+            const soundId = howl.playScheduled && desiredPlaybackRef.current.getSeekTime
+              ? howl.playScheduled(0, desiredPlaybackRef.current.getSeekTime)
+              : howl.play()
             soundIdRef.current = soundId
             howl.once('play', (playedSoundId) => {
               if (howlRef.current !== howl || playedSoundId !== soundId) return
               const correctedTime = desiredPlaybackRef.current?.getSeekTime?.() ?? seekTarget
               if (
+                desiredPlaybackRef.current?.autoPlay && !howl.playScheduled &&
                 (scheduledSeekTarget !== undefined || elapsed > LOAD_COMPENSATION_THRESHOLD_S) &&
                 Math.abs((howl.seek(undefined, playedSoundId) as number) - correctedTime) > 0.03
               ) {
@@ -237,6 +320,10 @@ export function useHowl(onTrackEnd: () => void) {
         },
         onplay: () => {
           if (howlRef.current !== howl) return
+          ++unlockAttemptRef.current
+          if (playErrorTimerRef.current) clearTimeout(playErrorTimerRef.current)
+          playErrorTimerRef.current = null
+          usePlayerStore.getState().setDetectedAudioLatencyMs(getSoundOutputLatencyMs(howl))
           setAudioLoadState({ phase: 'idle' })
           usePlayerStore.getState().setIsPlaying(true)
           const dur = howl.duration()
@@ -257,52 +344,93 @@ export function useHowl(onTrackEnd: () => void) {
           onTrackEnd()
         },
         onloaderror: () => {
-          // If a newer track has been loaded, this Howl is stale — ignore.
-          if (howlRef.current !== howl) return
-          if (playbackSoundFactory.allowLoadRetry && !retryRef.current) {
-            retryRef.current = true
-            setAudioLoadState({ phase: 'buffering', progress: null, loadedBytes: null })
+          const active = desiredPlaybackRef.current
+          if (active?.howl !== howl) return
+          if (playbackSoundFactory.allowLoadRetry && !retry) {
+            // Howler's load() adds a second media node and can later select the failed one for playback.
             console.warn('Howl load error, retrying')
-            howl.load()
+            loadTrack(track, seekTo, active.autoPlay, active.onLoadSettled, {
+              startedAt: loadStartTime,
+              getSeekTime: active.getSeekTime,
+            })
             return
           }
-          retryRef.current = false
           setAudioLoadState({ phase: 'idle' })
           console.error('Howl load failed')
-          toast.error(`「${trackTitleRef.current}」加载失败，已跳到下一首`)
-          onTrackEnd()
+          toast.error(`本机无法加载「${trackTitleRef.current}」`)
+          settleLoad(true)
+          howlRef.current = null
+          desiredPlaybackRef.current = null
+          usePlayerStore.getState().setDetectedAudioLatencyMs(0)
+          howl.unload()
         },
         onplayerror: function (soundId: number) {
-          // Try to recover via Howler unlock; give up after timeout
+          if (howlRef.current !== howl || !desiredPlaybackRef.current?.autoPlay) return
+          const attempt = ++unlockAttemptRef.current
+          // Keep the unlock listener active after showing local recovery guidance.
           if (playErrorTimerRef.current) clearTimeout(playErrorTimerRef.current)
           playErrorTimerRef.current = setTimeout(() => {
             playErrorTimerRef.current = null
-            console.warn('Howl unlock timeout, skipping track')
-            toast.error('播放失败，已跳到下一首')
-            onTrackEnd()
+            if (attempt !== unlockAttemptRef.current || !desiredPlaybackRef.current?.autoPlay) return
+            usePlayerStore.getState().setIsPlaying(false)
+            usePlayerStore.getState().setAudioLoadState({ phase: 'idle' })
+            toast.error('本机播放受阻，请与页面交互后重试')
           }, PLAY_ERROR_TIMEOUT_MS)
           howl.once('unlock', () => {
-            if (howlRef.current !== howl) return // Already switched or unmounted
+            if (attempt !== unlockAttemptRef.current || howlRef.current !== howl ||
+                !desiredPlaybackRef.current?.autoPlay) return
+            ++unlockAttemptRef.current
             if (playErrorTimerRef.current) {
               clearTimeout(playErrorTimerRef.current)
               playErrorTimerRef.current = null
             }
-            howl.play(soundId)
+            const getSeekTime = desiredPlaybackRef.current.getSeekTime
+            if (howl.playScheduled && getSeekTime) {
+              soundIdRef.current = howl.playScheduled(0, getSeekTime)
+            } else {
+              if (getSeekTime) setHowlPosition(howl, getSeekTime(), soundId)
+              howl.play(soundId)
+              if (getSeekTime) {
+                howl.once('play', (id) => {
+                  if (howlRef.current === howl && desiredPlaybackRef.current?.autoPlay && id === soundId) {
+                    setHowlPosition(howl, getSeekTime(), id)
+                  }
+                })
+              }
+            }
           })
         },
-      })
-
-      desiredPlayback.howl = howl
-      desiredPlaybackRef.current = desiredPlayback
+      }
+      const preload = preloadRef.current
+      const promoted = preload?.track.id === track.id && preload.track.streamUrl === track.streamUrl
+      const howl = promoted ? preload.sound : playbackSoundFactory.create(track, callbacks)
+      if (promoted) {
+        preloadRef.current = null
+        preload.callbacks = callbacks
+      }
+      // The mini-app factory may transfer a decoded buffer while creating the next handle.
+      if (previous !== howl) previous?.unload()
+      desiredPlaybackRef.current = { howl, track, autoPlay, onLoadSettled, getSeekTime: retry?.getSeekTime }
       howlRef.current = howl
-      usePlayerStore.getState().setCurrentTrack(track)
+      if (howl.state() === 'loaded') {
+        if (promoted) callbacks.onload?.()
+        else settleLoad(false)
+      }
     },
     [onTrackEnd, startTimeUpdate, stopTimeUpdate],
   )
 
   const setDesiredPlayback = useCallback((shouldPlay: boolean, getSeekTime?: () => number) => {
     if (!desiredPlaybackRef.current) return
+    if (!shouldPlay) ++unlockAttemptRef.current
     desiredPlaybackRef.current.autoPlay = shouldPlay
+    const hardwareStart = hardwareStartRef.current
+    if (!shouldPlay && hardwareStart) {
+      hardwareStartRef.current = null
+      if (performance.now() < hardwareStart.until || !hardwareStart.howl.playing()) {
+        hardwareStart.howl.pause(soundIdRef.current)
+      }
+    }
     if (getSeekTime) desiredPlaybackRef.current.getSeekTime = getSeekTime
     else if (!shouldPlay) desiredPlaybackRef.current.getSeekTime = undefined
   }, [])
@@ -316,7 +444,7 @@ export function useHowl(onTrackEnd: () => void) {
   }, [])
 
   /** Start the current Howl at an authoritative position, or defer until load. */
-  const startPlayback = useCallback((getSeekTime: () => number) => {
+  const startPlayback = useCallback((getSeekTime: () => number, delayMs = 0) => {
     const desired = desiredPlaybackRef.current
     const howl = howlRef.current
     if (!desired || !howl || desired.howl !== howl) return
@@ -325,12 +453,20 @@ export function useHowl(onTrackEnd: () => void) {
     desired.getSeekTime = getSeekTime
     if (howl.state() !== 'loaded') return
 
+    if (howl.playScheduled) {
+      hardwareStartRef.current = delayMs > 0 ? { howl, until: performance.now() + delayMs } : null
+      if (howl.rate() !== 1) howl.rate(1)
+      soundIdRef.current = howl.playScheduled(delayMs / 1000, getSeekTime)
+      return
+    }
+
     const targetTime = getSeekTime()
     howl.seek(targetTime)
     const soundId = soundIdRef.current !== undefined ? howl.play(soundIdRef.current) : howl.play()
     soundIdRef.current = soundId
     howl.once('play', (playedSoundId) => {
-      if (howlRef.current !== howl || desiredPlaybackRef.current !== desired || playedSoundId !== soundId) return
+      if (howlRef.current !== howl || desiredPlaybackRef.current !== desired ||
+          !desired.autoPlay || desired.getSeekTime !== getSeekTime || playedSoundId !== soundId) return
       const correctedTime = getSeekTime()
       if (Math.abs((howl.seek(undefined, playedSoundId) as number) - correctedTime) > 0.03) {
         setHowlPosition(howl, correctedTime, playedSoundId)
@@ -340,11 +476,13 @@ export function useHowl(onTrackEnd: () => void) {
 
   const stopAndUnload = useCallback(() => {
     usePlayerStore.getState().setAudioLoadState({ phase: 'idle' })
-    if (unmuteTimerRef.current) clearTimeout(unmuteTimerRef.current)
-    unmuteTimerRef.current = null
+    usePlayerStore.getState().setDetectedAudioLatencyMs(0)
+    discardPreload()
+    hardwareStartRef.current = null
     if (playErrorTimerRef.current) clearTimeout(playErrorTimerRef.current)
     playErrorTimerRef.current = null
     desiredPlaybackRef.current = null
+    ++unlockAttemptRef.current
     soundIdRef.current = undefined
     if (howlRef.current) {
       try {
@@ -355,7 +493,7 @@ export function useHowl(onTrackEnd: () => void) {
       howlRef.current = null
     }
     stopTimeUpdate()
-  }, [stopTimeUpdate])
+  }, [discardPreload, stopTimeUpdate])
 
   useEffect(() => registerActivePlaybackStop(stopAndUnload), [stopAndUnload])
 
@@ -383,6 +521,8 @@ export function useHowl(onTrackEnd: () => void) {
     howlRef,
     soundIdRef,
     loadTrack,
+    reuseTrackLoad,
+    preloadTrack,
     setDesiredPlayback,
     setScheduledPlayback,
     startPlayback,

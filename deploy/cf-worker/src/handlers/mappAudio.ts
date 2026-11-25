@@ -69,8 +69,28 @@ export async function handleMappAudio(
   runtime: WorkerRuntime,
 ): Promise<Response> {
   const fetcher = runtime.fetch
+  if (new URL(request.url).pathname !== MAPP_AUDIO_PATH) return fetcher(request)
+
+  const allowedOrigin = env.ALLOWED_MAPP_ORIGIN?.trim()
+  if (request.method === 'OPTIONS' && allowedOrigin && request.headers.get('Origin') === allowedOrigin) {
+    const method = request.headers.get('Access-Control-Request-Method')
+    const requested = request.headers.get('Access-Control-Request-Headers')?.split(',') ?? []
+    if (
+      (method === null || method === 'GET') &&
+      requested.every((name) => ['authorization', 'content-type'].includes(name.trim().toLowerCase()))
+    ) return new Response(null, { status: 204, headers: {
+      'Access-Control-Allow-Origin': allowedOrigin,
+      'Vary': 'Origin',
+      'Access-Control-Allow-Methods': 'GET, OPTIONS',
+      'Access-Control-Allow-Headers': 'Authorization, Content-Type',
+      'Access-Control-Expose-Headers': 'Content-Length, Content-Type, Content-Encoding',
+      'Access-Control-Max-Age': '86400',
+      'Cache-Control': 'no-store',
+      'X-MT-Edge-Preflight': 'HIT',
+    } })
+  }
   const secret = env.MAPP_RELAY_SECRET?.trim()
-  if (new URL(request.url).pathname !== MAPP_AUDIO_PATH || request.method !== 'GET' || !secret) {
+  if (request.method !== 'GET' || !secret) {
     return fetcher(request)
   }
 
@@ -82,7 +102,6 @@ export async function handleMappAudio(
       redirect: 'manual',
     }, 22_000)
   } catch {
-    const allowedOrigin = env.ALLOWED_MAPP_ORIGIN?.trim()
     if (allowedOrigin && request.headers.get('Origin') === allowedOrigin) {
       cors.set('Access-Control-Allow-Origin', allowedOrigin)
       cors.set('Vary', 'Origin')

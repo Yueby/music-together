@@ -91,6 +91,18 @@ describe('rawToTrack', () => {
 })
 
 describe('kugouSongToTrack', () => {
+  it('uses and normalizes playlist artwork in priority order', () => {
+    const song = {
+      hash: 'h',
+      cover: 'https://img.kugou.com/{size}/cover.jpg',
+      sizable_cover: 'https://img.kugou.com/{size}/sizable.jpg',
+      trans_param: { union_cover: 'https://img.kugou.com/{size}/union.jpg' },
+    }
+    expect(kugouSongToTrack(song)?.cover).toBe('https://img.kugou.com/5000/union.jpg')
+    expect(kugouSongToTrack({ ...song, trans_param: {} })?.cover).toBe('https://img.kugou.com/5000/sizable.jpg')
+    expect(kugouSongToTrack({ ...song, trans_param: {}, sizable_cover: '' })?.cover).toBe('https://img.kugou.com/5000/cover.jpg')
+  })
+
   it('maps a playlist entry and turns a millisecond duration into seconds', () => {
     const track = kugouSongToTrack({
       hash: 'h',

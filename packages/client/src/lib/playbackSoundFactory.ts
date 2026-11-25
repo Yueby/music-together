@@ -22,9 +22,28 @@ export const playbackSoundFactory: PlaybackSoundFactory = {
   create(_track, options) {
     // The real stream takes over the connection the warm-up opened.
     releaseWarmed()
-    const howlOptions = { ...options }
-    delete howlOptions.onprogress
-    return new Howl(howlOptions)
+    const { onprogress, ...howlOptions } = options
+    const howl = new Howl(howlOptions)
+    if (!onprogress || !options.html5) return howl
+
+    // Howler exposes load events but no HTML5 buffering progress event.
+    const element = (howl as Howl & { _sounds?: { _node?: HTMLAudioElement }[] })._sounds?.[0]?._node
+    if (!element) return howl
+    const reportProgress = () => {
+      if (howl.state() !== 'loading') return
+      const { buffered, duration } = element
+      if (buffered.length && Number.isFinite(duration) && duration > 0) {
+        onprogress({ phase: 'buffering', progress: buffered.end(buffered.length - 1) / duration })
+      }
+    }
+    element.addEventListener('progress', reportProgress)
+
+    const unload = howl.unload.bind(howl)
+    howl.unload = () => {
+      element.removeEventListener('progress', reportProgress)
+      return unload()
+    }
+    return howl
   },
   preload(track) {
     releaseWarmed()

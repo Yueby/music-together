@@ -35,7 +35,7 @@ afterEach(() => vi.useRealTimers())
 
 describe('mini-app audio relay', () => {
   it.each([
-    ['OPTIONS', env], ['POST', env], ['HEAD', env], ['GET', {}], ['GET', { MAPP_RELAY_SECRET: '   ' }],
+    ['OPTIONS', {}], ['POST', env], ['HEAD', env], ['GET', {}], ['GET', { MAPP_RELAY_SECRET: '   ' }],
   ])('passes %s through when ineligible', async (method, environment) => {
     const { handler, runtime, ctx } = fixture()
     const request = audioRequest(method)
@@ -202,7 +202,7 @@ describe('relay source profiles', () => {
     ['tencent', 'https://aqqmusic.tc.qq.com/song'],
     ['tencent', 'https://stream.qqmusic.qq.com/song'],
     ['kugou', 'https://stream.kugou.com/song'],
-  ])('uses the configured %s profile for %s', (source, url) => {
+  ] as const)('uses the configured %s profile for %s', (source, url) => {
     expect(validateRelayMediaUrl(source, url)).toEqual({ profile: SOURCE_RELAY_PROFILES[source], url: new URL(url) })
   })
 

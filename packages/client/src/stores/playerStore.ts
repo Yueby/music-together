@@ -1,7 +1,7 @@
 import { create } from 'zustand'
 import type { Track } from '@music-together/shared'
 import type { LyricLine as AMLLLyricLine } from '@applemusic-like-lyrics/core'
-import { storage } from '@/lib/storage'
+import { normalizeAudioLatencyOffset, storage } from '@/lib/storage'
 import type { AudioLoadPhase } from '@/lib/PlaybackSound'
 
 interface AudioLoadStateUpdate {
@@ -33,6 +33,8 @@ interface PlayerStore {
   audioLoadedBytes: number | null
   audioLoadStartedAt: number | null
   syncDrift: number
+  audioLatencyOffsetMs: number | null
+  detectedAudioLatencyMs: number
   lowFreqVolume: number
 
   setCurrentTrack: (track: Track | null) => void
@@ -45,6 +47,8 @@ interface PlayerStore {
   setLyricLoading: (loading: boolean) => void
   setAudioLoadState: (state: AudioLoadStateUpdate) => void
   setSyncDrift: (drift: number) => void
+  setAudioLatencyOffsetMs: (offset: number | null) => void
+  setDetectedAudioLatencyMs: (offset: number) => void
   setLowFreqVolume: (volume: number) => void
   reset: () => void
 }
@@ -61,6 +65,8 @@ export const usePlayerStore = create<PlayerStore>((set) => ({
   lyricLoading: false,
   ...idleAudioLoadState,
   syncDrift: 0,
+  audioLatencyOffsetMs: storage.getAudioLatencyOffsetMs(),
+  detectedAudioLatencyMs: 0,
   lowFreqVolume: 1,
 
   setCurrentTrack: (track) => set({ currentTrack: track }),
@@ -93,6 +99,14 @@ export const usePlayerStore = create<PlayerStore>((set) => ({
       }
     }),
   setSyncDrift: (drift) => set({ syncDrift: drift }),
+  setAudioLatencyOffsetMs: (offset) => {
+    const audioLatencyOffsetMs = normalizeAudioLatencyOffset(offset)
+    storage.setAudioLatencyOffsetMs(audioLatencyOffsetMs)
+    set({ audioLatencyOffsetMs })
+  },
+  setDetectedAudioLatencyMs: (detectedAudioLatencyMs) => set((state) =>
+    state.detectedAudioLatencyMs === detectedAudioLatencyMs ? state : { detectedAudioLatencyMs },
+  ),
   setLowFreqVolume: (lowFreqVolume) => set({ lowFreqVolume }),
   reset: () =>
     set({

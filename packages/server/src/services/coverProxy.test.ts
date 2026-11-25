@@ -1,12 +1,11 @@
 import { afterEach, describe, expect, it, vi } from 'vitest'
-import { MAPP_COVER_MAX_BYTES } from '@music-together/shared'
+import { MAPP_COVER_MAX_BYTES, limitCoverSize } from '@music-together/shared'
 import {
   ALLOWED_COVER_HOSTS,
   MAX_WEB_COVER_BYTES,
   createCoverProxy,
   fetchCoverImage,
   fetchPlatformCover,
-  limitCoverSize,
 } from './coverProxy.js'
 
 const url = 'https://p1.music.126.net/cover.jpg'

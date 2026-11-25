@@ -94,13 +94,15 @@ MAPP_ALLOW_SANDBOX  可选，true 时同时接受沙箱通道令牌；默认只�
 插件包含三个可独立开关的模块（`ENABLE_MAPP_AUDIO` / `ENABLE_COVER_PROXY` / `ENABLE_PUBLIC_METADATA_CACHE`），通过精确的 **Workers Routes** 挂载（**严禁挂 `/*` 通配路由，严禁使用 Custom Domain**，以免拦截 WebSocket/SPA 或触发同域 `fetch` 循环）：
 
 1. **微应用音频边缘中转（`/api/mapp/audio*`）**：Worker 原样携带 `Origin`/`Authorization` 附加 `X-MT-Relay: resolve-v1` 与 `X-MT-Relay-Secret` 回源完成 Discourse JWT 与房间权限校验并获取签名 CDN URL（不占用 VPS `StreamSlots`），再由 Worker 直连白名单音频 CDN，通过 workerd 原生 `FixedLengthStream` 零拷贝流式转发给微应用（8 秒仅限响应头超时，拿到响应头即释放定时器）。任意校验/拉取失败时取消上游流并携带 `X-MT-Relay: fallback-v1` 回退 VPS 直推（跳过二次 `mediaStreamRateLimit` 扣减，保留 `StreamSlots` 并发控制）。
-2. **全站封面代理与边缘缓存（`/api/music/cover-proxy*`）**：Web 封面直接走 `caches.default` 与共享白名单图床抓取（含网易云 `600y600` 尺寸限制、最多 3 跳 `https` 白名单重定向、光栅图片校验与 3 MiB 上限），异常回退 VPS；当 Worker 配置 `ALLOWED_MAPP_ORIGIN` 后，匹配该来源且带 `Authorization` 的微应用封面请求及 `OPTIONS` 预检直接由边缘缓存/白名单图床响应（严格执行 `<= 2 MiB`、`Access-Control-Allow-Origin: <ALLOWED_MAPP_ORIGIN>`、`Vary: Origin`、`Cache-Control: private, no-store, no-transform`），实现 VPS 零封面请求；未配置 `ALLOWED_MAPP_ORIGIN` 时带 `Authorization` 请求安全透传源站。
-3. **公开只读元数据边缘缓存**：仅接管精确白名单路径（`/api/music/ttml`、`/api/music/lyric`、`/api/music/discover/radar`、`/api/music/artist`、`/api/music/artist/songs`、`/api/music/artist/albums`、`/api/music/playlist`、`/api/music/search`）且为同源 Web 无 `Authorization` 的 `GET` 请求；严禁覆盖 `/api/music/playlist/mine`、`/api/music/discover/daily`、`/api/music/discover/home`、`/api/music/url`。MISS 回源前剥离 `Cookie` 请求头，入缓存前删除 `Set-Cookie` 与 `Access-Control-*`，且仅缓存 `200` 且不含 `no-store` 的响应。
+2. **全站封面代理与边缘缓存（`/api/music/cover-proxy*`）**：Web 封面直接走 `caches.default` 与共享白名单图床抓取（含网易云 `600y600` 尺寸限制、最多 3 跳 `https` 白名单重定向、光栅图片校验与 3 MiB 上限），同一 Worker 实例中对同一封面的并发冷请求共用一次图床读取，异常回退 VPS。配置 `ALLOWED_MAPP_ORIGIN` 后，匹配来源且带 `Authorization` 的微应用封面请求可以使用边缘缓存与图床，仍受 2 MiB 上限及 `Cache-Control: private, no-store, no-transform` 约束。未配置时，带 `Authorization` 的封面请求透传源站。
+3. **公开只读元数据边缘缓存**：仅缓存同源 Web 无 `Authorization` 的 `GET` 请求，精确路径为 `/api/music/ttml`、`/api/music/lyric`、`/api/music/discover/radar`、`/api/music/artist`、`/api/music/artist/songs`、`/api/music/artist/albums`、`/api/music/playlist` 和 `/api/music/search`。微应用认证 `GET` 和个人元数据路由继续回源。Worker 回源前剥离 `Cookie`，共享并发可缓存响应前移除 `Set-Cookie`、限流和 CORS 响应头。只有符合缓存策略的 `200` 响应会写入边缘缓存。同一 Worker 实例中的同键冷请求共用一次可缓存的回源读取。边缘缓存保留两倍 TTL，第一段 TTL 内返回 `HIT`，下一段返回 `STALE`，客户端最多缓存 30 秒，边缘后台合并同键刷新；刷新失败时保留旧条目直到边缘缓存过期。
+
+配置 `ALLOWED_MAPP_ORIGIN` 后，符合各路由 CORS 校验的微应用 `OPTIONS` 预检由边缘返回 `204`，覆盖音频、封面和上述公开元数据路径。其他预检原样回源。边缘和源站均为通过的微应用预检返回 `Access-Control-Max-Age: 86400`，单容器部署也可使用浏览器的预检缓存。
 
 #### 部署步骤
 
 1. **配置 VPS 环境变量**：生成高熵共享密钥（`openssl rand -base64 32`）写入容器 `MAPP_RELAY_SECRET`；可按需配置 `MAPP_RELAY_SOURCES`（默认 `netease,tencent,kugou`，设 `none` 或移除某音源即可零停机秒退 VPS 直推）。
-2. **调整 `deploy/cf-worker/wrangler.toml`**：将 `[[routes]]` 域名替换为实际站点域名，确认 `[observability] enabled = false`（防止签名链接与密钥进入 CF 日志）；启用微应用时建议取消注释并填写 `ALLOWED_MAPP_ORIGIN`（如 `https://linux.do`），以同时启用微应用封面边缘极速模式并在 `resolve-v1` 回源异常时为 Worker 生成的 `503 MEDIA_RELAY_FAILED` 附带 CORS 头。
+2. **调整 `deploy/cf-worker/wrangler.toml`**：将 `[[routes]]` 域名替换为实际站点域名，确认 `[observability] enabled = false`（防止签名链接与密钥进入 CF 日志）。启用微应用时可填写与源站相同的 `ALLOWED_MAPP_ORIGIN`（如 `https://linux.do`），以启用边缘预检、微应用封面边缘缓存，以及 `resolve-v1` 回源失败时 `503 MEDIA_RELAY_FAILED` 的 CORS 响应头。
 3. **写入密钥并部署 Worker**：
    ```bash
    cd deploy/cf-worker

@@ -110,10 +110,11 @@ export function createMappPlaybackSoundFactory(options: MappPlaybackSoundFactory
       }
     },
     create(track, soundOptions) {
+      const roomId = options.getRoomId()
       if (owner) {
         retire(owner)
         owner = null
-        engine.unload()
+        if (roomId === null || !engine.canReuseTrack(roomId, track.id)) engine.unload()
       }
       const entry: Owner = {
         id: ++nextId,
@@ -155,6 +156,18 @@ export function createMappPlaybackSoundFactory(options: MappPlaybackSoundFactory
         return handle
       }
       const handle: PlaybackSound = {
+        supportsPitchPreservingRate: false,
+        getOutputLatencyMs: () => current(entry) ? engine.getOutputLatencyMs() : 0,
+        crossfadeSeek(position) {
+          if (!current(entry) || entry.state !== 'loaded') return
+          entry.changing = true
+          try {
+            engine.crossfadeSeek(position)
+            if (engine.snapshot().audio.status === 'ended') entry.endEligible = false
+          } finally {
+            entry.changing = false
+          }
+        },
         state: () => entry.state,
         duration: () => (current(entry) && entry.state === 'loaded' ? engine.snapshot().audio.duration : 0),
         playing(id) {
@@ -184,13 +197,17 @@ export function createMappPlaybackSoundFactory(options: MappPlaybackSoundFactory
         },
         play(id) {
           if (!matches(id)) return entry.id
+          return handle.playScheduled!(0)
+        },
+        playScheduled(delaySeconds, getPosition) {
+          if (!current(entry)) return entry.id
           // A repeated play replaces the operation, while retaining listeners for this next start.
           const operation = ++entry.operation
           entry.endQueued = false
           entry.ended = false
           entry.hasPlayed = true
           entry.endEligible = entry.state === 'loaded'
-          engine.play().then(
+          engine.play(delaySeconds, getPosition).then(
             (played) => {
               if (!valid(entry, operation)) return
               if (!played) {
@@ -259,7 +276,6 @@ export function createMappPlaybackSoundFactory(options: MappPlaybackSoundFactory
       try {
         engine.setPlaybackRate(1)
         engine.setVolume(soundOptions.volume ?? 0.12)
-        const roomId = options.getRoomId()
         if (roomId === null) throw new Error('AUDIO_LOAD_FAILED')
         engine
           .loadRoomTrack({

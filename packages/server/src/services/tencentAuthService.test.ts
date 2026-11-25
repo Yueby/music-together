@@ -3,7 +3,7 @@ import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 const log = vi.hoisted(() => ({ info: vi.fn(), warn: vi.fn(), error: vi.fn(), debug: vi.fn() }))
 vi.mock('../utils/logger.js', () => ({ logger: log }))
 
-import { checkQrStatus, getUserPlaylists } from './tencentAuthService.js'
+import { checkQrStatus, getPlaylistTracks, getUserPlaylists } from './tencentAuthService.js'
 
 const fetchMock = vi.fn()
 beforeEach(() => {
@@ -16,6 +16,29 @@ afterEach(() => vi.unstubAllGlobals())
 const answer = (text: string) => new Response(text, { status: 200 })
 const callback = (code: string, url = '', msg = '', nickname = '') =>
   `ptuiCB('${code}','0','${url}','0','${msg}', '${nickname}');`.replace(", '", ",'")
+
+describe('QQ Music favorites', () => {
+  it('shares encrypted UIN lookups across concurrent and later pages while keeping accounts separate', async () => {
+    fetchMock.mockImplementation(async (url: string) => {
+      const uin = new URL(url).searchParams.get('userid')
+      return uin
+        ? Response.json({ data: { creator: { encrypt_uin: `encrypted-${uin}` } } })
+        : Response.json({ req: { code: 0, data: { songlist: [{ mid: 'track' }], total_song_num: 400 } } })
+    })
+    const cookie = 'uin=67890; qm_keyst=k'
+    await Promise.all([getPlaylistTracks('201', 1, 100, cookie), getPlaylistTracks('201', 2, 100, cookie)])
+    await getPlaylistTracks('201', 3, 100, cookie)
+    await getPlaylistTracks('201', 1, 100, 'uin=54321; qm_keyst=k')
+
+    const lookups = fetchMock.mock.calls.filter(([url]) => String(url).includes('fcg_get_profile_homepage'))
+    expect(lookups).toHaveLength(2)
+    const params = fetchMock.mock.calls.filter(([url]) => String(url).includes('musics.fcg'))
+      .map(([, init]) => JSON.parse(init.body).req.param)
+    expect(params.map(({ enc_host_uin, song_begin }) => [enc_host_uin, song_begin])).toEqual([
+      ['encrypted-67890', 0], ['encrypted-67890', 100], ['encrypted-67890', 200], ['encrypted-54321', 0],
+    ])
+  })
+})
 
 describe('QQ Music QR status', () => {
   it.each([

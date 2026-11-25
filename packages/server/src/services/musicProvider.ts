@@ -6,7 +6,7 @@ import { LRUCache } from 'lru-cache'
 import { nanoid } from 'nanoid'
 import pLimit from 'p-limit'
 import { fetchLyric, type LyricResult } from './lyricFetch.js'
-import { fetchPlaylistTracks } from './playlistFetchers.js'
+import { fetchPlaylistTracks, type PlaylistKind } from './playlistFetchers.js'
 import * as tencentAuth from './tencentAuthService.js'
 import { toMetingKugouCookie } from '../utils/cookieUtils.js'
 import { logger } from '../utils/logger.js'
@@ -14,7 +14,7 @@ import { withTimeoutOrNull } from '../utils/withTimeout.js'
 import { searchAlbums, searchPlaylists } from './catalogSearch.js'
 import { SearchError } from './catalogUtils.js'
 import { navigatePath, rawToTrack, rawToTrackOrNull } from './trackMapping.js'
-import { deriveThumbnailCoverUrl, normalizeKugouTemplateCoverUrl, normalizeNeteaseCoverUrl } from './coverUrls.js'
+import { deriveThumbnailCoverUrl, normalizeCoverUrl, normalizeNeteaseCoverUrl } from './coverUrls.js'
 import { getStreamUrlCacheTtl, isStreamUrlExpired } from './streamUrlLifetime.js'
 import { getNeteasePlaybackUrl } from './neteasePlayback.js'
 
@@ -117,6 +117,8 @@ const MINUTE = 60 * 1000
 /** Time boxes of `batchResolveCover` (search and playlist pages wait for it): per cover request, and for the batch. */
 const COVER_PIC_TIMEOUT_MS = 4_000
 const COVER_BATCH_TIMEOUT_MS = 10_000
+const KUGOU_PLAYLIST_COVER_LIMIT = 15
+const KUGOU_PLAYLIST_COVER_BUDGET_MS = 1_200
 
 const EMPTY_LYRIC: LyricResult = { lyric: '', tlyric: '', romalrc: '', yrc: '', cacheable: false }
 
@@ -135,6 +137,17 @@ function getCoverRequestSize(source: MusicSource, size?: number): number {
 // TrackMeta — Track without per-instance fields (id, requestedBy)
 // ---------------------------------------------------------------------------
 type TrackMeta = Omit<Track, 'id' | 'requestedBy'>
+type PlaylistPage = { tracks: Track[]; total: number; hasMore: boolean }
+type PlaylistIndex = { ids: string[]; total: number }
+type PlaylistLoader = {
+  ids: string[]
+  tracks: Track[]
+  knownTotal: number
+  finished: boolean
+  complete: boolean
+  waiters: Set<() => void>
+  completion: Promise<PlaylistIndex>
+}
 
 class MusicProvider {
   // ---------------------------------------------------------------------------
@@ -146,7 +159,7 @@ class MusicProvider {
   // here. Cross-context enrichment: search provides duration + cover, playlist
   // provides additional tracks. Merge strategy keeps the richest data.
   private trackRegistry = new LRUCache<string, TrackMeta>({
-    max: 10_000,
+    max: 50_000,
     ttl: 2 * HOUR,
   })
 
@@ -156,10 +169,11 @@ class MusicProvider {
     max: 200,
     ttl: 10 * MINUTE,
   })
-  private playlistIndex = new LRUCache<string, { source: MusicSource; ids: string[] }>({
+  private playlistIndex = new LRUCache<string, PlaylistIndex>({
     max: 50,
     ttl: 30 * MINUTE,
   })
+  private playlistPageCache = new LRUCache<string, PlaylistPage>({ max: 200, ttl: 5 * MINUTE })
 
   // Layer 3: Resource Caches — scalar values for stream URLs, covers, lyrics.
   private streamUrlCache = new LRUCache<string, string>({ max: 500, ttl: 1 * HOUR })
@@ -169,8 +183,9 @@ class MusicProvider {
     ttl: 24 * HOUR,
   })
 
-  // Reads of whole playlists in flight, by `playlistCacheKey`: concurrent callers of the same list wait for one read.
-  private playlistInflight = new Map<string, Promise<{ ids: string[]; total: number }>>()
+  private playlistInflight = new Map<string, PlaylistLoader>()
+  private kugouPlaylistCoverLimit = pLimit(3)
+  private kugouPlaylistCovers = new Map<string, Promise<string>>()
 
   /**
    * A fresh formatted instance per operation. Meting keeps per-request state on the instance (`temp.br` is read
@@ -578,12 +593,7 @@ class MusicProvider {
         return ''
       }
       const rawUrl = (data.url as string) || ''
-      const url =
-        source === 'netease'
-          ? normalizeNeteaseCoverUrl(rawUrl)
-          : source === 'kugou'
-            ? normalizeKugouTemplateCoverUrl(rawUrl)
-            : rawUrl
+      const url = normalizeCoverUrl(source, rawUrl)
 
       // An empty address may just be a bad moment upstream (Kugou answers `{url: ''}` per call): retry next time.
       if (url) this.coverCache.set(cacheKey, url)
@@ -599,66 +609,80 @@ class MusicProvider {
   // ---------------------------------------------------------------------------
 
   /**
-   * Ensure a playlist's track IDs are in the registry + index.
-   * Does NOT resolve covers (that's deferred to getPlaylistPage).
-   * Returns the full sourceId list and total count.
+   * Return all available track IDs once the shared playlist read finishes.
    */
   async fetchFullPlaylist(
     source: MusicSource,
     playlistId: string,
     cookie?: string | null,
-    type: 'playlist' | 'album' = 'playlist'
+    type: PlaylistKind = 'playlist',
   ): Promise<{ ids: string[]; total: number }> {
     const cacheKey = playlistCacheKey(source, playlistId, type, cookie)
-
-    // Check reference index — verify registry still has all tracks
-    const indexed = this.playlistIndex.get(cacheKey)
-    if (indexed) {
-      const allPresent = indexed.ids.every((id) => this.trackRegistry.get(`${indexed.source}:${id}`) !== undefined)
-      if (allPresent) {
-        logger.info(`Playlist index hit: ${source}/${playlistId} (${indexed.ids.length} tracks)`)
-        return { ids: indexed.ids, total: indexed.ids.length }
-      }
-      this.playlistIndex.delete(cacheKey)
-      logger.info(`Playlist index stale (registry eviction): ${source}/${playlistId}`)
-    }
-
-    // Concurrent misses of the same key (same list, same account) share one multi-chunk read instead of repeating it.
-    // The key carries the cookie hash, so different accounts never share a read; the entry is removed whether the read
-    // succeeds or fails, so one failure cannot hold the key.
-    const running = this.playlistInflight.get(cacheKey)
-    if (running) return running
-    const started: Promise<{ ids: string[]; total: number }> = this.loadPlaylist(
-      cacheKey,
-      source,
-      playlistId,
-      type,
-      cookie,
-    ).finally(() => {
-      if (this.playlistInflight.get(cacheKey) === started) this.playlistInflight.delete(cacheKey)
-    })
-    this.playlistInflight.set(cacheKey, started)
-    return started
+    const { ids } = this.playlistIndex.get(cacheKey) ??
+      (await this.getPlaylistLoader(cacheKey, source, playlistId, type, cookie).completion)
+    return { ids, total: ids.length }
   }
 
-  private async loadPlaylist(
+  private getPlaylistLoader(
     cacheKey: string,
     source: MusicSource,
     playlistId: string,
-    type: 'playlist' | 'album',
+    type: PlaylistKind,
     cookie?: string | null,
-  ): Promise<{ ids: string[]; total: number }> {
-    const { tracks, complete } = await fetchPlaylistTracks(source, playlistId, type, cookie)
-    if (tracks.length === 0) return { ids: [], total: 0 }
+  ): PlaylistLoader {
+    const running = this.playlistInflight.get(cacheKey)
+    if (running) return running
 
-    // Register the tracks (keeping covers already known) and remember the id list.
-    for (const t of tracks) this.enrichFromRegistry(t)
-    this.registerTracks(tracks)
-    const ids = tracks.map((t) => t.sourceId)
-    // A list that was cut short is shown as far as it went, but not remembered: the next request reads it again.
-    if (complete) this.playlistIndex.set(cacheKey, { source, ids })
-    else logger.warn(`Playlist ${source}/${playlistId} is incomplete (${ids.length} tracks), not cached`)
-    return { ids, total: ids.length }
+    const loader: PlaylistLoader = {
+      ids: [],
+      tracks: [],
+      knownTotal: 0,
+      finished: false,
+      complete: false,
+      waiters: new Set(),
+      completion: Promise.resolve().then(() => load()),
+    }
+    const notify = () => {
+      for (const wake of loader.waiters) wake()
+      loader.waiters.clear()
+    }
+    const append = (batch: Track[], knownTotal = 0) => {
+      for (const track of batch) this.enrichFromRegistry(track)
+      this.registerTracks(batch)
+      loader.tracks.push(...batch)
+      for (const track of batch) loader.ids.push(track.sourceId)
+      loader.knownTotal = Math.max(loader.knownTotal, knownTotal)
+      notify()
+    }
+
+    const load = async () => {
+      try {
+        const { tracks, complete } = await fetchPlaylistTracks(source, playlistId, type, cookie, append)
+        // Also support fetchers that only supply the final result.
+        append(tracks.slice(loader.ids.length))
+        const result = {
+          ids: loader.ids,
+          total: complete ? loader.ids.length : Math.max(loader.knownTotal, loader.ids.length),
+        }
+        loader.complete = complete && result.ids.length > 0
+        if (loader.complete) {
+          loader.knownTotal = loader.ids.length
+          this.playlistIndex.set(cacheKey, result)
+        } else if (!complete) {
+          logger.warn(`Playlist ${source}/${playlistId} is incomplete (${result.ids.length} tracks)`)
+        }
+        return result
+      } finally {
+        loader.finished = true
+        this.playlistInflight.delete(cacheKey)
+        notify()
+      }
+    }
+
+    this.playlistInflight.set(cacheKey, loader)
+    // A page may have returned before an unexpected error in the background read. Full-list callers still see it.
+    void loader.completion.catch(() => undefined)
+    return loader
   }
 
   /**
@@ -675,32 +699,33 @@ class MusicProvider {
     // the list is read to its real end, and the result is shared between everybody who asks for it.
     _playlistTotal?: number,
     cookie?: string | null,
-    type: 'playlist' | 'album' = 'playlist'
-  ): Promise<{ tracks: Track[]; total: number; hasMore: boolean }> {
-    const { ids, total } = await this.fetchFullPlaylist(source, playlistId, cookie, type)
-    if (total === 0) return { tracks: [], total: 0, hasMore: false }
+    type: PlaylistKind = 'playlist',
+  ): Promise<PlaylistPage> {
+    const cacheKey = playlistCacheKey(source, playlistId, type, cookie)
+    const pageKey = cookie ? undefined : `${cacheKey}:${offset}:${limit}`
+    const cached = pageKey ? this.playlistPageCache.get(pageKey) : undefined
+    if (cached) return { ...cached, tracks: cached.tracks.map((track) => ({ ...track, id: nanoid() })) }
 
-    const pageIds = ids.slice(offset, offset + limit)
-
-    // Hydrate page from registry
-    let tracks = this.hydrateFromRegistry(source, pageIds)
+    const end = offset + limit
+    const indexed = this.playlistIndex.get(cacheKey)
+    let tracks = indexed ? this.hydrateFromRegistry(source, indexed.ids.slice(offset, end)) : null
+    let total = indexed?.total ?? 0
+    let loader: PlaylistLoader | undefined
     if (!tracks) {
-      // Registry eviction between fetchFullPlaylist and hydrate (very rare).
-      // Clear index and retry once.
-      this.playlistIndex.delete(playlistCacheKey(source, playlistId, type, cookie))
-      logger.warn(`Playlist page hydration failed, retrying: ${source}/${playlistId}`)
-      const retry = await this.fetchFullPlaylist(source, playlistId, cookie, type)
-      if (retry.total === 0) return { tracks: [], total: 0, hasMore: false }
-      const retryPageIds = retry.ids.slice(offset, offset + limit)
-      tracks = this.hydrateFromRegistry(source, retryPageIds)
-      if (!tracks) {
-        logger.error(`Playlist page hydration failed after retry: ${source}/${playlistId}`)
-        return { tracks: [], total: retry.total, hasMore: offset + limit < retry.total }
+      if (indexed) this.playlistIndex.delete(cacheKey)
+      loader = this.getPlaylistLoader(cacheKey, source, playlistId, type, cookie)
+      while (loader.ids.length < end && !loader.finished) {
+        const waiters = loader.waiters
+        await new Promise<void>((wake) => waiters.add(wake))
       }
+      if (loader.ids.length < end) await loader.completion
+      total = Math.max(loader.knownTotal, loader.ids.length)
+      tracks = this.hydrateFromRegistry(source, loader.ids.slice(offset, end)) ??
+        loader.tracks.slice(offset, end).map((track) => ({ ...track, id: nanoid() }))
     }
 
-    // Resolve covers for this page only (tracks with cover already set are skipped)
-    await this.batchResolveCover(tracks, source)
+    const warmCovers = source === 'kugou' ? await this.resolveKugouPlaylistCovers(tracks) : undefined
+    if (source !== 'kugou') await this.batchResolveCover(tracks, source)
 
     for (const track of tracks) {
       if (track.cover) track.thumbnailCover = deriveThumbnailCoverUrl(source, track.cover)
@@ -709,12 +734,86 @@ class MusicProvider {
     // Write newly resolved covers back to registry for cross-page / cross-context reuse
     this.registerTracks(tracks)
 
-    return { tracks, total, hasMore: offset + limit < total }
+    const page = { tracks, total, hasMore: end < total }
+    if (pageKey && (loader ? loader.complete : indexed) && total > 0) {
+      // A fallback load can learn the final total after this page took its snapshot.
+      if (!loader || total === Math.max(loader.knownTotal, loader.ids.length)) {
+        const snapshot = { ...page, tracks: tracks.map((track) => ({ ...track })) }
+        this.playlistPageCache.set(pageKey, snapshot)
+        if (warmCovers) {
+          void warmCovers.done.then(() => {
+            if (this.playlistPageCache.peek(pageKey) !== snapshot) return
+            let changed = false
+            const updated = snapshot.tracks.map((track) => {
+              const cover = !track.cover && track.picId ? this.getCachedCover('kugou', track.picId) : undefined
+              if (!cover) return track
+              changed = true
+              return { ...track, cover, thumbnailCover: deriveThumbnailCoverUrl('kugou', cover) }
+            })
+            if (changed) this.playlistPageCache.set(pageKey, { ...snapshot, tracks: updated })
+          })
+        }
+      }
+    }
+    return page
   }
 
   // ---------------------------------------------------------------------------
   // Internal helpers
   // ---------------------------------------------------------------------------
+
+  private getCachedCover(source: MusicSource, picId: string): string | undefined {
+    return this.coverCache.get(`${source}:${picId}:${getCoverRequestSize(source)}`)
+  }
+
+  private async resolveTrackCover(source: MusicSource, picId: string): Promise<string> {
+    const cached = this.getCachedCover(source, picId)
+    if (cached) return cached
+
+    try {
+      const size = getCoverRequestSize(source)
+      const raw = await withTimeoutOrNull(new Meting(source).pic(picId, size), COVER_PIC_TIMEOUT_MS)
+      if (raw == null) return ''
+      const { url } = JSON.parse(raw)
+      if (typeof url !== 'string' || !url) return ''
+      const cover = normalizeCoverUrl(source, url)
+      this.coverCache.set(`${source}:${picId}:${size}`, cover)
+      return cover
+    } catch {
+      return ''
+    }
+  }
+
+  private warmKugouPlaylistCover(picId: string): Promise<string> {
+    const running = this.kugouPlaylistCovers.get(picId)
+    if (running) return running
+    const lookup = this.kugouPlaylistCoverLimit(() => this.resolveTrackCover('kugou', picId))
+      .finally(() => this.kugouPlaylistCovers.delete(picId))
+    this.kugouPlaylistCovers.set(picId, lookup)
+    return lookup
+  }
+
+  private async resolveKugouPlaylistCovers(tracks: Track[]): Promise<{ done: Promise<void> } | undefined> {
+    const missing = tracks.filter((track) => {
+      if (track.cover || !track.picId) return false
+      track.cover = this.getCachedCover('kugou', track.picId) ?? ''
+      return !track.cover
+    })
+    if (!missing.length) return
+
+    const warm = (track: Track) => this.warmKugouPlaylistCover(track.picId!).then((cover) => {
+      if (cover) this.registerTracks([{ ...track, cover }])
+      return cover
+    })
+    let withinBudget = true
+    const visible = missing.slice(0, KUGOU_PLAYLIST_COVER_LIMIT).map((track) => warm(track).then((cover) => {
+      if (withinBudget && cover) track.cover = cover
+    }))
+    await withTimeoutOrNull(Promise.allSettled(visible), KUGOU_PLAYLIST_COVER_BUDGET_MS)
+    withinBudget = false
+    const rest = missing.slice(KUGOU_PLAYLIST_COVER_LIMIT).map(warm)
+    return { done: Promise.allSettled([...visible, ...rest]).then(() => undefined) }
+  }
 
   /**
    * Batch-resolve cover URLs for tracks that don't have one.
@@ -742,35 +841,8 @@ class MusicProvider {
       toResolve.map((track) =>
         limit(async () => {
           if (expired) return
-          // Check cover cache first
-          const requestSize = getCoverRequestSize(source)
-          const cacheKey = `${source}:${track.picId!}:${requestSize}`
-          const cached = this.coverCache.get(cacheKey)
-          if (cached) {
-            track.cover = cached
-            return
-          }
-
-          try {
-            // Fresh instance per call to avoid shared state race conditions
-            const instance = new Meting(source)
-            const raw = await withTimeoutOrNull(instance.pic(track.picId!, requestSize), COVER_PIC_TIMEOUT_MS)
-            if (raw === null || raw === undefined) return // timed out: leave empty, cache nothing
-            const data = JSON.parse(raw)
-            if (typeof data.url === 'string' && data.url) {
-              const coverUrl =
-                source === 'netease'
-                  ? normalizeNeteaseCoverUrl(data.url)
-                  : source === 'kugou'
-                    ? normalizeKugouTemplateCoverUrl(data.url)
-                    : data.url
-              // A cover that arrives after the batch deadline is still worth remembering, but not for this answer.
-              this.coverCache.set(cacheKey, coverUrl)
-              if (!expired) track.cover = coverUrl
-            }
-          } catch {
-            // Leave cover empty — frontend shows placeholder
-          }
+          const cover = await this.resolveTrackCover(source, track.picId!)
+          if (!expired && cover) track.cover = cover
         }),
       ),
     )

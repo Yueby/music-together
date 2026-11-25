@@ -42,7 +42,7 @@ graph TB
 | 分类         | 客户端 → 服务端                                                                                                                     | 服务端 → 客户端                                                                                                                                                 |
 | ------------ | ----------------------------------------------------------------------------------------------------------------------------------- | --------------------------------------------------------------------------------------------------------------------------------------------------------------- |
 | **Room**     | `room:create`, `room:join`, `room:leave`, `room:list`, `room:settings`, `room:set_role`                                             | `room:created`, `room:state`, `room:user_joined`, `room:user_left`, `room:settings`, `room:error`, `room:list_update`, `room:role_changed`, `room:rejoin_token` |
-| **Player**   | `player:play`, `player:pause`, `player:seek`, `player:next`, `player:prev`, `player:sync`, `player:sync_request`, `player:set_mode` | `player:play`, `player:preload`, `player:pause`, `player:resume`, `player:seek`, `player:sync_response`                                                         |
+| **Player**   | `player:play`, `player:pause`, `player:seek`, `player:next`, `player:prev`, `player:ready`, `player:sync`, `player:sync_request`, `player:set_mode` | `player:prepare`, `player:play`, `player:preload`, `player:pause`, `player:resume`, `player:seek`, `player:sync_response` |
 | **Queue**    | `queue:add`, `queue:add_batch`, `queue:remove`, `queue:reorder`, `queue:clear`                                                      | `queue:updated`                                                                                                                                                 |
 | **Chat**     | `chat:message`                                                                                                                      | `chat:message`, `chat:history`                                                                                                                                  |
 | **Vote**     | `vote:start`, `vote:cast`                                                                                                           | `vote:started`, `vote:result`                                                                                                                                   |
@@ -114,6 +114,7 @@ interface PlayState {
   isPlaying: boolean
   currentTime: number
   serverTimestamp: number
+  revision: number
 }
 
 // 预定执行播放状态（play/pause/seek/resume 广播时使用）
@@ -160,7 +161,7 @@ interface ChatMessage {
 
 1. **NTP 时钟同步**：保证各客户端时钟与服务器对齐（时间衰减加权中位数）
 2. **Scheduled Execution**：离散事件（play/pause/seek/resume）通过预定执行消除网络延迟差异（P90 RTT 自适应调度）
-3. **周期性比例漂移校正**：客户端每 2 秒发起 `PLAYER_SYNC_REQUEST`，服务端返回当前预期位置；漂移经 EMA 低通滤波后进入比例控制器。30–500ms 使用连续 rate 微调收敛，避免误差积累；超过 500ms 且持续确认后才使用可能刷新移动端解码缓冲的 hard seek
+3. **周期性比例漂移校正**：客户端用服务端时间锚点计算预期位置，在本地采样并校正漂移。`PLAYER_SYNC_REQUEST` 可获取服务端当前快照，用于重新校准锚点
 
 ## Layer 1：NTP 时钟同步 + RTT 回报
 
@@ -169,7 +170,7 @@ interface ChatMessage {
 - 初始阶段：快速采样（每 50ms）收集 20 个样本，使用 `switchedRef` 保证仅在首次校准完成时切换到稳定阶段
 - 稳定阶段：每 5 秒一次 NTP 心跳
 - NTP 仅在用户进入房间后启动（`ClockSyncRunner` 渲染在 `RoomPage` 中），大厅用户不运行时钟同步
-- 使用**时间衰减加权中位数**计算 offset：每个样本按 `exp(-age / halfLife)` 衰减（halfLife=30s），兼具中位数的异常值鲁棒性和对网络环境突变的快速收敛能力
+- 选取 RTT 最低的 25% 样本（至少取 3 个，少于 3 个时全取），再计算 offset 的**时间衰减加权中位数**（半衰期 30 秒），减少高 RTT 排队造成的单向时延偏差
 - **`performance.now()` 锚点**：`getServerTime()` 基于 `performance.now()`（单调递增）计算时间流逝，不受系统时钟突变影响（NTP 调整、手动改时间、休眠唤醒）。每次 `processPong` 刷新锚点：`anchorServerTime = Date.now() + medianOffset`、`anchorPerfNow = performance.now()`
 - **RTT 回报**：每次 `ntp:ping` 附带 `lastRttMs`（客户端中位 RTT），服务端在 `NTP_PING` handler 中调用 `roomRepo.setSocketRTT()` 存储，用于自适应调度延迟计算
 - 核心模块：`clockSync.ts`（采样引擎 + `getServerTime()` + `getMedianRTT()` + `computeWeightedMedian()`）、`useClockSync.ts`（React Hook，在 SocketProvider 中运行）
@@ -181,39 +182,30 @@ interface ChatMessage {
 - 服务端根据房间 **P90 RTT** 动态计算调度延迟：`max(P90RTT * 1.5 + 100, 300ms)`，上限 3000ms。P90 避免单个慢连接拖累整个房间，房间人数 ≤3 时退化为取 max
 - RTT 由客户端 NTP 测量后通过 `ntp:ping` 事件回报，服务端以指数移动平均（alpha=0.2）平滑存储在 `roomRepository` 的 per-socket RTT map
 - 全部客户端（含操作发起者）统一收到广播并在预定时刻执行
-- **已提交状态与待执行状态分离**：`room.playState/currentTrack` 只保存已经实际生效的播放状态；未来的 play/pause/resume/seek/stop 存放在 `room.pendingPlayback`，到 `serverTimeToExecute` 才一次性提交。新动作会取消旧 pending timer，避免 join、sync request 和 conductor 上报提前观察到未来状态
-- **revision 边界**：每次计划动作以 `max(committedRevision, pendingRevision) + 1` 生成唯一单调递增 revision；pending timer 还按 payload 对象身份校验，防止执行边界上的旧 callback 提交。客户端也拒绝低于当前 revision 的迟到动作。Conductor 上报必须同时匹配当前已提交的 `revision + trackId`，且仅由房间唯一的 `conductorSocketId` 提交；同一身份的其他标签页无写权限
+- **已提交状态与待执行状态分离**：`room.playState/currentTrack` 保存服务端当前状态，其中准备中的曲目处于暂停、进度为 0。未来的 play/pause/resume/seek/stop 存放在 `room.pendingPlayback`，到 `serverTimeToExecute` 才提交。同步请求读取当前状态，新加入的客户端另外接收正在准备或即将执行的动作
+- **revision 边界**：准备和计划动作各自取已提交、待准备和待执行 revision 中的最大值加 1。定时器还校验待执行动作的对象身份，防止已被替换的回调提交。切换房主或其代表 Socket 时保留播放时间戳、位置和 revision
+- **切歌准备（`player:prepare` / `player:ready`）**：解析曲目播放链接和封面后，服务端记录当时在房间内的 Socket，广播 `{ track, revision, deadlineAt }`，客户端加载音频后回传 `{ trackId, revision }`。收到全部匹配确认、剩余未确认连接全部离开，或等待达到 3,500ms 时，服务端广播带新 revision 和执行时间的 `player:play`。准备期间加入的连接收到同一份 `player:prepare`，等待集合保持在切歌时的快照。空房间直接广播计划播放，有效的新控制取消旧准备定时器
 - Scheduled action（seek/pause/resume）执行时自动重置 `rate(1)`，SEEK 同时应用 payload 中的最终 `isPlaying`，避免 PAUSE/RESUME 被后续 SEEK 取消后出现客户端与服务端播放状态相反；执行后同步更新 `roomStore.playState`（不含 `serverTimeToExecute`），确保 recovery effect 读到最新状态
 - **加载与执行边界**：收到 RESUME 或播放态 SEEK 时，加载中的音轨保持暂停，直到受 action ID 保护的执行回调才启用期望播放目标。若到点仍未加载完成，不向 Howler 排队 seek/play，由 `onload` 根据当时的服务端时间计算补偿位置并只启动一次；已在播放的 SEEK 则持续播放到执行时间后再定位，不重复启动。
-- **预取下一首（`player:preload`）**：切歌时每个成员都要先把下一首加载好，慢的客户端（微应用必须经 SDK 下载整个文件，约 10MB 要数秒）会在调度时刻之后才就绪，只能从中途开始播，体验落后于房主。所以服务端在一首歌开始播放后（以及队列增删/重排、切换播放模式后）调用 `preloadUpcoming`：按 `getNextTrack(roomId, mode, 当前曲目)` 找出下一首（顺序/列表循环；随机在切歌瞬间才决定、单曲循环重播自己，都不预取），用房间账号池解析出播放链接，写回队列项的 `streamUrl`（真正切歌时直接复用，省掉一次供应商往返），并向房间广播 `player:preload { track }`。同一首同一音质只广播一次；解析期间房间状态变了就丢弃；失败静默，正式切歌路径照常解析、换源和报错。客户端经 `playbackSoundFactory.preload` 处理：网页端只打开下一首流的元数据（预热 DNS/TLS/CDN，不重复下载整文件），微应用在 `MappAudioEngine.preloadRoomTrack` 里提前下载下一首的压缩字节（只留一份，解码后的音频体积大得多，仍到切歌时才解码），`loadRoomTrack` 遇到同一首就直接接手，已在传输中的也接手而不是再发一次请求。预取失败或被新的广播取代，真正加载时按原样自己读取。
-- **Action ID 与跨 Hook 取消**：seek/pause/resume 使用单调递增 action ID 防止 stale callback；客户端另通过 `scheduledPlayback` bridge 让较新的控制动作取消 `usePlayer` 中尚未执行的 PLAYER_PLAY timer。Howl 加载阶段记录最新期望播放状态，确保加载较慢时后到的 pause 不会被旧 `autoPlay=true` 覆盖；Socket 断线时同时卸载实际 Howl，而不只是清空 store
+- **预取下一首（`player:preload`）**：服务端下发计划播放后，以及队列或播放设置变化后，提前解析下一首的链接，写回队列项的 `streamUrl`，并广播 `player:preload { track }`。随机模式为当前曲目保存一个选定的下一首，切歌时优先使用；该曲被移除时重新选择。消耗队列跳过当前曲目，微应用单曲循环复用当前解码缓冲。网页端按曲目 ID 和链接保留一份静音的 HTML5 Howl，准备或播放同一音源时直接接管。微应用提前获取压缩音频字节。预取失败时按正常路径加载
+- **取消过期操作**：较新的控制动作取消尚未执行的定时器和音频时钟排程，执行时校验 revision。`scheduledPlayback` bridge 负责跨 Hook 取消。加载期间记录最新的期望播放状态，解码结束后按最新目标启动。准备阶段的本机加载失败也回传就绪，播放受阻或停滞时只尝试本机恢复
 
 ## Layer 3：周期性比例漂移校正（EMA + Proportional Rate + Hard Seek）
 
-**非 conductor 客户端**向服务端发送 `PLAYER_SYNC_REQUEST`（conductor 跳过，因为 conductor 是权威播放源，不应被 server 估算值反向校正），服务端通过 `estimateCurrentTime()` 计算当前预期位置后回复 `PLAYER_SYNC_RESPONSE`。请求频率**自适应**：默认 `SYNC_REQUEST_INTERVAL_MS`（2s），连续 `SYNC_REQUEST_SLOWDOWN_CONFIRM_COUNT`（2）次漂移进入死区后降为 `SYNC_REQUEST_IDLE_INTERVAL_MS`（5s），任何漂移回升或暂停/新曲立即恢复 2s（滞后设计，避免硬 seek 确认被拖慢）。响应携带 `trackId`，客户端丢弃与当前曲目不匹配的在途响应（旧服务端无该字段时容忍）。客户端利用 NTP 校准时钟补偿网络延迟，计算原始漂移量后经 **EMA 低通滤波**（alpha=0.2）得到 `smoothedDrift`，再进入比例控制器：
+所有成员按服务端时间锚点和 NTP 校准时钟估算预期位置。服务端通过 `estimateCurrentTime()` 回复 `PLAYER_SYNC_RESPONSE`，携带 `trackId`，供客户端识别切歌前发出的旧响应。
 
-- **新曲 Grace Period**：新曲加载后 `DRIFT_GRACE_PERIOD_MS`（3s）内跳过 rate 微调；超过 hard-seek 阈值两倍的明显冷启动错误仍可立即修正
-- **EMA 平滑**：`smoothed = alpha * rawDrift + (1 - alpha) * prevSmoothed`，消除测量噪声导致的正负跳动
-- **EMA 冷启动种子**：pause/resume/新曲后首次 sync response 直接使用 rawDrift；hard seek 后保持 EMA 为 warm，避免固定媒体时钟偏差每两秒再次触发 seek
-- `|smoothedDrift|` > 自适应阈值 `max(500ms, medianRTT / 2 + 100ms)` → 普通偏差需连续 3 次确认后 hard seek；仅超过阈值两倍的冷启动错误立即执行
-- `|smoothedDrift|` 位于 30ms 死区与 hard-seek 阈值之间 → **比例控制**：`rate = 1 - clamp(smoothedDrift * Kp, ±MAX_RATE_ADJUSTMENT)`（Kp=0.25，最大 ±2%）。相同目标 rate 不重复写入 HTMLMediaElement
-- `|smoothedDrift|` < `DRIFT_DEAD_ZONE_MS`（30ms）→ 恢复正常速率 `1.0x`；软 rate 校正不会 seek，因此必须保持小死区以持续抵消设备媒体时钟速率差
-- UI 展示 smoothedDrift；hard seek 执行后立即清零展示值
-- **插件干扰自动降级**：设置 rate 后通过 `setTimeout(50ms)` 验证是否生效；连续 3 次检测到外部覆盖后禁用 rate 微调，但仍沿用安全的自适应 hard-seek 阈值，不再降到 30ms
+- 网页和微应用每 250ms 在本地采样，取最近 5 个漂移值的中位数后进行 EMA 平滑（alpha=0.2），每 15 秒发送一次 `PLAYER_SYNC_REQUEST` 校验时间锚点
+- 漂移在 15ms 内恢复正常速率。网页端比例调速上限为 ±2%，跳转阈值为 `max(500ms, medianRTT / 2 + 100ms)`。微应用调速上限为 ±0.3%，连续 3 次超过 120ms 时使用短交叉淡化跳转
+- 设备延迟补偿应用于播放起点和漂移目标。正值使媒体时间轴提前相应毫秒数，以抵消声音到达耳朵的延迟
+- UI 展示平滑后的漂移值。检测到外部插件连续覆盖保音调调速时，客户端停用调速并保留跳转校正
 
 典型场景：手机息屏暂停后解锁、浏览器后台标签页节流、网络波动导致的累积偏移。
 
-## Conductor 上报与服务端状态维护
+## 服务端播放时间线与自动续播
 
-Conductor（当前 `hostId` 对应用户）**自适应频率**上报当前播放位置到服务端：新曲开始后前 10 秒高频上报（每 2 秒，`CONDUCTOR_REPORT_FAST_INTERVAL_MS`），之后回到正常频率（每 5 秒，`CONDUCTOR_REPORT_INTERVAL_MS`），使用动态 `setTimeout` 链实现。仅用于维护 `room.playState` 的准确性（供 mid-song join、reconnect recovery 和漂移校正使用），**不会转发给其他客户端**。Conductor 标签页从后台恢复时（`visibilitychange` → visible），立即补偿上报一次当前位置，避免 `setTimeout` 被浏览器节流后 `playState` 过时。
-
-- conductor 上报附带采样时的 `hostServerTime`、当前 `revision` 和 `trackId`；服务端仅在 Socket、revision、trackId 与当前已提交状态匹配且没有 pending action 时接受。`currentTime` 与 `hostServerTime` 是同一采样时刻，服务端原样保存该位置并以 `hostServerTime` 作为时间锚点；不能把旧位置锚定到服务端接收时刻，也不能把两者差值直接加进位置。`hostServerTime` 仅在 NTP 校准完成后（`isCalibrated()`）附带；未校准时省略该字段，服务端回退到接收时刻锚点（偏差约等于单向延迟，由漂移校正收敛）。服务端接受窗为 ±3s（`conductorSample.MAX_HOST_SERVER_TIME_SKEW_MS`），超出窗口视为未校准/陈旧样本并回退接收时刻
-- 服务端通过 `playerService.validateConductorReport()` 校验 conductor 上报位置与 `estimateCurrentTime()` 预估值的偏差；超过 3 秒的向后回滚报告始终拒绝，不再连续拒绝后强制接受。`lastSkipTimestamp`、`playMutexes` 在 `playerService.cleanupRoom()` 中清理。Conductor 切换（`hostId` 或 `conductorSocketId` 变化）时自动刷新 `playState.serverTimestamp` 和 `currentTime`，确保新 conductor 的首个报告不会被误拒；仅换 Socket（同 host 多标签页/多设备）时保持 `revision` 不变，`hostId` 变更才递增 `revision`
-- `syncService.estimateCurrentTime()` 基于 conductor 上报的位置 + 经过时间估算当前位置，对 `elapsed` 做 `Math.max(0, ...)` 防护（`serverTimestamp` 可能是未来的 `scheduleTime`），且 clamp 到曲目时长上界（`room.currentTrack.duration`），防止 conductor 断线后估算值无限增长
-- 新用户加入时，通过 `ROOM_STATE` 获取 `playState` 并计算应跳转到的位置
-- 断线重连时，`usePlayer` 的 recovery 机制自动检测 desync 并重新加载音轨。Recovery 通过检查 `loadingRef` 避免与 `onPlayerPlay` 双重 `loadTrack`，且在加载前清理 `playTimerRef` 防止定时器重复触发
-- **加载补偿上限**：`useHowl` 加载音频后会根据 `loadStartTime` 计算 elapsed 补偿 seek，但 elapsed 被 `MAX_LOAD_COMPENSATION_S`（2s）上限 clamp，防止网络慢时跳过歌曲开头过多
-- 漂移校正时，`PLAYER_SYNC_RESPONSE` 基于此数据返回准确位置
+- 服务端提交的 `playState` 是播放时间线的唯一来源。`estimateCurrentTime()` 在播放态将 `currentTime` 加上自 `serverTimestamp` 起经过的非负时间，并限制在已知曲目时长内。旧客户端的 `player:sync` 继续执行数据和房间成员校验，通过后仅记录调试日志
+- 任意在线成员都可在曲目结束时发送 `player:next { auto: true, trackId, revision }`。服务端要求当前已提交状态为播放中且曲目和 revision 一致。时长已知时，预期播放位置必须落在曲末 5 秒内。手动切歌继续使用原有权限和限流
+- 提交播放、恢复、播放态定位或刷新链接后的播放时，服务端按剩余时长加 5 秒设置兜底定时器。触发时再次校验房间对象、曲目、revision、播放状态以及待准备和待执行动作，然后进入正常下一首流程。控制动作和房间清理取消旧定时器。该机制覆盖房主断线和客户端未上报结束的情况
 
 ## 播放模式
 
@@ -286,10 +278,12 @@ Conductor（当前 `hostId` 对应用户）**自适应频率**上报当前播放
 
 ## 歌单缓存
 
-`MusicProvider.fetchFullPlaylist` 读完整个歌单后把 id 列表缓存（按平台 + 歌单 id + 类型 + 账号 Cookie 哈希区分，30 分钟），翻页都从缓存取：
+`MusicProvider` 采用**渐进式分页加载 + 后台补全**与三层缓存协同（按平台 + 歌单 id + 类型 + 账号 Cookie 哈希隔离，不同账号绝不共享）：
 
-- 歌单总数**不取自调用方**：`/api/music/playlist` 的 `total` 查询参数仍被接受（请求契约不变）但不参与抓取，列表一直读到"短页"为止；客户端传的偏小的 `total` 不会再把截断的列表缓存给所有人
-- 抓取器（`playlistFetchers`）返回 `{ tracks, complete }`：翻页中途超时/失败（网易云超时、酷狗/QQ 在已知总数之前遇到空页）时 `complete: false`，已读到的部分照常展示，但**不写入缓存**，下次请求重新读取
+- **有界并发拉取与首页快返**：`playlistFetchers` 对网易云优先通过 `playlist_detail` 首屏直出已返回的 `tracks` 与完整 `trackIds`，再按 500 首/批、最多 3 路并发调用 `song_detail` 补齐缺失尾部（失败或超时自动回退 `playlist_track_all`）；酷狗（300 首/页）与 QQ 音乐（100 首/页，且对 `encrypt_uin` 做 30 分钟缓存与并发合并）先读第 1 页发现总数，后续按 3 页并发窗口有序产出。`getPlaylistPage` 在当前请求区间 `offset + limit` 凑齐时即刻返回，剩余批次在后台继续写入 `trackRegistry`（上限 50,000）与 `playlistIndex`（30 分钟）；同键并发请求共享同一个渐进式加载器。
+- **局部驱逐容错与公开页缓存**：命中 `playlistIndex` 时仅校验当前分页区间是否仍在 `trackRegistry`，单条非当前页曲目被驱逐不再导致整张歌单重拉；公开歌单（无 Cookie）另带 5 分钟页级 LRU 缓存（`playlistPageCache`），私有歌单绝不入页级缓存。
+- **酷狗封面限时防阻塞**：优先从上游曲目载荷直接提取并规范化封面地址；仍缺失封面时，首页最多同步等待前 15 首且总预算 1,200ms，其余曲目后台异步预热入 `coverCache` 与 `trackRegistry`，不阻塞首屏返回。
+- **歌单总数与完整性**：`/api/music/playlist` 的 `total` 查询参数仍被接受（请求契约不变）但不参与抓取；翻页中途超时或失败时 `complete: false`，已读到的部分照常展示，但**不写入缓存**，下次请求重新读取。
 
 ## 队列清空
 
@@ -304,7 +298,7 @@ Conductor（当前 `hostId` 对应用户）**自适应频率**上报当前播放
 3. **自动续播**：房主独自重新加入时，若有歌曲暂停/排队中，自动恢复播放
 4. **加入房间补偿**：中途加入的客户端使用 `getServerTime()` 计算当前应处的播放位置；曲目立即静音预加载，在权威执行位置启动并恢复用户音量，不使用固定等待窗口
 5. **房间宽限期**：房间空置 60 秒 (`ROOM_GRACE_PERIOD_MS`) 后自动清理（重复调用 `scheduleDeletion` 不会创建重复 timer）
-6. **角色与当前房主机制**：房间记录 `creatorId`（原始创建者 ID，永久不变）、`adminUserIds: Set<string>`（持久化 admin 集合）和 `temporaryAdminUserId`（无永久控制者在线时临时接管房间的用户，不持久化）。创建者在线时恢复 `owner` 并成为 `hostId`；创建者离线时优先由在线持久 admin 顺延成为当前房主；若 owner / 持久 admin 都不在线，则选择最早在线成员临时提升为 `admin` 并成为 `hostId`。创建者或持久 admin 返回后，临时接管者恢复原来的 member 身份。`hostId` 同时承担同步 conductor、自动下一首和当前房主投票否决职责；Owner/Admin 可直接控制播放器，Member 通过投票请求控制。`setUserRole` 只能设置持久 `admin` / `member`（不能改原始 creator 的 owner 身份），返回的创建者/持久 admin 免密码验证
+6. **角色与当前房主机制**：房间记录 `creatorId`（原始创建者 ID，永久不变）、`adminUserIds: Set<string>`（持久化 admin 集合）和 `temporaryAdminUserId`（无永久控制者在线时临时接管房间的用户，不持久化）。创建者在线时恢复 `owner` 并成为 `hostId`；创建者离线时优先由在线持久 admin 顺延成为当前房主；若 owner / 持久 admin 都不在线，则选择最早在线成员临时提升为 `admin` 并成为 `hostId`。创建者或持久 admin 返回后，临时接管者恢复原来的 member 身份。`hostId` 保有当前房主的投票否决职责。Owner/Admin 可直接控制播放器，Member 通过投票请求控制。`setUserRole` 只能设置持久 `admin` / `member`（不能改原始 creator 的 owner 身份），返回的创建者/持久 admin 免密码验证
 7. **持久化用户身份**：客户端通过 `storage.getUserId()` 生成并持久化 `nanoid`，每次 `ROOM_CREATE` / `ROOM_JOIN` 携带 `userId`，使服务端可跨 socket 重连识别同一用户。服务端通过 `roomRepo.getSocketMapping(socket.id)` 获取 `{ roomId, userId }` 映射——`socket.id` 仅用于 Socket 映射查找，所有涉及用户身份的操作（host 判断、auth cookie 归属、权限检查等）统一使用 `mapping.userId`
 8. **`currentUser` 自动推导**：`roomStore` 中 `currentUser` 始终从 `room.users` 自动推导（`deriveCurrentUser`），`setRoom` / `addUser` / `removeUser` / `updateRoom` 等 action 内部自动同步，不暴露 `setCurrentUser` 以避免脱节风险
 9. **断线时钟重置**：`resetAllRoomState()` 除重置 Zustand stores 外，还调用 `resetClockSync()` 清空 NTP 采样，确保重连后使用全新的时钟校准数据
@@ -314,7 +308,7 @@ Conductor（当前 `hostId` 对应用户）**自适应频率**上报当前播放
 12. **切歌防抖**：500ms (`PLAYER_NEXT_DEBOUNCE_MS`) 内只拦截同方向重复 NEXT 或重复 PREV；`next → prev` / `prev → next` 可立即反向，避免上一首按钮被共享 cooldown 静默吞掉。`playNextTrackInRoom` / `playPrevTrackInRoom` 将方向感知的 debounce 和队列导航封装在 per-room mutex 内；客户端按钮也仅禁用刚点击的方向
 13. **平台登录隔离限流**：QR 生成、Cookie 验证、`PLAYLIST_GET_MY` 使用独立认证额度（30 次/分钟），2 秒一次的 `AUTH_CHECK_QR` 轮询再单独使用 60 次/分钟额度，均不与播放器/队列控制共享 10 次/5 秒额度；QQ QR session 带 5 分钟 TTL，网易云 SDK 登录请求使用 15 秒有界等待（超时的二维码状态检查视为"仍在等待"而非过期，超时的 Cookie 验证视为临时错误而非 Cookie 过期），酷狗/QQ 登录请求使用 10 秒超时。验证 Cookie 的 `await` 之后会重新确认用户仍在房间、房间仍存在，才写入房间 Cookie 池，避免为已销毁的房间重建账号池
 14. **跨设备启动补偿**：客户端收到计划播放后立即静音预加载，目标 server time 到达时再开始播放；若移动端解码尚未完成，`onload` / `onplay` 会按 `serverTimeToExecute` 重新计算权威位置，避免 `play()`、系统音频焦点或解锁延迟造成固定落后。播放态 seek/resume 同样补偿 timer 迟到时间。漂移硬校正阈值按 NTP 单程不确定性 `RTT / 2 + margin` 计算，而不是完整 RTT，避免约 200–300ms 的稳定落后长期只靠 2% 变速追赶
-15. **唯一 conductor Socket**：公开 `RoomState.conductorSocketId`，同一身份的其他标签页仍作为 follower 请求同步并执行偏移校正；只有被选中的 Socket 上报权威进度和触发自动下一首。conductor 标签页切换也会广播新 ROOM_STATE
+15. **代表 Socket**：`RoomState.conductorSocketId` 为旧客户端保留当前房主的代表连接，代表连接切换会广播新的 `ROOM_STATE`。所有成员使用同一服务端播放时间线
 16. **断线重校准**：NTP 循环绑定 Socket 的 connect/disconnect 生命周期；断线立即清除旧 offset/RTT 样本，重连重新进行快速采样。未校准时计划动作统一立即执行并由后续自动漂移校正收敛，不使用未经校正的本机墙钟安排长定时器
 17. **停止播放统一处理**：`playerService.stopPlayback()` 统一处理"队列为空/清空"场景——清除 currentTrack、emit PLAYER_PAUSE、广播 ROOM_STATE、刷新大厅列表，避免 controller 中重复逻辑。`stopPlaybackSafe()` 提供 mutex 保护版本，`QUEUE_CLEAR` 使用此版本防止与并发 `autoPlayIfEmpty` 竞态
 18. **大厅重连刷新**：`useLobby` 监听 socket `connect` 事件，断线重连后自动重新拉取房间列表

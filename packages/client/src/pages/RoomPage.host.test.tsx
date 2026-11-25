@@ -52,6 +52,7 @@ vi.mock('@/lib/storage', () => ({
     getRejoinToken: () => 'fixture-web-ticket',
     hasAuthCookie: () => false,
     getVolume: () => 0.8,
+    getAudioLatencyOffsetMs: () => null,
     setVolume: vi.fn(),
   },
 }))

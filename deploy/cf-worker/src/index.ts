@@ -19,7 +19,7 @@ export function createWorkerHandler(runtime: WorkerRuntime = defaultRuntime) {
       return handleCoverProxy(request, env, ctx, runtime)
     }
     if (isPublicMetadataPath(pathname) && isFeatureEnabled(env.ENABLE_PUBLIC_METADATA_CACHE)) {
-      return handlePublicMetadata(request, ctx, runtime)
+      return handlePublicMetadata(request, env, ctx, runtime)
     }
     return runtime.fetch(request)
   }

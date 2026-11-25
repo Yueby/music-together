@@ -71,6 +71,7 @@ export class MappAudioEngine {
   private disposed = false
   private disposal: Promise<void> | null = null
   private trackId: string | null = null
+  private trackRoomId: string | null = null
   private loading = false
   private errorCode: MappAudioEngineErrorCode | null = null
   /** At most one: the compressed bytes only (decoded audio is far larger), so memory stays bounded. */
@@ -87,9 +88,24 @@ export class MappAudioEngine {
     return { trackId: this.trackId, loading: this.loading, errorCode: this.errorCode, audio: this.player.snapshot() }
   }
 
+  canReuseTrack(roomId: string, trackId: string): boolean {
+    return !this.disposed && !this.loading && this.trackRoomId === roomId && this.trackId === trackId &&
+      this.player.snapshot().duration > 0
+  }
+
   /** False means cancelled, superseded or failed; only fixed error codes enter the snapshot. */
   async loadRoomTrack(options: LoadRoomTrackOptions): Promise<boolean> {
     if (this.disposed) return false
+    if (!options.signal?.aborted && this.canReuseTrack(options.roomId, options.trackId)) {
+      this.assertAudio()
+      this.invalidate()
+      const generation = this.generation
+      this.errorCode = null
+      this.player.pause()
+      if (!this.current(generation)) return false
+      this.player.seek(0)
+      return this.current(generation)
+    }
     this.invalidate()
     this.pendingPreload = null
     const generation = this.generation
@@ -142,6 +158,7 @@ export class MappAudioEngine {
         return false
       }
       this.trackId = result.trackId
+      this.trackRoomId = options.roomId
       this.notify()
       if (this.current(generation) && !this.loading && this.pendingPreload) {
         const deferred = this.pendingPreload
@@ -277,6 +294,20 @@ export class MappAudioEngine {
     return this.player.getVolume()
   }
 
+  getOutputLatencyMs(): number {
+    return this.player.getOutputLatencyMs()
+  }
+
+  crossfadeSeek(position: number): void {
+    this.assertAudio()
+    if (this.loading || !this.trackId) throw new MappAudioEngineError('AUDIO_NOT_LOADED')
+    try {
+      this.player.crossfadeSeek(position)
+    } catch {
+      this.failAudio('AUDIO_SEEK_FAILED')
+    }
+  }
+
   setVolume(volume: number): void {
     this.assertAudio()
     try {
@@ -312,6 +343,7 @@ export class MappAudioEngine {
     this.invalidate()
     this.pendingPreload = null
     this.trackId = null
+    this.trackRoomId = null
     this.loading = false
     this.errorCode = null
     this.player.unload()
@@ -325,6 +357,7 @@ export class MappAudioEngine {
     this.pendingPreload = null
     this.discardPreload()
     this.trackId = null
+    this.trackRoomId = null
     this.loading = false
     this.errorCode = 'DISPOSED'
     this.disposal = this.player.dispose().catch(() => {

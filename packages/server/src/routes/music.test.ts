@@ -7,7 +7,6 @@ const { fetchCoverImage } = vi.hoisted(() => ({
 
 vi.mock('../services/coverProxy.js', () => ({
   fetchCoverImage,
-  limitCoverSize: (url: string) => url,
 }))
 vi.mock('../services/musicProvider.js', () => ({ musicProvider: {} }))
 vi.mock('../utils/logger.js', () => ({ logger: { info: vi.fn(), warn: vi.fn(), error: vi.fn(), debug: vi.fn() } }))

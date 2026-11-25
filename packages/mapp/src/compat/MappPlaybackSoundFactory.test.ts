@@ -44,9 +44,12 @@ function environment(mode?: 'bytes' | 'stream') {
   const emit = () => observe?.(snapshot)
   const engine = {
     snapshot: vi.fn(() => snapshot),
+    canReuseTrack: vi.fn(() => false),
+    getOutputLatencyMs: vi.fn(() => 45),
+    crossfadeSeek: vi.fn(),
     loadRoomTrack: vi.fn(async (_input: LoadRoomTrackOptions) => true),
     preloadRoomTrack: vi.fn((_input: { roomId: string; trackId: string; mode: 'bytes' | 'stream' }) => {}),
-    play: vi.fn(async () => {
+    play: vi.fn(async (_delay?: number, _position?: () => number) => {
       snapshot.audio.status = 'playing'
       emit()
       return true
@@ -93,6 +96,27 @@ function environment(mode?: 'bytes' | 'stream') {
 
 beforeEach(() => {
   mocks.construct.mockReset()
+})
+
+it('transfers a reusable track to fresh callbacks and exposes hardware clock capabilities', async () => {
+  const f = environment()
+  const old = f.factory.create(track(), callbacks())
+  await flush()
+  f.engine.canReuseTrack.mockReturnValueOnce(true)
+  const events = callbacks()
+  const replay = f.factory.create(track(), events)
+  old.unload()
+  expect(f.engine.unload).not.toHaveBeenCalled()
+  expect(events.onload).not.toHaveBeenCalled()
+  await flush()
+  expect(events.onload).toHaveBeenCalledOnce()
+  expect(replay.supportsPitchPreservingRate).toBe(false)
+  expect(replay.getOutputLatencyMs?.()).toBe(45)
+  const getPosition = () => 3
+  replay.playScheduled?.(0.45, getPosition)
+  expect(f.engine.play).toHaveBeenCalledExactlyOnceWith(0.45, getPosition)
+  replay.crossfadeSeek?.(4)
+  expect(f.engine.crossfadeSeek).toHaveBeenCalledExactlyOnceWith(4)
 })
 
 describe('MappPlaybackSoundFactory preload', () => {

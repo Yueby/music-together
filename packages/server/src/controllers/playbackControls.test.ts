@@ -5,11 +5,13 @@ import type { TypedServer, TypedSocket } from '../middleware/types.js'
 import { chatRepo } from '../repositories/chatRepository.js'
 import { roomRepo } from '../repositories/roomRepository.js'
 import * as playerService from '../services/playerService.js'
+import { musicProvider } from '../services/musicProvider.js'
 import { clearAllTimers } from '../services/roomLifecycleService.js'
 import { createRoom, joinRoom } from '../services/roomService.js'
 import { cancelVote, getActiveVote } from '../services/voteService.js'
 import { registerPlayerController } from './playerController.js'
 import { registerQueueController } from './queueController.js'
+import { registerRoomController } from './roomController.js'
 import { registerVoteController } from './voteController.js'
 
 const track: Track = {
@@ -32,20 +34,24 @@ function connect() {
     id,
     data: { identityUserId: id },
     emit,
+    join: vi.fn(),
+    leave: vi.fn(),
     on: (event: string, handler: (data?: unknown) => unknown) => handlers.set(event, handler),
   } as unknown as TypedSocket
   registerPlayerController(io, socket)
   registerQueueController(io, socket)
+  registerRoomController(io, socket)
   registerVoteController(io, socket)
   return { socket, emit, send: (event: string, data?: unknown) => handlers.get(event)!.call(socket, data) }
 }
 
 function setup() {
+  vi.spyOn(musicProvider, 'getStreamUrl').mockResolvedValue(track.streamUrl!)
   const owner = connect()
   const { room, user } = createRoom(owner.socket.id, 'Owner')
   room.queue = [track, nextTrack]
   room.currentTrack = track
-  room.playState.revision = 2
+  room.playState = { isPlaying: true, currentTime: 0, serverTimestamp: Date.now(), revision: 2 }
   return { owner, room, user }
 }
 
@@ -63,6 +69,7 @@ afterEach(() => {
   for (const id of socketIds.splice(0)) roomRepo.deleteSocketMapping(id)
   clearAllTimers()
   vi.restoreAllMocks()
+  vi.useRealTimers()
   broadcast.mockClear()
 })
 
@@ -95,8 +102,9 @@ describe('PLAYER_NEXT', () => {
     expect(room.pendingPlayback?.playState.revision).toBe(3)
   })
 
-  it('limits a manual skip and allows a matching conductor auto-advance with the budget exhausted', async () => {
+  it('limits a manual skip and accepts a near-end auto-advance with the budget exhausted', async () => {
     const { owner, room, user } = setup()
+    room.playState.currentTime = track.duration - 5
     await exhaustBudget(owner.socket)
     await owner.send(EVENTS.PLAYER_NEXT)
     expect(owner.emit).toHaveBeenCalledWith(EVENTS.ROOM_ERROR, expect.objectContaining({ code: ERROR_CODE.RATE_LIMITED }))
@@ -106,16 +114,108 @@ describe('PLAYER_NEXT', () => {
     owner.emit.mockClear()
     await owner.send(EVENTS.PLAYER_NEXT, { auto: true, trackId: track.id, revision: 2 })
     expect(owner.emit).not.toHaveBeenCalled()
-    expect(room.pendingPlayback?.track).toEqual(nextTrack)
+    expect(room.pendingPrepare?.track).toEqual(nextTrack)
   })
 
-  it('requires the conductor identity even when an auto-next matches playback', async () => {
+  it('rejects a premature auto-next and accepts a near-end report from a non-conductor', async () => {
     const { room } = setup()
     const guest = connect()
     joinRoom(guest.socket.id, room.id, 'Guest')
     await guest.send(EVENTS.PLAYER_NEXT, { auto: true, trackId: track.id, revision: 2 })
-    expect(guest.emit).toHaveBeenCalledWith(EVENTS.ROOM_ERROR, expect.objectContaining({ code: ERROR_CODE.NO_PERMISSION }))
-    expect(room.pendingPlayback).toBeFalsy()
+    expect(room.pendingPrepare).toBeFalsy()
+    room.playState.currentTime = track.duration - 4
+    await guest.send(EVENTS.PLAYER_NEXT, { auto: true, trackId: track.id, revision: 2 })
+
+    expect(guest.emit).not.toHaveBeenCalled()
+    expect(room.pendingPrepare?.track).toEqual(nextTrack)
+  })
+
+  it('accepts an auto-next for unknown duration only from the host’s conductor socket', async () => {
+    const { owner, room, user } = setup()
+    room.currentTrack = { ...track, duration: 0 }
+    room.queue = [room.currentTrack, nextTrack]
+    const guest = connect()
+    joinRoom(guest.socket.id, room.id, 'Guest')
+    const otherHostSocket = connect()
+    roomRepo.setSocketMapping(otherHostSocket.socket.id, room.id, user.id)
+    const report = { auto: true, trackId: track.id, revision: 2 }
+
+    await guest.send(EVENTS.PLAYER_NEXT, report)
+    await otherHostSocket.send(EVENTS.PLAYER_NEXT, report)
+    expect(room.pendingPrepare).toBeFalsy()
+
+    await owner.send(EVENTS.PLAYER_NEXT, report)
+    expect(room.pendingPrepare?.track).toEqual(nextTrack)
+  })
+
+  it('ignores a matching report when playback is paused', async () => {
+    const { owner, room } = setup()
+    room.playState.isPlaying = false
+    room.playState.currentTime = track.duration
+
+    await owner.send(EVENTS.PLAYER_NEXT, { auto: true, trackId: track.id, revision: 2 })
+
+    expect(room.pendingPrepare).toBeFalsy()
+  })
+})
+
+describe('playback sync and readiness', () => {
+  it('skips a track after every tracked socket reports a load failure', async () => {
+    vi.useFakeTimers()
+    const { owner, room } = setup()
+    const guest = connect()
+    joinRoom(guest.socket.id, room.id, 'Guest')
+    room.playMode = 'sequential'
+    await playerService.playTrackInRoom(io, room.id, track)
+    const report = { trackId: track.id, revision: room.pendingPrepare!.revision, failed: true }
+
+    await owner.send(EVENTS.PLAYER_READY, report)
+    expect(room.pendingPrepare?.pendingSockets).toEqual(new Set([guest.socket.id]))
+    await guest.send(EVENTS.PLAYER_READY, report)
+    await vi.advanceTimersByTimeAsync(0)
+
+    expect(room.pendingPrepare?.track).toEqual(nextTrack)
+    expect(broadcast).not.toHaveBeenCalledWith(EVENTS.PLAYER_PLAY, expect.objectContaining({ track }))
+    const ready = { trackId: nextTrack.id, revision: room.pendingPrepare!.revision }
+    await owner.send(EVENTS.PLAYER_READY, ready)
+    await guest.send(EVENTS.PLAYER_READY, ready)
+    expect(broadcast.mock.calls.filter(([event]) => event === EVENTS.PLAYER_PLAY)).toEqual([
+      [EVENTS.PLAYER_PLAY, { track: nextTrack, playState: expect.objectContaining({ isPlaying: true }) }],
+    ])
+  })
+
+  it('keeps the server timeline when the host reports a position two seconds behind', async () => {
+    vi.useFakeTimers()
+    const { owner, room } = setup()
+    const timeline = room.playState
+    vi.advanceTimersByTime(10_000)
+
+    await owner.send(EVENTS.PLAYER_SYNC, { trackId: track.id, revision: 2, currentTime: 8, hostServerTime: Date.now() })
+    await owner.send(EVENTS.PLAYER_SYNC_REQUEST)
+
+    expect(room.playState).toBe(timeline)
+    expect(owner.emit).toHaveBeenCalledWith(EVENTS.PLAYER_SYNC_RESPONSE, expect.objectContaining({ currentTime: 10 }))
+  })
+
+  it.each([EVENTS.ROOM_LEAVE, 'disconnect'])('releases the gate after a ready ACK and %s', async (event) => {
+    const { owner, room } = setup()
+    const guest = connect()
+    joinRoom(guest.socket.id, room.id, 'Guest')
+    await exhaustBudget(owner.socket)
+    await playerService.playTrackInRoom(io, room.id, nextTrack)
+    const revision = room.pendingPrepare!.revision
+
+    await owner.send(EVENTS.PLAYER_READY, { trackId: nextTrack.id, revision: -1 })
+    expect(room.pendingPrepare?.pendingSockets.size).toBe(2)
+    await owner.send(EVENTS.PLAYER_READY, { trackId: nextTrack.id, revision })
+    expect(room.pendingPrepare?.pendingSockets).toEqual(new Set([guest.socket.id]))
+    expect(broadcast).not.toHaveBeenCalledWith(EVENTS.PLAYER_PLAY, expect.anything())
+
+    await guest.send(event, 'transport close')
+
+    expect(room.pendingPrepare).toBeNull()
+    expect(room.pendingPlayback?.track).toEqual(nextTrack)
+    expect(broadcast).toHaveBeenCalledWith(EVENTS.PLAYER_PLAY, expect.objectContaining({ track: nextTrack }))
   })
 })
 
@@ -157,11 +257,12 @@ describe('VOTE_CAST', () => {
     expect(getActiveVote(room.id)?.payload).toEqual({ trackId: track.id })
 
     expect(await playerService.playTrackInRoom(io, room.id, nextTrack)).toBe(true)
-    const pending = room.pendingPlayback
+    const pending = room.pendingPrepare
+    expect(pending?.track).toEqual(nextTrack)
     await owner.send(EVENTS.VOTE_CAST, { approve: true })
 
     expect(getActiveVote(room.id)).toBeNull()
-    expect(room.pendingPlayback).toBe(pending)
+    expect(room.pendingPrepare).toBe(pending)
     expect(broadcast).toHaveBeenCalledWith(EVENTS.VOTE_RESULT, { passed: false, action, reason: 'action_failed' })
   })
 })

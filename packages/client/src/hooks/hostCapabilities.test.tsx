@@ -41,6 +41,7 @@ vi.mock('@/lib/storage', () => ({
   storage: {
     getUserId: () => 'fixture-user',
     getVolume: () => 0.8,
+    getAudioLatencyOffsetMs: () => null,
     getAuthCookies: fixture.getCookies,
     upsertAuthCookie: fixture.saveCookie,
     removeAuthCookie: fixture.removeCookie,
