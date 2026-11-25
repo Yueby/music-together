@@ -1,13 +1,19 @@
 import { describe, expect, it } from 'vitest'
 import {
+  AUDIO_CONTENT_TYPES,
+  COVER_HOST_ALLOWLIST,
   MAPP_COVER_MAX_BYTES,
   MAPP_METADATA_MAX_BYTES,
   MAPP_METADATA_SCHEMAS,
   MAPP_METADATA_TARGETS,
+  MAX_MEDIA_BYTES,
+  MAX_WEB_COVER_BYTES,
+  MEDIA_CDN_SUFFIXES,
+  RASTER_IMAGE_TYPES,
   parseMappMetadataRequest,
   mappMetadataSearchQuerySchema,
   mappMetadataLyricQuerySchema,
-} from './mappMetadata.js'
+} from './index.js'
 
 const search = '/api/music/search?source=netease&keyword=fixture'
 const lyric = '/api/music/lyric?source=tencent&lyricId=fixture'
@@ -15,6 +21,18 @@ describe('reviewed metadata read contract', () => {
   it('publishes only the reviewed targets, a one MiB JSON limit and a two MiB cover limit', () => {
     expect(MAPP_METADATA_MAX_BYTES).toBe(1024 * 1024)
     expect(MAPP_COVER_MAX_BYTES).toBe(2 * 1024 * 1024)
+    expect(MAX_WEB_COVER_BYTES).toBe(3 * 1024 * 1024)
+    expect(MAX_MEDIA_BYTES).toBe(32 * 1024 * 1024)
+    expect(COVER_HOST_ALLOWLIST).toContain('p1.music.126.net')
+    expect(MEDIA_CDN_SUFFIXES).toEqual({
+      netease: ['music.126.net'],
+      tencent: ['qqmusic.qq.com', 'tc.qq.com'],
+      kugou: ['kugou.com'],
+    })
+    expect(AUDIO_CONTENT_TYPES).toContain('audio/mpeg')
+    expect(AUDIO_CONTENT_TYPES).toContain('application/octet-stream')
+    expect(RASTER_IMAGE_TYPES).toContain('image/jpeg')
+    expect(RASTER_IMAGE_TYPES).not.toContain('image/svg+xml')
     expect(MAPP_METADATA_TARGETS).toEqual({
       search: {
         path: '/api/music/search',

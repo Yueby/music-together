@@ -59,7 +59,14 @@ if (platform) {
   // search/lyric paths are handed back with next('router'). The metadata router applies the music rate
   // limiter itself, hence it is mounted before `/api/music`.
   const allowedOrigin = new URL(platform.config.issuer).origin
-  app.use(createPlatformMediaRouter({ allowedOrigin, verifyIdentity: platform.resolvers.roomMedia }))
+  app.use(
+    createPlatformMediaRouter({
+      allowedOrigin,
+      verifyIdentity: platform.resolvers.roomMedia,
+      relaySecret: config.mapp.relaySecret,
+      relaySources: config.mapp.relaySources,
+    }),
+  )
   app.use(createPlatformMetadataRouter({ allowedOrigin, verifyIdentity: platform.resolvers.musicMetadata }))
 }
 

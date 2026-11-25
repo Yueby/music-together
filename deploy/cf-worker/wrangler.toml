@@ -1,0 +1,53 @@
+name = "music-together-edge"
+main = "src/index.ts"
+compatibility_date = "2026-01-01"
+workers_dev = false
+preview_urls = false
+
+[observability]
+enabled = false
+
+# Use Worker routes. Never mount /* and never use a Custom Domain.
+# Enable "Fail open (proceed)" on every route in the Cloudflare Dashboard or
+# set request_limit_fail_open through the Cloudflare API. Wrangler route entries
+# do not support this setting.
+
+[[routes]]
+pattern = "mt.agou.mom/api/mapp/audio*"
+zone_name = "agou.mom"
+
+[[routes]]
+pattern = "mt.agou.mom/api/music/cover-proxy*"
+zone_name = "agou.mom"
+
+[[routes]]
+pattern = "mt.agou.mom/api/music/ttml*"
+zone_name = "agou.mom"
+
+[[routes]]
+pattern = "mt.agou.mom/api/music/lyric*"
+zone_name = "agou.mom"
+
+[[routes]]
+pattern = "mt.agou.mom/api/music/discover/radar*"
+zone_name = "agou.mom"
+
+[[routes]]
+pattern = "mt.agou.mom/api/music/artist*"
+zone_name = "agou.mom"
+
+[[routes]]
+pattern = "mt.agou.mom/api/music/playlist*"
+zone_name = "agou.mom"
+
+[[routes]]
+pattern = "mt.agou.mom/api/music/search*"
+zone_name = "agou.mom"
+
+[vars]
+ENABLE_MAPP_AUDIO = "true"
+ENABLE_COVER_PROXY = "true"
+ENABLE_PUBLIC_METADATA_CACHE = "true"
+# Provision the same value as the VPS via: wrangler secret put MAPP_RELAY_SECRET
+# Recommended when mini-app is enabled: enables edge cover fast mode AND attaches CORS headers to synthetic 503 audio relay errors.
+# ALLOWED_MAPP_ORIGIN = "https://linux.do"

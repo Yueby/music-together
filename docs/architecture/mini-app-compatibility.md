@@ -192,7 +192,7 @@ Web hostRuntime 保留全部原能力。`hostRuntime` 只记录**宿主确实做
 
 ### 启用与部署
 
-- **环境变量**：`MAPP_ISSUER`（论坛 https 地址，可带子目录）、`MAPP_AUDIENCE`（本服务公开 https origin，主机名不能与 issuer 相同）、`MAPP_APP_ID`（平台分配的 UUIDv7）、可选 `MAPP_JWKS_FILE`（绝对路径，只读公钥文件）、可选 `MAPP_ALLOW_SANDBOX`（`true` 时同时接受沙箱令牌，仅限测试）。全空即关闭；使用公钥文件时需把该文件挂载进主站容器并指向其容器内路径。
+- **环境变量**：`MAPP_ISSUER`（论坛 https 地址，可带子目录）、`MAPP_AUDIENCE`（本服务公开 https origin，主机名不能与 issuer 相同）、`MAPP_APP_ID`（平台分配的 UUIDv7）、可选 `MAPP_JWKS_FILE`（绝对路径，只读公钥文件）、可选 `MAPP_ALLOW_SANDBOX`（`true` 时同时接受沙箱令牌，仅限测试）、可选 `MAPP_RELAY_SECRET` / `MAPP_RELAY_SOURCES`（配合 `deploy/cf-worker/` 开启微应用音频边缘中转 `resolve-v1` / `fallback-v1` 协议；未配置时保持原有 VPS 直推流，详见 [部署方案](deployment.md)）。全空即关闭；使用公钥文件时需把该文件挂载进主站容器并指向其容器内路径。
 - **公钥**：默认从 issuer 的 `/mini-app-api/jwks` 获取（禁止重定向、5 秒超时、缓存 10 分钟，同一时刻只下载一次并带 10 秒冷却）。启动时只做尽力预热，失败不影响主站启动，首个令牌到来时再按需加载。
 - **镜像**：Dockerfile 额外复制仓库根 `vendor/`（官方 SDK 原样发行文件），不复制 mapp 源码。
 - **挂载顺序**：平台搜索/歌词与媒体路由挂在通用 `cors`、`express.json`、Cookie 身份引导和 `/api/music` 限流之前；它们自带 CORS、预检与鉴权，普通 Web 请求原样交还原链。

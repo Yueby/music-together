@@ -8,7 +8,7 @@ export default defineConfig({
     },
   },
   test: {
-    include: ['packages/**/*.test.{ts,tsx}'],
+    include: ['packages/**/*.test.{ts,tsx}', 'deploy/cf-worker/**/*.test.ts'],
     environment: 'node',
     restoreMocks: true,
     clearMocks: true,

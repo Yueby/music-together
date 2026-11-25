@@ -50,6 +50,10 @@ function fixture(
     origin?: string
     headers?: Record<string, string>
     rateLimit?: RequestHandler
+    relaySecret?: string
+    relaySources?: readonly ('netease' | 'tencent' | 'kugou')[]
+    resolved?: { v: 1; source: 'netease' | 'tencent' | 'kugou'; url: string }
+    omitResolve?: boolean
   } = {},
 ) {
   const headers: Record<string, string> = {
@@ -73,23 +77,28 @@ function fixture(
   const stream = vi.fn().mockImplementation(async (_input, response) => {
     response.end('fixture audio')
   })
+  const resolve = vi
+    .fn()
+    .mockResolvedValue(changes.resolved ?? { v: 1, source: 'netease', url: 'https://m1.music.126.net/signed.mp3' })
   const rateLimit = vi.fn<RequestHandler>((_req, _res, next) => next())
   const router = createPlatformMediaRouter({
     allowedOrigin: origin,
     verifyIdentity,
     rateLimit: changes.rateLimit ?? rateLimit,
-    service: { stream },
+    service: changes.omitResolve ? { stream } : { stream, resolve },
+    relaySecret: changes.relaySecret,
+    relaySources: changes.relaySources,
   })
   /** Resolves when the response is finished/closed, or when the router hands the request back. */
   const run = () =>
-    new Promise<'answered' | 'passed'>((resolve, reject) => {
-      res.once('finish', () => resolve('answered'))
-      res.once('close', () => resolve('answered'))
+    new Promise<'answered' | 'passed'>((resolvePromise, reject) => {
+      res.once('finish', () => resolvePromise('answered'))
+      res.once('close', () => resolvePromise('answered'))
       router(req as unknown as Request, res as unknown as Response, (error?: unknown) =>
-        error ? reject(error) : resolve('passed'),
+        error ? reject(error) : resolvePromise('passed'),
       )
     })
-  return { req, res, verifyIdentity, stream, rateLimit, run }
+  return { req, res, verifyIdentity, stream, resolve, rateLimit, run }
 }
 
 describe('unmounted roomAudio/platform router', () => {
@@ -343,6 +352,116 @@ describe('unmounted roomAudio/platform router', () => {
     expect(music).not.toContain('verifyRoomMedia')
     // Account lookup for private playlists lives in the shared controller and is reached through the Web route.
     expect(music).toContain('getMyPlaylistPageMetadata')
+  })
+
+  describe('optional edge relay protocol (resolve-v1 / fallback-v1)', () => {
+    const secret = 'edge-relay-shared-secret-value'
+
+    it('returns resolve-v1 JSON with headers when secret matches and source is enabled', async () => {
+      const f = fixture({
+        relaySecret: secret,
+        relaySources: ['netease', 'tencent'],
+        headers: {
+          'x-mt-relay': 'resolve-v1',
+          'x-mt-relay-secret': secret,
+        },
+      })
+      await f.run()
+      expect(f.res.statusCode).toBe(200)
+      expect(f.rateLimit).toHaveBeenCalledOnce()
+      expect(f.resolve).toHaveBeenCalledExactlyOnceWith(
+        { roomId: 'ABC_-1', trackId: 'track', userId },
+        expect.any(AbortSignal),
+      )
+      expect(f.stream).not.toHaveBeenCalled()
+      expect(f.res.headers).toMatchObject({
+        'x-mt-relay-mode': 'resolve-v1',
+        'cache-control': 'private, no-store, no-transform',
+        'access-control-allow-origin': origin,
+      })
+      expect(f.res.payload).toEqual({
+        v: 1,
+        source: 'netease',
+        url: 'https://m1.music.126.net/signed.mp3',
+      })
+    })
+
+    it.each([
+      ['secret unset on server', undefined, secret],
+      ['secret missing on request', secret, ''],
+      ['secret mismatch', secret, 'wrong-secret'],
+    ])('silently streams directly when %s', async (_label, relaySecret, provided) => {
+      const f = fixture({
+        relaySecret,
+        headers: {
+          'x-mt-relay': 'resolve-v1',
+          ...(provided ? { 'x-mt-relay-secret': provided } : {}),
+        },
+      })
+      await f.run()
+      expect(f.res.statusCode).toBe(200)
+      expect(f.resolve).not.toHaveBeenCalled()
+      expect(f.stream).toHaveBeenCalledOnce()
+      expect(f.res.headers['x-mt-relay-mode']).toBeUndefined()
+    })
+
+    it('silently falls back to direct streaming when resolved source is excluded by MAPP_RELAY_SOURCES', async () => {
+      const f = fixture({
+        relaySecret: secret,
+        relaySources: ['netease', 'tencent'],
+        resolved: { v: 1, source: 'kugou', url: 'https://fs.kugou.com/signed.mp3' },
+        headers: {
+          'x-mt-relay': 'resolve-v1',
+          'x-mt-relay-secret': secret,
+        },
+      })
+      await f.run()
+      expect(f.res.statusCode).toBe(200)
+      expect(f.resolve).toHaveBeenCalledOnce()
+      expect(f.stream).toHaveBeenCalledOnce()
+      expect(f.res.headers['x-mt-relay-mode']).toBeUndefined()
+    })
+
+    it('skips second rate-limit deduction and logs sanitized relay_fallback on valid fallback-v1', async () => {
+      log.warn.mockClear()
+      const f = fixture({
+        relaySecret: secret,
+        headers: {
+          'x-mt-relay': 'fallback-v1',
+          'x-mt-relay-secret': secret,
+        },
+      })
+      await f.run()
+      expect(f.res.statusCode).toBe(200)
+      expect(f.rateLimit).not.toHaveBeenCalled()
+      expect(f.resolve).not.toHaveBeenCalled()
+      expect(f.stream).toHaveBeenCalledOnce()
+      expect(log.warn).toHaveBeenCalledWith('relay_fallback', {
+        event: 'relay_fallback',
+        roomId: 'ABC_-1',
+        trackId: 'track',
+        userId,
+      })
+      const logged = JSON.stringify(log.warn.mock.calls)
+      expect(logged).not.toContain('fixture-token')
+      expect(logged).not.toContain(secret)
+      expect(logged).not.toContain('http')
+    })
+
+    it('still enforces rate limit and does not log relay_fallback when fallback-v1 has invalid secret', async () => {
+      log.warn.mockClear()
+      const f = fixture({
+        relaySecret: secret,
+        headers: {
+          'x-mt-relay': 'fallback-v1',
+          'x-mt-relay-secret': 'wrong-secret',
+        },
+      })
+      await f.run()
+      expect(f.rateLimit).toHaveBeenCalledOnce()
+      expect(f.stream).toHaveBeenCalledOnce()
+      expect(log.warn).not.toHaveBeenCalledWith('relay_fallback', expect.anything())
+    })
   })
 })
 

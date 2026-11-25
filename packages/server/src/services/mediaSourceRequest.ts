@@ -2,9 +2,9 @@ import { lookup } from 'node:dns'
 import { request } from 'node:https'
 import { BlockList, isIP, type LookupFunction } from 'node:net'
 import type { IncomingMessage } from 'node:http'
-import type { MusicSource } from '@music-together/shared'
+import { AUDIO_CONTENT_TYPES, MAX_MEDIA_BYTES, MEDIA_CDN_SUFFIXES, type MusicSource } from '@music-together/shared'
 
-export const MAX_MEDIA_BYTES = 32 * 1024 * 1024
+export { MAX_MEDIA_BYTES }
 const HEADER_TIMEOUT_MS = 8_000
 
 export class MediaError extends Error {
@@ -51,13 +51,6 @@ export function isPublicMediaAddress(address: string): boolean {
   return family === 6 && !address.includes('%') && globalV6.check(address, 'ipv6') && !denied.check(address, 'ipv6')
 }
 
-const CDN_SUFFIXES: Record<MusicSource, string[]> = {
-  netease: ['music.126.net'],
-  // `aqqmusic.tc.qq.com` (the vkey download host QQ returns today) and the older `*.music.tc.qq.com` are both under tc.qq.com.
-  tencent: ['qqmusic.qq.com', 'tc.qq.com'],
-  kugou: ['kugou.com'],
-}
-
 /** Only https URLs on a source's own CDN subdomains; no credentials, port or fragment. */
 export function validateMediaUrl(source: MusicSource, raw: string): URL {
   try {
@@ -68,7 +61,7 @@ export function validateMediaUrl(source: MusicSource, raw: string): URL {
       url.password ||
       url.hash ||
       url.port ||
-      !CDN_SUFFIXES[source]?.some((suffix) => url.hostname.endsWith('.' + suffix))
+      !MEDIA_CDN_SUFFIXES[source]?.some((suffix) => url.hostname.endsWith('.' + suffix))
     ) {
       throw new Error()
     }
@@ -84,26 +77,7 @@ export interface MediaSource {
   length?: number
 }
 
-const AUDIO_CONTENT_TYPES = new Set([
-  'audio/mpeg',
-  'audio/mp3',
-  'audio/x-mp3',
-  'audio/flac',
-  'audio/x-flac',
-  'audio/mp4',
-  'audio/x-m4a',
-  'audio/ogg',
-  'application/ogg',
-  'audio/wav',
-  'audio/wave',
-  'audio/x-wav',
-  'audio/vnd.wave',
-  'audio/aac',
-  'audio/aacp',
-  'audio/x-aac',
-  'audio/webm',
-  'application/octet-stream',
-])
+const AUDIO_CONTENT_TYPE_SET = new Set(AUDIO_CONTENT_TYPES)
 
 /** Accept only a plain, full, uncompressed audio response of bounded size. */
 function inspectResponse(response: IncomingMessage): Omit<MediaSource, 'body'> {
@@ -113,7 +87,7 @@ function inspectResponse(response: IncomingMessage): Omit<MediaSource, 'body'> {
   const encoding = response.headers['content-encoding']
   if (encoding !== undefined && encoding !== 'identity') throw new MediaError('MEDIA_ENCODING_REJECTED', 502)
   const contentType = response.headers['content-type']?.split(';')[0].trim().toLowerCase() ?? ''
-  if (!AUDIO_CONTENT_TYPES.has(contentType)) throw new MediaError('MEDIA_TYPE_REJECTED', 502)
+  if (!AUDIO_CONTENT_TYPE_SET.has(contentType)) throw new MediaError('MEDIA_TYPE_REJECTED', 502)
   const rawLength = response.headers['content-length']
   if (rawLength === undefined) return { contentType }
   if (!/^\d+$/.test(rawLength)) throw new MediaError('MEDIA_LENGTH_REJECTED', 502)

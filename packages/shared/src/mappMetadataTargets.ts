@@ -42,15 +42,4 @@ export const MAPP_METADATA_TARGETS = {
   },
 } as const
 
-/** Music CDNs the cover endpoint (Web and platform) may fetch from, and the mini-app may ask for. One list for both. */
-export const COVER_HOST_ALLOWLIST: readonly string[] = [
-  'y.gtimg.cn',
-  'p1.music.126.net',
-  'p2.music.126.net',
-  'p3.music.126.net',
-  'p4.music.126.net',
-  'imgessl.kugou.com',
-]
-
-/** Platform cover responses are capped lower than the Web proxy: they are held in memory as Blob URLs. */
-export const MAPP_COVER_MAX_BYTES = 2 * 1024 * 1024
+export { COVER_HOST_ALLOWLIST, MAPP_COVER_MAX_BYTES } from './mediaContracts.js'
