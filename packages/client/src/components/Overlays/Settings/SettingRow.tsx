@@ -20,12 +20,12 @@ export function SettingRow({
   children: React.ReactNode
 }) {
   return (
-    <div className="flex items-center justify-between gap-4 py-3">
-      <div className="space-y-0.5">
+    <div className="flex flex-wrap items-center justify-between gap-x-4 gap-y-2 py-3 sm:flex-nowrap">
+      <div className="min-w-0 flex-1 basis-[160px] space-y-0.5">
         <Label className="text-sm font-medium">{label}</Label>
         {description && <p className="text-xs text-muted-foreground">{description}</p>}
       </div>
-      <div className="flex shrink-0 items-center gap-1.5">
+      <div className="ml-auto flex max-w-full shrink-0 items-center gap-1.5">
         {onReset && (
           <Tooltip delayDuration={300}>
             <TooltipTrigger asChild>

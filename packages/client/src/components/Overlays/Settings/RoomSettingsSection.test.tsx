@@ -1,12 +1,15 @@
 // @vitest-environment jsdom
 import { act } from 'react'
 import { createRoot } from 'react-dom/client'
+import { fireEvent } from '@testing-library/react'
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import type { QueueMode, RoomState, UserRole } from '@music-together/shared'
 
 vi.mock('sonner', () => ({ toast: { success: vi.fn(), error: vi.fn() } }))
 
+import { toast } from 'sonner'
 import { TooltipProvider } from '@/components/ui/tooltip'
+import { storage } from '@/lib/storage'
 import { useRoomStore } from '@/stores/roomStore'
 import { RoomSettingsSection } from './RoomSettingsSection'
 
@@ -140,5 +143,36 @@ describe('RoomSettingsSection accessibility & touch targets', () => {
     const copyBtn = container.querySelector<HTMLButtonElement>('button[type="button"][aria-label="复制房间密码"]')
     expect(copyBtn).not.toBeNull()
     expect(copyBtn?.textContent).toContain('secret-pass')
+  })
+
+  it('does not toast on nickname blur unless the nickname actually changed', () => {
+    storage.setNickname('OldName')
+    vi.mocked(toast.success).mockClear()
+    show('member', 'keep')
+
+    const input = container.querySelector<HTMLInputElement>('input[placeholder="输入昵称..."]')!
+    expect(input).not.toBeNull()
+
+    // Blur without modifying value — should not fire toast
+    act(() => {
+      fireEvent.blur(input)
+    })
+    expect(toast.success).not.toHaveBeenCalled()
+
+    // Change nickname and blur — saves and toasts once
+    act(() => {
+      fireEvent.change(input, { target: { value: 'NewName' } })
+    })
+    act(() => {
+      fireEvent.blur(input)
+    })
+    expect(storage.getNickname()).toBe('NewName')
+    expect(toast.success).toHaveBeenCalledTimes(1)
+
+    // Blur again without another change — should not re-toast
+    act(() => {
+      fireEvent.blur(input)
+    })
+    expect(toast.success).toHaveBeenCalledTimes(1)
   })
 })

@@ -58,4 +58,13 @@ describe('SettingRow', () => {
     render({ value: '60%' })
     expect(container.textContent).toContain('60%')
   })
+
+  it('allows label truncation and wraps wide controls gracefully on narrow viewports', () => {
+    render({ description: '说明文字' })
+    const row = container.firstElementChild as HTMLElement
+    expect(row.className).toContain('flex-wrap')
+    expect(row.className).toContain('sm:flex-nowrap')
+    expect(row.firstElementChild?.className).toContain('min-w-0')
+    expect(row.firstElementChild?.className).toContain('flex-1')
+  })
 })

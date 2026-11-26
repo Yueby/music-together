@@ -108,6 +108,7 @@ function PlaybackProgress({ onSeek, disabled, showAudioLoading, audioLoadProgres
   return (
     <div className="flex w-full flex-col gap-1">
       <Slider
+        showThumb="hover"
         value={[duration > 0 ? (displayedTime / duration) * 100 : 0]}
         bufferedValue={showAudioLoading && audioLoadProgress !== null ? audioLoadProgress * 100 : undefined}
         loading={showAudioLoading && audioLoadProgress === null}
@@ -129,8 +130,8 @@ function PlaybackProgress({ onSeek, disabled, showAudioLoading, audioLoadProgres
         className="w-full"
       />
       <div className="flex w-full justify-between">
-        <span className="text-xs text-white/50 tabular-nums">{formatTime(displayedTime)}</span>
-        <span className="text-xs text-white/50 tabular-nums">{formatTime(duration)}</span>
+        <span className="text-xs text-white/75 tabular-nums">{formatTime(displayedTime)}</span>
+        <span className="text-xs text-white/75 tabular-nums">{formatTime(duration)}</span>
       </div>
     </div>
   )
@@ -290,7 +291,7 @@ export const PlayerControls = memo(function PlayerControls({
                   <Button
                     variant="ghost"
                     size="icon"
-                    className="h-9 w-9 text-white/70 hover:bg-white/10"
+                    className="h-9 w-9 text-white/80 hover:bg-white/10 hover:text-white"
                     onClick={handlePlayModeToggle}
                     disabled={reconnecting || (!canSetMode && !canVote)}
                     aria-label={modeConfig.label}
@@ -326,7 +327,7 @@ export const PlayerControls = memo(function PlayerControls({
                     <Button
                       variant="ghost"
                       size="icon"
-                      className="h-9 w-9 text-white/70 hover:bg-white/10"
+                      className="h-9 w-9 text-white/80 hover:bg-white/10 hover:text-white"
                       disabled={disabled || skipCooldown === 'prev'}
                       onClick={() => handleSkip(onPrev, 'prev')}
                       aria-label="上一首"
@@ -463,7 +464,7 @@ export const PlayerControls = memo(function PlayerControls({
                   <Button
                     variant="ghost"
                     size="icon"
-                    className="h-9 w-9 text-white/70 hover:bg-white/10"
+                    className="h-9 w-9 text-white/80 hover:bg-white/10 hover:text-white"
                     disabled={disabled || skipCooldown === 'next'}
                     onClick={() => handleSkip(onNext, 'next')}
                     aria-label="下一首"
@@ -484,7 +485,7 @@ export const PlayerControls = memo(function PlayerControls({
                   <Button
                     variant="ghost"
                     size="icon"
-                    className="relative h-9 w-9 text-white/70 hover:bg-white/10"
+                    className="relative h-9 w-9 text-white/80 hover:bg-white/10 hover:text-white"
                     onClick={onOpenQueue}
                     aria-label="播放列表"
                   >

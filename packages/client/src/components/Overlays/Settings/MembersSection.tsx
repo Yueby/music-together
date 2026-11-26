@@ -42,33 +42,42 @@ export function MembersSection({ onSetUserRole }: MembersSectionProps) {
         <div className="space-y-1">
           {[...(room?.users ?? [])]
             .sort((a, b) => (ROLE_ORDER[a.role] ?? 9) - (ROLE_ORDER[b.role] ?? 9))
-            .map((user) => (
-              <div key={user.id} className="flex items-center gap-2 rounded-lg px-3 py-1.5">
-                {getRoleIcon(user.role)}
-                <span className="text-sm">{user.nickname}</span>
-                {user.id === currentUser?.id && (
-                  <Badge variant="secondary" className="text-xs">
-                    你
-                  </Badge>
-                )}
-                <Badge variant="outline" className="text-xs">
-                  {ROLE_LABELS[user.role]}
-                </Badge>
+            .map((user) => {
+              const canChangeRole = Boolean(
+                isOwner && user.role !== 'owner' && user.id !== currentUser?.id && onSetUserRole,
+              )
+              return (
+                <div key={user.id} className="flex min-w-0 items-center gap-2 rounded-lg px-2 py-1.5 sm:px-3">
+                  <span className="shrink-0">{getRoleIcon(user.role)}</span>
+                  <span className="min-w-0 flex-1 truncate text-sm">{user.nickname}</span>
+                  {user.id === currentUser?.id && (
+                    <Badge variant="secondary" className="shrink-0 text-xs">
+                      你
+                    </Badge>
+                  )}
 
-                {/* Owner can change other users' roles (not their own, not other owners) */}
-                {isOwner && user.role !== 'owner' && user.id !== currentUser?.id && onSetUserRole && (
-                  <Select value={user.role} onValueChange={(v) => onSetUserRole(user.id, v as 'admin' | 'member')}>
-                    <SelectTrigger className="ml-auto h-7 w-24 text-xs">
-                      <SelectValue />
-                    </SelectTrigger>
-                    <SelectContent>
-                      <SelectItem value="admin">管理员</SelectItem>
-                      <SelectItem value="member">成员</SelectItem>
-                    </SelectContent>
-                  </Select>
-                )}
-              </div>
-            ))}
+                  {/* Owner can change other users' roles (Select replaces the redundant static role badge) */}
+                  {canChangeRole ? (
+                    <Select
+                      value={user.role}
+                      onValueChange={(v) => onSetUserRole!(user.id, v as 'admin' | 'member')}
+                    >
+                      <SelectTrigger className="h-8 w-24 shrink-0 text-xs sm:h-7" aria-label={`更改 ${user.nickname} 的角色`}>
+                        <SelectValue />
+                      </SelectTrigger>
+                      <SelectContent>
+                        <SelectItem value="admin">管理员</SelectItem>
+                        <SelectItem value="member">成员</SelectItem>
+                      </SelectContent>
+                    </Select>
+                  ) : (
+                    <Badge variant="outline" className="shrink-0 text-xs">
+                      {ROLE_LABELS[user.role]}
+                    </Badge>
+                  )}
+                </div>
+              )
+            })}
         </div>
       </div>
     </div>

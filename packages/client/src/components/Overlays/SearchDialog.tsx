@@ -23,7 +23,7 @@ import { useQueueMembership } from '@/hooks/useQueueMembership'
 import { useSocketContext } from '@/providers/SocketProvider'
 import { EVENTS, parseMusicLink, supportsIdLookup } from '@music-together/shared'
 import type { Artist, MusicSource, Track, Playlist } from '@music-together/shared'
-import { Loader2, Music2, Search, ListMusic, User } from 'lucide-react'
+import { Loader2, Music2, Search, ListMusic, User, X } from 'lucide-react'
 import { useCallback, useRef, useState, useEffect } from 'react'
 import { CollectionRow } from './CollectionRow'
 
@@ -52,6 +52,7 @@ export function SearchDialog({ open, onOpenChange, onAddToQueue, onInsertAfterCu
   const [source, setSource] = useState<MusicSource>('netease')
   const [searchType, setSearchType] = useState<SearchType>('song')
   const [keyword, setKeyword] = useState('')
+  const inputRef = useRef<HTMLInputElement>(null)
   const listRef = useRef<VirtualTrackListRef>(null)
   const { isAdded: isTrackAdded, markPending, addOnce } = useQueueMembership()
   const { socket } = useSocketContext()
@@ -75,12 +76,6 @@ export function SearchDialog({ open, onOpenChange, onAddToQueue, onInsertAfterCu
     source,
     searchType,
   )
-
-  // Compact until something has been searched or opened, then as tall as the other dialogs. Both heights are fixed
-  // lengths so the change animates; it stays tall afterwards (switching the type clears the results, which must not
-  // shrink the dialog just to grow it again).
-  const [expanded, setExpanded] = useState(false)
-  if ((hasSearched || page) && !expanded) setExpanded(true)
 
   // Auto re-search when source or type changes
   const prevSourceRef = useRef(source)
@@ -160,12 +155,7 @@ export function SearchDialog({ open, onOpenChange, onAddToQueue, onInsertAfterCu
 
   return (
     <ResponsiveDialog open={open} onOpenChange={onOpenChange}>
-      <ResponsiveDialogContent
-        className={cn(
-          'flex h-[calc(var(--app-dvh)*0.7)] flex-col gap-0 overflow-hidden p-0 transition-[height] [transition-duration:300ms] motion-reduce:transition-none sm:max-h-[calc(var(--app-dvh)*0.8)] sm:max-w-2xl',
-          expanded ? 'sm:h-[calc(var(--app-dvh)*0.7)]' : 'sm:h-[25rem]',
-        )}
-      >
+      <ResponsiveDialogContent className="flex h-[calc(var(--app-dvh)*0.7)] flex-col gap-0 overflow-hidden p-0 sm:max-h-[calc(var(--app-dvh)*0.8)] sm:max-w-2xl">
         <DialogNavBar
           title={page?.title ?? '搜索点歌'}
           description="按名称、ID 或分享链接查找歌曲"
@@ -194,15 +184,36 @@ export function SearchDialog({ open, onOpenChange, onAddToQueue, onInsertAfterCu
               <div className="flex min-h-0 flex-1 flex-col gap-4">
                 {/* Search input */}
                 <div className="flex gap-2">
-                  <Input
-                    placeholder={PLACEHOLDERS[searchType]}
-                    value={keyword}
-                    onChange={(e) => setKeyword(e.target.value)}
-                    onKeyDown={(e) => e.key === 'Enter' && handleSearch()}
-                    className="flex-1"
-                    autoFocus
-                    aria-label="搜索关键词"
-                  />
+                  <div className="relative flex-1">
+                    <Input
+                      ref={inputRef}
+                      placeholder={PLACEHOLDERS[searchType]}
+                      value={keyword}
+                      onChange={(e) => setKeyword(e.target.value)}
+                      onKeyDown={(e) => {
+                        // Enter that confirms a CJK/IME composition candidate must not prematurely submit search.
+                        if (e.key === 'Enter' && !e.nativeEvent.isComposing && e.keyCode !== 229) {
+                          handleSearch()
+                        }
+                      }}
+                      className={cn('w-full', keyword && 'pr-9')}
+                      autoFocus
+                      aria-label="搜索关键词"
+                    />
+                    {keyword && (
+                      <button
+                        type="button"
+                        onClick={() => {
+                          setKeyword('')
+                          inputRef.current?.focus()
+                        }}
+                        aria-label="清空搜索关键词"
+                        className="absolute right-1.5 top-1/2 flex size-7 -translate-y-1/2 items-center justify-center rounded-sm text-muted-foreground transition-colors hover:bg-accent hover:text-foreground focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring"
+                      >
+                        <X className="h-3.5 w-3.5" />
+                      </button>
+                    )}
+                  </div>
                   <Button onClick={() => handleSearch()} disabled={loading} aria-label="搜索">
                     {loading ? <Loader2 className="h-4 w-4 animate-spin" /> : <Search className="h-4 w-4" />}
                   </Button>

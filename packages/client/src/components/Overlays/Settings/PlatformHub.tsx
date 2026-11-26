@@ -6,7 +6,7 @@ import type { DialogPages } from '@/hooks/useDialogPages'
 import { usePlaylist } from '@/hooks/usePlaylist'
 import { openArtistPage } from '@/stores/artistPageStore'
 import type { Artist, Playlist } from '@music-together/shared'
-import { useCallback, useEffect } from 'react'
+import { useCallback, useEffect, useRef } from 'react'
 import { AccountHome } from './AccountHome'
 
 /**
@@ -26,6 +26,12 @@ export function PlatformHub({ session, pages }: { session: AccountSession; pages
   const playlist = usePlaylist()
   const discover = useAccountDiscover(platform, loggedIn, verifying)
   const { open: openPage, reset: backToHome } = pages
+  const homeScrollTopRef = useRef(0)
+  const prevPlatformRef = useRef(platform)
+  if (prevPlatformRef.current !== platform) {
+    prevPlatformRef.current = platform
+    homeScrollTopRef.current = 0
+  }
 
   // Switching platform leaves whatever was open: it belongs to the previous one.
   useEffect(() => {
@@ -69,6 +75,7 @@ export function PlatformHub({ session, pages }: { session: AccountSession; pages
           session={session}
           discover={discover}
           playlists={playlist}
+          scrollTopRef={homeScrollTopRef}
           onOpenPlaylist={openCollection}
           onOpenDaily={() => openPage({ kind: 'daily', title: '每日推荐' })}
           onOpenArtist={(artist: Artist) => openArtistPage({ source: platform, id: artist.id, name: artist.name })}

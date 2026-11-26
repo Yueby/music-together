@@ -11,7 +11,7 @@ import { useRoomStore } from '@/stores/roomStore'
 import type { AudioQuality, QueueMode, RoomSettingsUpdate } from '@music-together/shared'
 import { LIMITS } from '@music-together/shared'
 import { Check, Copy, Lock, LockOpen, Pencil, X } from 'lucide-react'
-import { useEffect, useState } from 'react'
+import { useEffect, useRef, useState } from 'react'
 import { toast } from 'sonner'
 import { SettingRow } from './SettingRow'
 
@@ -49,13 +49,14 @@ export function RoomSettingsSection({ onUpdateSettings }: RoomSettingsSectionPro
   const [passwordEnabled, setPasswordEnabled] = useState(room?.hasPassword ?? false)
 
   // 昵称编辑
-  const [nickname, setNickname] = useState(storage.getNickname())
+  const [nickname, setNickname] = useState(() => storage.getNickname())
+  const savedNicknameRef = useRef(nickname.trim())
   const handleNicknameBlur = () => {
     const trimmed = nickname.trim()
-    if (trimmed) {
-      storage.setNickname(trimmed)
-      toast.success('昵称已保存（下次加入房间生效）')
-    }
+    if (!trimmed || trimmed === savedNicknameRef.current) return
+    storage.setNickname(trimmed)
+    savedNicknameRef.current = trimmed
+    toast.success('昵称已保存（下次加入房间生效）')
   }
 
   // Room name editing state
