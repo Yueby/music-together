@@ -19,15 +19,6 @@ const DESIGN_WIDTH = 300
 /** Delay before revealing audio loading UI so quick web loads and preloaded tracks never flicker. */
 const AUDIO_LOAD_REVEAL_DELAY_MS = 300
 
-/** Perimeter progress ring sized to hug the 56px (h-14 w-14) play/pause button cleanly. */
-const PLAY_RING_SIZE = 56
-const PLAY_RING_STROKE = 2.5
-const PLAY_RING_RADIUS = (PLAY_RING_SIZE - PLAY_RING_STROKE) / 2
-const PLAY_RING_CIRCUMFERENCE = 2 * Math.PI * PLAY_RING_RADIUS
-/** Indeterminate orbiting arc covers ~28% of the perimeter for a clean luminous sweep. */
-const PLAY_RING_ORBIT_ARC = PLAY_RING_CIRCUMFERENCE * 0.28
-const PLAY_RING_ORBIT_GAP = PLAY_RING_CIRCUMFERENCE - PLAY_RING_ORBIT_ARC
-
 const WAVE_BARS = [
   { id: 'left', keyframes: [0.34, 0.92, 0.42, 0.72, 0.34], decodingKeyframes: [0.42, 0.68, 0.42], delay: 0, staticHeight: 'h-2.5' },
   { id: 'center', keyframes: [0.56, 1, 0.38, 0.88, 0.56], decodingKeyframes: [0.58, 0.86, 0.58], delay: 0.14, staticHeight: 'h-4.5' },
@@ -264,12 +255,6 @@ export const PlayerControls = memo(function PlayerControls({
       ? '暂停'
       : '播放'
   const isDecoding = audioLoadPhase === 'decoding'
-  const ringMode: 'decoding' | 'determinate' | 'indeterminate' = isDecoding
-    ? 'decoding'
-    : audioLoadProgress !== null
-      ? 'determinate'
-      : 'indeterminate'
-  const clampedRingProgress = audioLoadProgress !== null ? Math.max(0, Math.min(1, audioLoadProgress)) : 0
 
   return (
     <div ref={wrapperRef} className="w-full">
@@ -358,71 +343,6 @@ export const PlayerControls = memo(function PlayerControls({
                     aria-label={playButtonLabel}
                     aria-busy={showAudioLoading}
                   >
-                    {showAudioLoading && (
-                      <svg
-                        aria-hidden="true"
-                        data-testid="audio-load-ring"
-                        data-ring-mode={ringMode}
-                        viewBox={`0 0 ${PLAY_RING_SIZE} ${PLAY_RING_SIZE}`}
-                        className={cn(
-                          'pointer-events-none absolute inset-0 size-full -rotate-90',
-                          ringMode === 'indeterminate' &&
-                            !prefersReducedMotion &&
-                            'animate-spin [animation-duration:1.1s] motion-reduce:animate-none',
-                        )}
-                      >
-                        <circle
-                          cx={PLAY_RING_SIZE / 2}
-                          cy={PLAY_RING_SIZE / 2}
-                          r={PLAY_RING_RADIUS}
-                          fill="none"
-                          stroke="currentColor"
-                          strokeWidth={PLAY_RING_STROKE}
-                          className="text-white/15"
-                        />
-                        {ringMode === 'decoding' ? (
-                          <m.circle
-                            cx={PLAY_RING_SIZE / 2}
-                            cy={PLAY_RING_SIZE / 2}
-                            r={PLAY_RING_RADIUS}
-                            fill="none"
-                            stroke="currentColor"
-                            strokeWidth={PLAY_RING_STROKE}
-                            strokeLinecap="round"
-                            strokeDasharray={PLAY_RING_CIRCUMFERENCE}
-                            strokeDashoffset={0}
-                            className="text-white/90 drop-shadow-[0_0_6px_rgba(255,255,255,0.35)]"
-                            animate={prefersReducedMotion ? { opacity: 0.9 } : { opacity: [0.65, 1, 0.65] }}
-                            transition={
-                              prefersReducedMotion ? { duration: 0 } : { duration: 1.4, ease: 'easeInOut', repeat: Infinity }
-                            }
-                          />
-                        ) : (
-                          <circle
-                            cx={PLAY_RING_SIZE / 2}
-                            cy={PLAY_RING_SIZE / 2}
-                            r={PLAY_RING_RADIUS}
-                            fill="none"
-                            stroke="currentColor"
-                            strokeWidth={PLAY_RING_STROKE}
-                            strokeLinecap="round"
-                            strokeDasharray={
-                              ringMode === 'determinate'
-                                ? PLAY_RING_CIRCUMFERENCE
-                                : `${PLAY_RING_ORBIT_ARC} ${PLAY_RING_ORBIT_GAP}`
-                            }
-                            strokeDashoffset={
-                              ringMode === 'determinate' ? PLAY_RING_CIRCUMFERENCE * (1 - clampedRingProgress) : 0
-                            }
-                            className={cn(
-                              'text-white/90 drop-shadow-[0_0_6px_rgba(255,255,255,0.35)]',
-                              ringMode === 'determinate' &&
-                                'transition-[stroke-dashoffset] duration-200 ease-out motion-reduce:transition-none',
-                            )}
-                          />
-                        )}
-                      </svg>
-                    )}
                     <AnimatePresence mode="wait" initial={false}>
                       {showAudioLoading ? (
                         <m.span
