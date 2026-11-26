@@ -5,7 +5,10 @@ import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import type { QueueMode, RoomState, Track } from '@music-together/shared'
 
 vi.mock('@/providers/SocketProvider', () => ({ useSocketContext: () => ({ socket: { emit: vi.fn() } }) }))
-vi.mock('@/providers/AbilityProvider', () => ({ useAppAbility: () => ({ can: () => true }) }))
+const { useAppAbilityMock } = vi.hoisted(() => ({
+  useAppAbilityMock: vi.fn(() => ({ can: () => true })),
+}))
+vi.mock('@/providers/AbilityProvider', () => ({ useAppAbility: useAppAbilityMock }))
 
 import { TooltipProvider } from '@/components/ui/tooltip'
 import { usePlayerStore } from '@/stores/playerStore'
@@ -138,6 +141,18 @@ const waveEl = () => container.querySelector('[data-testid="audio-load-wave"]')
 const ringEl = () => container.querySelector('[data-testid="audio-load-ring"]')
 const sliderBufferedEl = () => container.querySelector<HTMLElement>('[data-slot="slider-buffered"]')
 const sliderLoadingEl = () => container.querySelector<HTMLElement>('[data-slot="slider-loading"]')
+
+it('updates playback progress without rendering the control buttons again', () => {
+  usePlayerStore.setState({ currentTrack: sampleTrack, duration: 120 })
+  show()
+  const controlRenders = useAppAbilityMock.mock.calls.length
+
+  act(() => usePlayerStore.getState().setCurrentTime(30))
+
+  expect(container.querySelector('[role="slider"]')?.getAttribute('aria-valuenow')).toBe('25')
+  expect(container.textContent).toContain('0:30')
+  expect(useAppAbilityMock).toHaveBeenCalledTimes(controlRenders)
+})
 
 describe('PlayerControls "previous"', () => {
   it('is there in a room that keeps its queue', () => {

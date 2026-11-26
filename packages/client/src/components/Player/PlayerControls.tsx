@@ -91,6 +91,51 @@ interface PlayerControlsProps {
   onStartVote: (action: VoteAction, payload?: Record<string, unknown>) => void
 }
 
+interface PlaybackProgressProps {
+  onSeek: PlayerControlsProps['onSeek']
+  disabled: boolean
+  showAudioLoading: boolean
+  audioLoadProgress: number | null
+}
+
+function PlaybackProgress({ onSeek, disabled, showAudioLoading, audioLoadProgress }: PlaybackProgressProps) {
+  const currentTime = usePlayerStore((s) => s.currentTime)
+  const duration = usePlayerStore((s) => s.duration)
+  const [isSeeking, setIsSeeking] = useState(false)
+  const [seekTime, setSeekTime] = useState(0)
+  const displayedTime = isSeeking ? seekTime : currentTime
+
+  return (
+    <div className="flex w-full flex-col gap-1">
+      <Slider
+        value={[duration > 0 ? (displayedTime / duration) * 100 : 0]}
+        bufferedValue={showAudioLoading && audioLoadProgress !== null ? audioLoadProgress * 100 : undefined}
+        loading={showAudioLoading && audioLoadProgress === null}
+        max={100}
+        step={0.1}
+        disabled={disabled}
+        onValueChange={(val) => {
+          if (duration > 0) {
+            setIsSeeking(true)
+            setSeekTime((val[0] / 100) * duration)
+          }
+        }}
+        onValueCommit={(val) => {
+          if (duration > 0) {
+            onSeek((val[0] / 100) * duration)
+          }
+          setIsSeeking(false)
+        }}
+        className="w-full"
+      />
+      <div className="flex w-full justify-between">
+        <span className="text-xs text-white/50 tabular-nums">{formatTime(displayedTime)}</span>
+        <span className="text-xs text-white/50 tabular-nums">{formatTime(duration)}</span>
+      </div>
+    </div>
+  )
+}
+
 export const PlayerControls = memo(function PlayerControls({
   onPlay,
   onPause,
@@ -102,8 +147,6 @@ export const PlayerControls = memo(function PlayerControls({
 }: PlayerControlsProps) {
   const { socket } = useSocketContext()
   const isPlaying = usePlayerStore((s) => s.isPlaying)
-  const currentTime = usePlayerStore((s) => s.currentTime)
-  const duration = usePlayerStore((s) => s.duration)
   const currentTrack = usePlayerStore((s) => s.currentTrack)
   const audioLoadPhase = usePlayerStore((s) => s.audioLoadPhase)
   const audioLoadProgress = usePlayerStore((s) => s.audioLoadProgress)
@@ -120,8 +163,6 @@ export const PlayerControls = memo(function PlayerControls({
   const canVote = ability.can('vote', 'Player')
   const [skipCooldown, setSkipCooldown] = useState<'next' | 'prev' | null>(null)
   const [playCooldown, setPlayCooldown] = useState(false)
-  const [isSeeking, setIsSeeking] = useState(false)
-  const [seekTime, setSeekTime] = useState(0)
   const [loadingRevealed, setLoadingRevealed] = useState(false)
   const cooldownTimer = useRef<ReturnType<typeof setTimeout>>(null)
   const playCooldownTimer = useRef<ReturnType<typeof setTimeout>>(null)
@@ -232,34 +273,12 @@ export const PlayerControls = memo(function PlayerControls({
   return (
     <div ref={wrapperRef} className="w-full">
       <div ref={innerRef} className="flex flex-col gap-6" style={{ width: DESIGN_WIDTH }}>
-        {/* 1. Progress bar */}
-        <div className="flex w-full flex-col gap-1">
-          <Slider
-            value={[duration > 0 ? ((isSeeking ? seekTime : currentTime) / duration) * 100 : 0]}
-            bufferedValue={showAudioLoading && audioLoadProgress !== null ? audioLoadProgress * 100 : undefined}
-            loading={showAudioLoading && audioLoadProgress === null}
-            max={100}
-            step={0.1}
-            disabled={disabled || !canSeek}
-            onValueChange={(val) => {
-              if (duration > 0) {
-                setIsSeeking(true)
-                setSeekTime((val[0] / 100) * duration)
-              }
-            }}
-            onValueCommit={(val) => {
-              if (duration > 0) {
-                onSeek((val[0] / 100) * duration)
-              }
-              setIsSeeking(false)
-            }}
-            className="w-full"
-          />
-          <div className="flex w-full justify-between">
-            <span className="text-xs text-white/50 tabular-nums">{formatTime(isSeeking ? seekTime : currentTime)}</span>
-            <span className="text-xs text-white/50 tabular-nums">{formatTime(duration)}</span>
-          </div>
-        </div>
+        <PlaybackProgress
+          onSeek={onSeek}
+          disabled={disabled || !canSeek}
+          showAudioLoading={showAudioLoading}
+          audioLoadProgress={audioLoadProgress}
+        />
 
         {/* 2. Controls row — left/right flex-1 keeps center truly centered */}
         <div className="flex w-full items-center">

@@ -103,7 +103,9 @@ export default function RoomPage() {
   const { play, pause, seek, next, prev } = usePlayer()
   const { addTrack, insertAfterCurrent, removeTrack, reorderTracks, clearQueue } = useQueue()
 
-  const room = useRoomStore((s) => s.room)
+  const hasRoom = useRoomStore((s) => Boolean(s.room))
+  const roomIdFromStore = useRoomStore((s) => s.room?.id)
+  const roomName = useRoomStore((s) => s.room?.name)
   const connectionStatus = useRoomStore((s) => s.connectionStatus)
   const { hasUpdate, breakingUpdate } = useVersionCheck()
   const [dismissedUpdate, setDismissedUpdate] = useState(false)
@@ -156,7 +158,7 @@ export default function RoomPage() {
     }
 
     // If already in this room (e.g. navigated from lobby), skip pre-check
-    if (room && room.id === roomId) {
+    if (roomIdFromStore && roomIdFromStore === roomId) {
       setChecking(false)
       return
     }
@@ -194,14 +196,18 @@ export default function RoomPage() {
       cancelled = true
       controller.abort()
     }
-    // `room` is excluded intentionally — pre-check follows roomId or the host socket, not room broadcasts.
+    // `roomIdFromStore` is excluded intentionally to keep the pre-check tied to the route and host socket.
     // `navigate` is stable (React Router guarantee) and would cause unnecessary re-runs if included.
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [roomId, socket])
 
   // --- Gate start handler (receives password from gate if applicable) ---
-  const handleGateStart = useCallback(async (password?: string) => {
-    await unlockAudio()
+  const handleGateStart = useCallback(async (password?: string): Promise<void> => {
+    try {
+      await unlockAudio()
+    } catch (error) {
+      console.error('Failed to unlock audio', error)
+    }
     if (password) passwordRef.current = password
     manualJoinRef.current = true
     setGatePasswordError(null)
@@ -234,7 +240,7 @@ export default function RoomPage() {
       setGateOpen(false)
       return
     }
-    if ((!room || connectionStatus === 'reconnecting') && isConnected && !joiningRef.current && roomId) {
+    if ((!hasRoom || connectionStatus === 'reconnecting') && isConnected && !joiningRef.current && roomId) {
       joiningRef.current = true
       const nickname = storage.getNickname()
       if (!nickname) {
@@ -255,7 +261,7 @@ export default function RoomPage() {
       joiningRef.current = accepted
       manualJoinRef.current = false
     }
-  }, [gateOpen, room, connectionStatus, isConnected, socket, roomId, requiresManualJoin, joinRetry, leaveRoom])
+  }, [gateOpen, hasRoom, connectionStatus, isConnected, socket, roomId, requiresManualJoin, joinRetry, leaveRoom])
 
   // --- Handle ROOM_ERROR — password errors, fallback dialog ---
   useEffect(() => {
@@ -418,6 +424,10 @@ export default function RoomPage() {
     setSearchOpen(true)
   }, [])
 
+  const handleOpenQueue = useCallback(() => {
+    setQueueOpen(true)
+  }, [])
+
   const handleOpenMembers = useCallback(() => {
     setSettingsInitialTab('members')
     setSettingsOpen(true)
@@ -442,7 +452,7 @@ export default function RoomPage() {
   }
 
   // --- Waiting in server admission queue (direct room link while server is full) ---
-  if (!room && admissionQueue) {
+  if (!hasRoom && admissionQueue) {
     return (
       <AdmissionQueueCard
         queued={admissionQueue}
@@ -543,7 +553,7 @@ export default function RoomPage() {
                 onNext={next}
                 onPrev={prev}
                 onOpenChat={toggleChat}
-                onOpenQueue={() => setQueueOpen(true)}
+                onOpenQueue={handleOpenQueue}
                 chatUnreadCount={chatUnreadCount}
               />
             </div>
@@ -564,7 +574,7 @@ export default function RoomPage() {
           {/* Mobile: chat drawer from bottom */}
           {isMobile && (
             <Drawer open={chatOpen} onOpenChange={setChatOpen}>
-              <DrawerContent className="flex h-[calc(var(--app-vh)*0.7)] flex-col p-0">
+              <DrawerContent className="flex h-[calc(var(--app-dvh)*0.7)] flex-col p-0">
                 <DrawerHeader className="sr-only">
                   <DrawerTitle>聊天</DrawerTitle>
                 </DrawerHeader>
@@ -612,7 +622,7 @@ export default function RoomPage() {
         <PasswordDialog
           open={passwordNeeded}
           onOpenChange={handlePasswordOpenChange}
-          roomName={room?.name ?? roomId ?? ''}
+          roomName={roomName ?? roomId ?? ''}
           onSubmit={handlePasswordSubmit}
           error={passwordError}
           isLoading={passwordLoading}

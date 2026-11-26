@@ -8,7 +8,8 @@ import { useEffect } from 'react'
  * Check on mount and share the result with the socket handshake.
  */
 export function useVersionCheck() {
-  const status = useVersionStore()
+  const hasUpdate = useVersionStore((s) => s.hasUpdate)
+  const breakingUpdate = useVersionStore((s) => s.breakingUpdate)
 
   useEffect(() => {
     if (!hostRuntime.versionCheck) return
@@ -27,7 +28,7 @@ export function useVersionCheck() {
   }, [])
 
   return {
-    hasUpdate: hostRuntime.versionCheck && status.hasUpdate,
-    breakingUpdate: hostRuntime.versionCheck && status.breakingUpdate,
+    hasUpdate: hostRuntime.versionCheck && hasUpdate,
+    breakingUpdate: hostRuntime.versionCheck && breakingUpdate,
   }
 }

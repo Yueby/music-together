@@ -11,6 +11,8 @@
       "@/lib/RoomCommands": ["./src/compat/hostModules/RoomCommands.ts"],
       "@/lib/roomCheck": ["./src/compat/hostModules/roomCheck.ts"],
       "@/lib/audioUnlock": ["./src/compat/hostModules/audioUnlock.ts"],
+      "@/lib/artwork": ["./src/compat/hostModules/artwork.ts"],
+      "@/lib/clipboard": ["./src/compat/hostModules/clipboard.ts"],
       "@/lib/hostRuntime": ["./src/compat/hostModules/hostRuntime.ts"],
       "@/lib/storageBackend": ["./src/compat/storageBackend.ts"],
       "@/*": ["../client/src/*"]

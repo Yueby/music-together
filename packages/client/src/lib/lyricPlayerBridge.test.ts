@@ -1,5 +1,6 @@
+import { usePlayerStore } from '@/stores/playerStore'
 import type { LyricPlayerBase } from '@applemusic-like-lyrics/core'
-import { describe, expect, it, vi } from 'vitest'
+import { afterEach, describe, expect, it, vi } from 'vitest'
 import { lyricPlayerBridge } from './lyricPlayerBridge'
 
 function playerMock() {
@@ -11,6 +12,22 @@ function playerMock() {
 }
 
 describe('lyricPlayerBridge', () => {
+  afterEach(() => usePlayerStore.getState().reset())
+
+  it('syncs on attach and follows position changes while paused until detached', () => {
+    const player = playerMock()
+    usePlayerStore.setState({ currentTime: 12.3456, isPlaying: false })
+
+    const detach = lyricPlayerBridge.attach(player as unknown as LyricPlayerBase)
+    expect(player.setCurrentTime).toHaveBeenLastCalledWith(12346, true)
+    usePlayerStore.setState({ currentTime: 17 })
+    expect(player.setCurrentTime).toHaveBeenLastCalledWith(17000, true)
+
+    detach()
+    usePlayerStore.setState({ currentTime: 20 })
+    expect(player.setCurrentTime).toHaveBeenCalledTimes(2)
+  })
+
   it('updates the official AMLL player directly', () => {
     const player = playerMock()
     const detach = lyricPlayerBridge.attach(player as unknown as LyricPlayerBase)
@@ -25,6 +42,7 @@ describe('lyricPlayerBridge', () => {
     const player = playerMock()
     const detach = lyricPlayerBridge.attach(player as unknown as LyricPlayerBase)
 
+    player.setCurrentTime.mockClear()
     lyricPlayerBridge.seek(42)
 
     expect(player.resetScroll).toHaveBeenCalledOnce()

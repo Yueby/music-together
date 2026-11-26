@@ -112,7 +112,11 @@ export function createRoom(
   password?: string | null,
   persistentUserId?: string,
 ): { room: RoomData; user: User } {
-  const roomId = nanoid(6).toUpperCase()
+  let roomId = nanoid(6).toUpperCase()
+  for (let attempt = 1; roomRepo.get(roomId); attempt++) {
+    if (attempt >= 10) throw new Error('Could not allocate a unique room ID')
+    roomId = nanoid(6).toUpperCase()
+  }
   const userId = persistentUserId || socketId
 
   const user: User = { id: userId, nickname, role: 'owner' }

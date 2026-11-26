@@ -1,8 +1,14 @@
 import type { Track } from '@music-together/shared'
-import { afterEach, describe, expect, it } from 'vitest'
+import { nanoid } from 'nanoid'
+import { afterEach, describe, expect, it, vi } from 'vitest'
 import { roomRepo } from '../repositories/roomRepository.js'
 import { toPublicRoomState } from '../utils/roomUtils.js'
 import { createRoom, joinRoom, leaveRoom, setUserRole, updateSettings, validateJoinRequest } from './roomService.js'
+
+vi.mock(import('nanoid'), async (importOriginal) => {
+  const original = await importOriginal()
+  return { ...original, nanoid: vi.fn(original.nanoid) }
+})
 
 const ROOM_ID = 'ROOM01'
 
@@ -17,10 +23,35 @@ function createTestRoom() {
 }
 
 afterEach(() => {
+  vi.mocked(nanoid).mockReset()
   for (const roomId of roomRepo.getAllIds()) roomRepo.delete(roomId)
   for (const socketId of ['socket-owner', 'socket-admin', 'socket-member-1', 'socket-member-2', 'socket-owner-new']) {
     roomRepo.deleteSocketMapping(socketId)
   }
+})
+
+describe('roomService room creation', () => {
+  it('retries IDs that collide after uppercasing without replacing an active room', () => {
+    const existing = createTestRoom()
+    vi.mocked(nanoid).mockReturnValueOnce('room01').mockReturnValueOnce('room02')
+
+    const { room } = createRoom('socket-member-1', 'Other Owner')
+
+    expect(room.id).toBe('ROOM02')
+    expect(roomRepo.get('ROOM02')).toBe(room)
+    expect(roomRepo.get(ROOM_ID)).toBe(existing)
+  })
+
+  it('fails after ten attempts if every generated ID is occupied', () => {
+    const existing = createTestRoom()
+    vi.mocked(nanoid).mockClear().mockReturnValue('room01')
+
+    expect(() => createRoom('socket-member-1', 'Other Owner')).toThrow('Could not allocate a unique room ID')
+
+    expect(nanoid).toHaveBeenCalledTimes(10)
+    expect(roomRepo.get(ROOM_ID)).toBe(existing)
+    expect(roomRepo.getSocketMapping('socket-member-1')).toBeUndefined()
+  })
 })
 
 describe('roomService role and host reconciliation', () => {
