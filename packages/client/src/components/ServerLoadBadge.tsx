@@ -6,7 +6,7 @@ import { cn } from '@/lib/utils'
 import { useServerStatusStore } from '@/stores/serverStatusStore'
 import type { ServerCapacityStatus, ServerLoadLevel } from '@music-together/shared'
 import { AlertTriangle, Clock, Radio, Users } from 'lucide-react'
-import { motion, useReducedMotion } from 'motion/react'
+import { m, useReducedMotion } from 'motion/react'
 import { useCallback, useEffect, useRef, useState } from 'react'
 
 export interface ServerLoadMeta {
@@ -170,7 +170,7 @@ export function ServerStatusPopoverContent({ capacity }: { capacity: ServerCapac
           </div>
 
           <div className="h-1.5 w-full overflow-hidden rounded-full bg-secondary">
-            <motion.div
+            <m.div
               className={cn('h-full rounded-full', meta.barClass)}
               initial={false}
               animate={{ width: `${pct}%` }}

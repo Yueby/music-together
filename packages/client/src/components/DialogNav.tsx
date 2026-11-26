@@ -7,7 +7,7 @@ import {
 } from '@/components/ui/responsive-dialog'
 import { cn } from '@/lib/utils'
 import { ArrowLeft } from 'lucide-react'
-import { AnimatePresence, motion } from 'motion/react'
+import { AnimatePresence, m } from 'motion/react'
 import type { ReactNode } from 'react'
 
 /** Width of the back button's slot: the button (size-8) and a little space after it. */
@@ -35,7 +35,7 @@ export function DialogNavBar({ title, description, onBack, children }: DialogNav
       <div className="flex min-w-0 items-center">
         <AnimatePresence initial={false}>
           {onBack ? (
-            <motion.div
+            <m.div
               key="back"
               initial={{ width: 0, opacity: 0 }}
               animate={{ width: BACK_SLOT, opacity: 1 }}
@@ -46,7 +46,7 @@ export function DialogNavBar({ title, description, onBack, children }: DialogNav
               <Button variant="ghost" size="icon" className="size-8" onClick={onBack} aria-label="返回">
                 <ArrowLeft className="size-4" />
               </Button>
-            </motion.div>
+            </m.div>
           ) : null}
         </AnimatePresence>
         <ResponsiveDialogTitle
@@ -69,7 +69,7 @@ export function DialogNavBar({ title, description, onBack, children }: DialogNav
 export function DialogPageTransition({ pageKey, children }: { pageKey: string; children: ReactNode }) {
   return (
     <AnimatePresence mode="wait" initial={false}>
-      <motion.div
+      <m.div
         key={pageKey}
         initial={{ opacity: 0 }}
         animate={{ opacity: 1 }}
@@ -78,7 +78,7 @@ export function DialogPageTransition({ pageKey, children }: { pageKey: string; c
         className="flex min-h-0 min-w-0 flex-1 flex-col"
       >
         {children}
-      </motion.div>
+      </m.div>
     </AnimatePresence>
   )
 }

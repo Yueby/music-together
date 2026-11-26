@@ -11,7 +11,7 @@ import {
 } from '@/components/ui/responsive-dialog'
 import { cn } from '@/lib/utils'
 import { Loader2, Lock } from 'lucide-react'
-import { motion } from 'motion/react'
+import { m } from 'motion/react'
 import { useState } from 'react'
 
 interface PasswordDialogProps {
@@ -52,7 +52,7 @@ export function PasswordDialog({ open, onOpenChange, roomName, onSubmit, error, 
           <p className="text-sm text-muted-foreground">房间「{roomName}」已设置密码保护</p>
 
           <form onSubmit={handleSubmit} className="space-y-4">
-            <motion.div animate={error ? { x: [-8, 8, -6, 6, -3, 3, 0] } : {}} transition={{ duration: 0.5 }}>
+            <m.div animate={error ? { x: [-8, 8, -6, 6, -3, 3, 0] } : {}} transition={{ duration: 0.5 }}>
               <Input
                 type="password"
                 placeholder="输入房间密码..."
@@ -62,15 +62,15 @@ export function PasswordDialog({ open, onOpenChange, roomName, onSubmit, error, 
                 className={error ? 'border-destructive' : ''}
               />
               {error && (
-                <motion.p
+                <m.p
                   initial={{ opacity: 0, y: -4 }}
                   animate={{ opacity: 1, y: 0 }}
                   className="mt-1.5 text-xs text-destructive"
                 >
                   {error}
-                </motion.p>
+                </m.p>
               )}
-            </motion.div>
+            </m.div>
 
             <Button type="submit" className="w-full" disabled={isLoading || !password.trim()}>
               {isLoading ? <Loader2 className="mr-2 h-4 w-4 animate-spin" /> : null}

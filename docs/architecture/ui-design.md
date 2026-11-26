@@ -46,7 +46,7 @@ import { Play, Pause, SkipForward, Volume2 } from 'lucide-react'
 
 ## 动画
 
-- **motion (Framer Motion)**：组件进入/退出动画、列表动画
+- **motion (Framer Motion)**：`LazyMotion` + `m.*` 异步加载 `domMax`，用于组件进入/退出与布局共享动画
 - **tw-animate-css**：Tailwind 动画预设类
 - **自定义动画**：`float` 关键帧（6s 缓动上下浮动）、`marquee` 关键帧（文本溢出自动滚动）
 

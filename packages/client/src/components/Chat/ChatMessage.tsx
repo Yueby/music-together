@@ -1,5 +1,5 @@
 import { memo } from 'react'
-import { motion } from 'motion/react'
+import { m } from 'motion/react'
 import type { ChatMessage as ChatMessageType } from '@music-together/shared'
 import { formatClockTime } from '@/lib/format'
 import { cn } from '@/lib/utils'
@@ -12,18 +12,18 @@ interface ChatMessageProps {
 export const ChatMessage = memo(function ChatMessage({ message, isOwnMessage }: ChatMessageProps) {
   if (message.type === 'system') {
     return (
-      <motion.div
+      <m.div
         initial={{ opacity: 0 }}
         animate={{ opacity: 1 }}
         className="py-1.5 text-center text-xs text-muted-foreground/50"
       >
         {message.content}
-      </motion.div>
+      </m.div>
     )
   }
 
   return (
-    <motion.div
+    <m.div
       initial={{ opacity: 0, y: 10, scale: 0.96 }}
       animate={{ opacity: 1, y: 0, scale: 1 }}
       transition={{ type: 'spring', stiffness: 400, damping: 30 }}
@@ -41,6 +41,6 @@ export const ChatMessage = memo(function ChatMessage({ message, isOwnMessage }: 
       >
         {message.content}
       </div>
-    </motion.div>
+    </m.div>
   )
 })

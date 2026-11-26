@@ -1,7 +1,6 @@
 import type { UserConfig } from 'vite'
 import react from '@vitejs/plugin-react'
 import tailwindcss from '@tailwindcss/vite'
-import wasm from 'vite-plugin-wasm'
 import { fileURLToPath } from 'node:url'
 import { resolveMappClientTarget } from '../mapp/scripts/clientConfig.ts'
 
@@ -26,7 +25,7 @@ export function createMappClientConfig(roomUrl: string | undefined, version: str
     .concat({ find: /^@pixi\/.+$/, replacement: `${compat}pixiStub.ts` })
   return {
     base: './',
-    plugins: [react(), tailwindcss(), wasm()],
+    plugins: [react(), tailwindcss()],
     resolve: { alias },
     define: {
       __MAPP_ROOM_ENDPOINT__: JSON.stringify(target.endpoint),

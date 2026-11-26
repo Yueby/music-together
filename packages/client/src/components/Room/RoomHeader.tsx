@@ -1,6 +1,6 @@
 import { Check, ChevronDown, CircleUserRound, Copy, Ellipsis, Link2, Lock, LogOut, Search, Settings, Users, Wifi, WifiOff } from 'lucide-react'
-import { useReducedMotion } from 'motion/react'
 import { useEffect, useRef, useState } from 'react'
+import { useMediaQuery } from '@/hooks/useMediaQuery'
 import { ServerStatusPopoverContent, getEffectiveServerLoad, useHoverPopover } from '@/components/ServerLoadBadge'
 import { Button } from '@/components/ui/button'
 import {
@@ -37,7 +37,7 @@ export function RoomHeader({ onOpenSearch, onOpenSettings, onOpenAccount, onOpen
   const hasPassword = useRoomStore((s) => s.room?.hasPassword ?? false)
   const userCount = useRoomStore((s) => s.room?.users.length ?? 0)
   const capacity = useServerStatusStore((s) => s.capacity)
-  const prefersReducedMotion = useReducedMotion()
+  const prefersReducedMotion = useMediaQuery('(prefers-reduced-motion: reduce)')
   const roomPopover = useHoverPopover()
   const statusPopover = useHoverPopover()
   const { isConnected } = useSocketContext()

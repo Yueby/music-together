@@ -1,4 +1,4 @@
-import { motion, useReducedMotion } from 'motion/react'
+import { m, useReducedMotion } from 'motion/react'
 import { Headphones, Lock, UserRound } from 'lucide-react'
 import { LIMITS } from '@music-together/shared'
 import { Button } from '@/components/ui/button'
@@ -35,18 +35,18 @@ export function InteractionGate({ onStart, roomName, hasPassword, passwordError 
 
   return (
     <div className="fixed inset-0 z-50 flex items-center justify-center bg-background px-4">
-      <motion.div
+      <m.div
         initial={{ opacity: 0, scale: 0.9 }}
         animate={{ opacity: 1, scale: 1 }}
         transition={{ type: 'spring', stiffness: 300, damping: 25 }}
         className="flex w-full max-w-sm flex-col items-center gap-6 rounded-2xl border border-border bg-card p-10 shadow-lg"
       >
-        <motion.div
+        <m.div
           animate={prefersReducedMotion ? {} : { rotate: [0, 5, -5, 0] }}
           transition={prefersReducedMotion ? {} : { duration: 4, repeat: Infinity, ease: 'easeInOut' }}
         >
           <Headphones className="h-16 w-16 text-primary" />
-        </motion.div>
+        </m.div>
 
         <div className="flex flex-col items-center gap-1.5">
           <h2 className="text-xl font-semibold">准备就绪</h2>
@@ -81,7 +81,7 @@ export function InteractionGate({ onStart, roomName, hasPassword, passwordError 
                 <Lock className="h-3.5 w-3.5" />
                 <span>该房间需要密码</span>
               </div>
-              <motion.div animate={passwordError ? { x: [-8, 8, -6, 6, -3, 3, 0] } : {}} transition={{ duration: 0.5 }}>
+              <m.div animate={passwordError ? { x: [-8, 8, -6, 6, -3, 3, 0] } : {}} transition={{ duration: 0.5 }}>
                 <Input
                   type="password"
                   placeholder="输入房间密码..."
@@ -91,15 +91,15 @@ export function InteractionGate({ onStart, roomName, hasPassword, passwordError 
                   className={passwordError ? 'border-destructive' : ''}
                 />
                 {passwordError && (
-                  <motion.p
+                  <m.p
                     initial={{ opacity: 0, y: -4 }}
                     animate={{ opacity: 1, y: 0 }}
                     className="mt-1.5 text-xs text-destructive"
                   >
                     {passwordError}
-                  </motion.p>
+                  </m.p>
                 )}
-              </motion.div>
+              </m.div>
             </div>
           )}
 
@@ -107,7 +107,7 @@ export function InteractionGate({ onStart, roomName, hasPassword, passwordError 
             开始收听
           </Button>
         </form>
-      </motion.div>
+      </m.div>
     </div>
   )
 }

@@ -40,9 +40,6 @@ importers:
       '@applemusic-like-lyrics/react':
         specifier: ^0.6.0
         version: 0.6.0(@pixi/app@7.4.3(@pixi/core@7.4.3)(@pixi/display@7.4.3(@pixi/core@7.4.3)))(@pixi/core@7.4.3)(@pixi/display@7.4.3(@pixi/core@7.4.3))(@pixi/filter-blur@7.4.3(@pixi/core@7.4.3))(@pixi/filter-bulge-pinch@5.1.1(@pixi/core@7.4.3))(@pixi/filter-color-matrix@7.4.3(@pixi/core@7.4.3))(@pixi/sprite@7.4.3(@pixi/core@7.4.3)(@pixi/display@7.4.3(@pixi/core@7.4.3)))(@types/node@26.6.6)(jsdom@31.0.1)(react-dom@19.3.1(react@19.3.1))(react@19.3.1)(vite@8.3.8(@types/node@26.6.6)(esbuild@0.28.2)(jiti@2.7.0)(terser@5.51.4)(tsx@4.23.15))
-      '@casl/react':
-        specifier: ^7.1.0
-        version: 7.1.0(@casl/ability@7.1.3)(react@19.3.1)
       '@dnd-kit/core':
         specifier: ^6.3.1
         version: 6.3.1(react-dom@19.3.1(react@19.3.1))(react@19.3.1)
@@ -76,9 +73,9 @@ importers:
       '@pixi/sprite':
         specifier: ^7.4.3
         version: 7.4.3(@pixi/core@7.4.3)(@pixi/display@7.4.3(@pixi/core@7.4.3))
-      '@tanstack/react-query':
+      '@tanstack/query-core':
         specifier: ^5.108.4
-        version: 5.108.4(@types/react@19.3.0)(react@19.3.1)
+        version: 5.108.4
       '@tanstack/react-virtual':
         specifier: ^3.14.26
         version: 3.14.26(react-dom@19.3.1(react@19.3.1))(react@19.3.1)
@@ -94,9 +91,6 @@ importers:
       motion:
         specifier: ^14.14.0
         version: 14.14.0(react-dom@19.3.1(react@19.3.1))(react@19.3.1)
-      nanoid:
-        specifier: ^6.0.2
-        version: 6.0.2
       radix-ui:
         specifier: ^1.8.1
         version: 1.8.1(@types/react-dom@19.3.0(@types/react@19.3.0))(@types/react@19.3.0)(react-dom@19.3.1(react@19.3.1))(react@19.3.1)
@@ -121,9 +115,6 @@ importers:
       tailwind-merge:
         specifier: ^3.7.1
         version: 3.7.1
-      tinykeys:
-        specifier: ^4.0.1
-        version: 4.0.1
       vaul:
         specifier: ^1.1.2
         version: 1.1.2(@types/react-dom@19.3.0(@types/react@19.3.0))(@types/react@19.3.0)(react-dom@19.3.1(react@19.3.1))(react@19.3.1)
@@ -197,9 +188,6 @@ importers:
       vite-plugin-pwa:
         specifier: ^2.0.0
         version: 2.0.0(supports-color@10.2.2)(vite@8.3.8(@types/node@26.6.6)(esbuild@0.28.2)(jiti@2.7.0)(terser@5.51.4)(tsx@4.23.15))(workbox-build@7.4.1(supports-color@10.2.2))(workbox-window@7.4.1)
-      vite-plugin-wasm:
-        specifier: ^3.6.0
-        version: 3.6.0(vite@8.3.8(@types/node@26.6.6)(esbuild@0.28.2)(jiti@2.7.0)(terser@5.51.4)(tsx@4.23.15))
 
   packages/mapp:
     dependencies:
@@ -252,9 +240,6 @@ importers:
       dotenv:
         specifier: ^18.0.10
         version: 18.0.10
-      escape-html:
-        specifier: ^1.0.3
-        version: 1.0.3
       express:
         specifier: ^5.3.0
         version: 5.3.0(supports-color@10.2.2)
@@ -298,9 +283,6 @@ importers:
       '@types/cors':
         specifier: ^2.8.19
         version: 2.8.19
-      '@types/escape-html':
-        specifier: ^1.0.4
-        version: 1.0.4
       '@types/express':
         specifier: ^5.0.6
         version: 5.0.6
@@ -325,9 +307,6 @@ importers:
 
   packages/shared:
     dependencies:
-      '@casl/ability':
-        specifier: ^7.1.3
-        version: 7.1.3
       zod:
         specifier: ^4.6.7
         version: 4.6.7
@@ -972,15 +951,6 @@ packages:
 
   '@cacheable/utils@2.5.0':
     resolution: {integrity: sha512-buipgOVDkkPXNR5+xBpDw7Zk2n1EvU7qBJCNUcL7rhQ//kfpOXPAvQ511Os0vpLYJ1pZnvudNytkQt2hst3wqA==}
-
-  '@casl/ability@7.1.3':
-    resolution: {integrity: sha512-4V7ER1Q7r0be9dwpJQuSA99Cazk6gnFEpYpiCV1MCSkBoLAycMgrpXjsrFR06OHBtWlTeGKAhARXQKg+pw3fbg==}
-
-  '@casl/react@7.1.0':
-    resolution: {integrity: sha512-z0TkQNReAGGOGhPhtfrLBB2uJTxS2b55rBZH4aEw7dYUQQSYMj688NwCT75SwfyiKFnmwn0+B+II/DsoJKNe4w==}
-    peerDependencies:
-      '@casl/ability': ^4.0.0 || ^5.1.0 || ^6.0.0 || ^7.0.0
-      react: ^18.0.0 || ^19.0.0
 
   '@csstools/color-helpers@5.1.0':
     resolution: {integrity: sha512-S11EXWJyy0Mz5SYvRmY8nJYTFFd1LCNV+7cXyAgQtOOuzb4EsgfqDufL+9esx72/eLhsRdGZwaldu/h+E4t4BA==}
@@ -2660,15 +2630,6 @@ packages:
   '@tanstack/query-core@5.108.4':
     resolution: {integrity: sha512-2Ks5dlLWz4eXJrthOyG0qW3SLt3xx0RrQmAmN0rnmogiaaOYuWiAe6HAm9KE2b2v8nig+vraNz8fsfZ6fF6zFg==}
 
-  '@tanstack/react-query@5.108.4':
-    resolution: {integrity: sha512-GlTa94kfEKTVsbzXe58rFA3GZ0ZE7N1aFtbZAfOS3XxMv8YNn4C+8rsz40LorHLazdm5PsqCroWaYAR+ZkMXMQ==}
-    peerDependencies:
-      '@types/react': ^18 || ^19
-      react: ^18 || ^19
-    peerDependenciesMeta:
-      '@types/react':
-        optional: true
-
   '@tanstack/react-virtual@3.14.26':
     resolution: {integrity: sha512-HUDlfsrYH6ko5xH56L62Mcl/uzT+AGVNMHFuDNqDJMdZWc1AQa2oeVKNUvZ/RWBZQ4TYtyQerFrNvLnp39h65A==}
     peerDependencies:
@@ -2759,9 +2720,6 @@ packages:
 
   '@types/earcut@2.1.4':
     resolution: {integrity: sha512-qp3m9PPz4gULB9MhjGID7wpo3gJ4bTGXm7ltNDsmOvsPduTeHp8wSW9YckBj3mljeOh4F0m2z/0JKAALRKbmLQ==}
-
-  '@types/escape-html@1.0.4':
-    resolution: {integrity: sha512-qZ72SFTgUAZ5a7Tj6kf2SHLetiH5S6f8G5frB2SPQ3EyF02kxdyBFf4Tz4banE3xCgGnKgWLt//a6VuYHKYJTg==}
 
   '@types/esrecurse@4.3.1':
     resolution: {integrity: sha512-xJBAbDifo5hpffDBuHl0Y8ywswbiAp/Wi7Y/GtAgSlZyIABppyurxVueOPE8LUQOxdlgi6Zqce7uoEpqNTeiUw==}
@@ -3005,18 +2963,6 @@ packages:
   '@typescript/typescript6@6.0.2':
     resolution: {integrity: sha512-mbCddXd+jm7hfx7w2YU64/Av4/NqqeG3GoRZgxPcgoTxYjhrcfJRw9ULch71SS4G+Q3bOXFhRvPqjguN0Hyp5w==}
     hasBin: true
-
-  '@ucast/core@2.0.0':
-    resolution: {integrity: sha512-4XVx6LzPXZGvnZO5jp39cm/G4UvuwvEdtmg+9+4+zl6uFkCcB7UJacvtMYeBE56GJVT99Zqy6Pii7dGJq3Kz9Q==}
-
-  '@ucast/js@4.0.1':
-    resolution: {integrity: sha512-9O5xPBvwEWQk2WvO69Eh2WJB8QljVZ2vRVdFvfnKjlZwWXcYxp1lqLBhwXBU1AtuSgCvKhJPkXdjKJggUmAmQQ==}
-
-  '@ucast/mongo2js@2.0.0':
-    resolution: {integrity: sha512-vNBZzRnsfLr/TSxEoxz6W6hHQ5tmWsfEeC0nCq5z8RezC1AqIRy3cfHm8AGvlGtcn+cTSFQcZremfqnz6wm+nQ==}
-
-  '@ucast/mongo@3.0.0':
-    resolution: {integrity: sha512-kwuSH+kdB4GCR0LGhy/PEDm4PCflur89AlK82kNiYD0FvsA8A/p+0sx7m+/R8mMFAlmlkAd3VXp7sM/cLLYWYg==}
 
   '@unblockneteasemusic/server@0.28.0':
     resolution: {integrity: sha512-FLXNEMc9ItoAhhhemxKJzpJ+9DkWsfnxE5PYTCIzqZarYVUCxeKKEf0CwGeUeIW35z1Ekl0wFU4l10RDWVCr4A==}
@@ -5761,10 +5707,6 @@ packages:
     resolution: {integrity: sha512-wXR/dYpcqKmfWpEdZjiKJOwCNFndD0DMnrW/cYjVGttEkBfVgcLFHoNrlj47mjOVic9yyNu65alsgF4NQyTa2g==}
     engines: {node: '>=12.0.0'}
 
-  tinykeys@4.0.1:
-    resolution: {integrity: sha512-rClxhLQl+I5UMB5Ny7sfnZqDNa51u7h7h4gJV2UWslwADHEw75IuVPCnWrpO/otM7jHrHpwcZdRHd+//SiI55A==}
-    engines: {node: '>=22'}
-
   tinyrainbow@3.2.0:
     resolution: {integrity: sha512-LgO3D9yZJjApUiuUfl9iFAwrtaX4+lok3wJIqttGoKCHlWUqHqbQpnxCf82L8FjgKsh4iGo78hqJwgL8F6To2A==}
     engines: {node: '>=14.0.0'}
@@ -6016,11 +5958,6 @@ packages:
     peerDependenciesMeta:
       '@vite-pwa/assets-generator':
         optional: true
-
-  vite-plugin-wasm@3.6.0:
-    resolution: {integrity: sha512-mL/QPziiIA4RAA6DkaZZzOstdwbW5jO4Vz7Zenj0wieKWBlNvIvX5L5ljum9lcUX0ShNfBgCNLKTjNkRVVqcsw==}
-    peerDependencies:
-      vite: ^2 || ^3 || ^4 || ^5 || ^6 || ^7 || ^8
 
   vite@8.3.8:
     resolution: {integrity: sha512-LzOn3h9rG/0vhLdXrV4yJ4QFA9eEoqCl+Yx+kGJd7aB9w6nfNgVHKSYwLPZUHrz4ZGa+t+kXjV9itvcHDLQouA==}
@@ -7296,15 +7233,6 @@ snapshots:
     dependencies:
       hashery: 1.5.1
       keyv: 5.6.0
-
-  '@casl/ability@7.1.3':
-    dependencies:
-      '@ucast/mongo2js': 2.0.0
-
-  '@casl/react@7.1.0(@casl/ability@7.1.3)(react@19.3.1)':
-    dependencies:
-      '@casl/ability': 7.1.3
-      react: 19.3.1
 
   '@csstools/color-helpers@5.1.0': {}
 
@@ -8863,13 +8791,6 @@ snapshots:
 
   '@tanstack/query-core@5.108.4': {}
 
-  '@tanstack/react-query@5.108.4(@types/react@19.3.0)(react@19.3.1)':
-    dependencies:
-      '@tanstack/query-core': 5.108.4
-      react: 19.3.1
-    optionalDependencies:
-      '@types/react': 19.3.0
-
   '@tanstack/react-virtual@3.14.26(react-dom@19.3.1(react@19.3.1))(react@19.3.1)':
     dependencies:
       '@tanstack/virtual-core': 3.19.11
@@ -8974,8 +8895,6 @@ snapshots:
   '@types/deep-eql@4.0.2': {}
 
   '@types/earcut@2.1.4': {}
-
-  '@types/escape-html@1.0.4': {}
 
   '@types/esrecurse@4.3.1': {}
 
@@ -9197,22 +9116,6 @@ snapshots:
   '@typescript/typescript6@6.0.2':
     dependencies:
       '@typescript/old': typescript@6.0.3
-
-  '@ucast/core@2.0.0': {}
-
-  '@ucast/js@4.0.1':
-    dependencies:
-      '@ucast/core': 2.0.0
-
-  '@ucast/mongo2js@2.0.0':
-    dependencies:
-      '@ucast/core': 2.0.0
-      '@ucast/js': 4.0.1
-      '@ucast/mongo': 3.0.0
-
-  '@ucast/mongo@3.0.0':
-    dependencies:
-      '@ucast/core': 2.0.0
 
   '@unblockneteasemusic/server@0.28.0':
     dependencies:
@@ -12258,8 +12161,6 @@ snapshots:
       fdir: 6.5.0(picomatch@4.0.7)
       picomatch: 4.0.7
 
-  tinykeys@4.0.1: {}
-
   tinyrainbow@3.2.0: {}
 
   tldts-core@7.4.10: {}
@@ -12518,10 +12419,6 @@ snapshots:
       workbox-window: 7.4.1
     transitivePeerDependencies:
       - supports-color
-
-  vite-plugin-wasm@3.6.0(vite@8.3.8(@types/node@26.6.6)(esbuild@0.28.2)(jiti@2.7.0)(terser@5.51.4)(tsx@4.23.15)):
-    dependencies:
-      vite: 8.3.8(@types/node@26.6.6)(esbuild@0.28.2)(jiti@2.7.0)(terser@5.51.4)(tsx@4.23.15)
 
   vite@8.3.8(@types/node@26.6.6)(esbuild@0.28.2)(jiti@2.7.0)(terser@5.51.4)(tsx@4.23.15):
     dependencies:

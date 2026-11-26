@@ -6,7 +6,7 @@ import { Tooltip, TooltipContent, TooltipTrigger } from '@/components/ui/tooltip
 import { MarqueeText } from '@/components/ui/marquee-text'
 import { usePlayerStore } from '@/stores/playerStore'
 import { MessageSquare, Volume2, VolumeX } from 'lucide-react'
-import { motion } from 'motion/react'
+import { m } from 'motion/react'
 import { memo, useCallback, useLayoutEffect, useRef, useState } from 'react'
 import { LAYOUT_TRANSITION, SPRING } from './constants'
 
@@ -96,16 +96,16 @@ export const SongInfoBar = memo(function SongInfoBar({ onOpenChat, chatUnreadCou
     <div ref={wrapperRef} className="w-full">
       <div ref={innerRef} className="flex w-full items-end gap-2" style={{ width: DESIGN_WIDTH }}>
         {/* Left: song title + artist — layoutId pairs with NowPlaying compact for shared animation */}
-        <motion.div layoutId="song-info" transition={LAYOUT_TRANSITION} className="min-w-0 flex-1">
-          <motion.div
+        <m.div layoutId="song-info" transition={LAYOUT_TRANSITION} className="min-w-0 flex-1">
+          <m.div
             initial={{ fontSize: 18 }}
             animate={{ fontSize: 20 }}
             transition={SPRING}
             className="font-bold leading-tight text-white/90"
           >
             <MarqueeText>{currentTrack?.title ?? '暂无歌曲'}</MarqueeText>
-          </motion.div>
-          <motion.div
+          </m.div>
+          <m.div
             initial={{ fontSize: 16 }}
             animate={{ fontSize: 14 }}
             transition={SPRING}
@@ -118,15 +118,15 @@ export const SongInfoBar = memo(function SongInfoBar({ onOpenChat, chatUnreadCou
                 '点击搜索添加歌曲到队列'
               )}
             </MarqueeText>
-          </motion.div>
-        </motion.div>
+          </m.div>
+        </m.div>
 
         {/* Right-bottom: volume + chat buttons (always visible, aligned to bottom) */}
         <div className="flex shrink-0 items-center">
           <VolumeControl volume={volume} setVolume={setVolume} toggleMute={toggleMute} />
           <Tooltip delayDuration={300}>
             <TooltipTrigger asChild>
-              <motion.div whileTap={{ scale: 0.9 }}>
+              <m.div whileTap={{ scale: 0.9 }}>
                 <Button
                   variant="ghost"
                   size="icon"
@@ -141,7 +141,7 @@ export const SongInfoBar = memo(function SongInfoBar({ onOpenChat, chatUnreadCou
                     </span>
                   )}
                 </Button>
-              </motion.div>
+              </m.div>
             </TooltipTrigger>
             <TooltipContent>聊天</TooltipContent>
           </Tooltip>

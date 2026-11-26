@@ -1,6 +1,6 @@
 import * as React from 'react'
 import { Slider as SliderPrimitive } from 'radix-ui'
-import { motion, useReducedMotion } from 'motion/react'
+import { m, useReducedMotion } from 'motion/react'
 
 import { cn } from '@/lib/utils'
 
@@ -72,7 +72,7 @@ function Slider({
               className="pointer-events-none absolute inset-0 bg-white/20"
             />
           ) : (
-            <motion.span
+            <m.span
               aria-hidden="true"
               data-slot="slider-loading"
               className={cn(

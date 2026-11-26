@@ -21,7 +21,7 @@ import { useVersionCheck } from '@/hooks/useVersionCheck'
 import { Button } from '@/components/ui/button'
 import { EVENTS, ERROR_CODE, rejoinTicketExpiry, type RoomListItem, type RoomState } from '@music-together/shared'
 import { GitFork, Headphones } from 'lucide-react'
-import { motion } from 'motion/react'
+import { m } from 'motion/react'
 import { useCallback, useEffect, useRef, useState } from 'react'
 import { useNavigate } from 'react-router'
 import { toast } from 'sonner'
@@ -266,7 +266,7 @@ export default function HomePage() {
   )
 
   return (
-    <motion.div
+    <m.div
       initial={{ opacity: 0 }}
       animate={{ opacity: 1 }}
       exit={{ opacity: 0 }}
@@ -392,6 +392,6 @@ export default function HomePage() {
           }}
         />
       )}
-    </motion.div>
+    </m.div>
   )
 }

@@ -11,7 +11,7 @@ import { usePlayerStore } from '@/stores/playerStore'
 import { useSettingsStore } from '@/stores/settingsStore'
 
 import { BackgroundRender, MeshGradientRenderer, PixiRenderer } from '@applemusic-like-lyrics/react'
-import { AnimatePresence, LayoutGroup, motion } from 'motion/react'
+import { AnimatePresence, LayoutGroup, m } from 'motion/react'
 import { useCallback, useMemo, useState } from 'react'
 import { ErrorBoundary } from 'react-error-boundary'
 import { VoteBanner } from '../Vote/VoteBanner'
@@ -175,7 +175,7 @@ export function AudioPlayer({
                 {/* Lyrics — popLayout so exiting lyrics don't occupy flex space */}
                 <AnimatePresence mode="popLayout">
                   {lyricExpanded && (
-                    <motion.div
+                    <m.div
                       key="lyrics"
                       initial={{ opacity: 0, y: 20 }}
                       animate={{ opacity: 1, y: 0 }}
@@ -185,7 +185,7 @@ export function AudioPlayer({
                       style={LYRIC_MASK_STYLE}
                     >
                       <LyricDisplay />
-                    </motion.div>
+                    </m.div>
                   )}
                 </AnimatePresence>
 
