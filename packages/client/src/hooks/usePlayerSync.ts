@@ -12,6 +12,7 @@ import {
   HARD_SEEK_CONFIRM_COUNT,
   WEB_AUDIO_SEEK_THRESHOLD_MS,
   WEB_AUDIO_MAX_RATE_ADJUSTMENT,
+  MANUAL_LATENCY_IMMEDIATE_SEEK_MS,
 } from '@/lib/constants'
 import { lyricPlayerBridge } from '@/lib/lyricPlayerBridge'
 import { setHowlPosition } from '@/lib/howlPosition'
@@ -47,6 +48,7 @@ export function usePlayerSync(
     let lastPlayKey: string | undefined
     let anchorKey: string | undefined
     let lastEffectiveLatencyMs: number | undefined
+    let lastManualLatencyOffsetMs: number | null | undefined
     let samples: number[] = []
     let smoothedDrift: number | undefined
     let hardSeekCount = 0
@@ -135,6 +137,7 @@ export function usePlayerSync(
       cancelScheduledPlay()
       clearScheduled()
       lastEffectiveLatencyMs = undefined
+      lastManualLatencyOffsetMs = undefined
       rateOverrideCount = 0
       rateDisabled = false
       resetDrift()
@@ -158,8 +161,21 @@ export function usePlayerSync(
       const { room, connectionStatus } = useRoomStore.getState()
       const sound = howlRef.current
       const now = getServerTime()
-      if (connectionStatus === 'reconnecting' || !isCalibrated() || !room?.currentTrack || !room.playState.isPlaying || !sound?.playing() ||
-          now < room.playState.serverTimestamp) return
+      if (
+        connectionStatus === 'reconnecting' ||
+        !isCalibrated() ||
+        !room?.currentTrack ||
+        !room.playState.isPlaying ||
+        !sound?.playing() ||
+        now < room.playState.serverTimestamp
+      ) {
+        if (!sound?.playing() || !room?.playState.isPlaying || !room?.currentTrack) {
+          if (samples.length > 0 || smoothedDrift !== undefined || usePlayerStore.getState().syncDrift !== 0) {
+            resetDrift()
+          }
+        }
+        return
+      }
 
       const { currentTime, serverTimestamp, revision } = room.playState
       const key = `${room.currentTrack.id}:${revision}`
@@ -167,10 +183,12 @@ export function usePlayerSync(
         resetDrift()
         anchorKey = key
         lastEffectiveLatencyMs = undefined
+        lastManualLatencyOffsetMs = undefined
       }
       if (sound.getOutputLatencyMs) {
         usePlayerStore.getState().setDetectedAudioLatencyMs(getSoundOutputLatencyMs(sound))
       }
+      const manualLatencyOffsetMs = usePlayerStore.getState().audioLatencyOffsetMs
       const effectiveLatencyMs = getEffectiveAudioLatencyOffsetMs(sound)
       const expected = compensatePlaybackPosition(
         currentTime + (now - serverTimestamp) / 1000,
@@ -181,8 +199,12 @@ export function usePlayerSync(
       if (typeof current !== 'number' || !Number.isFinite(current)) return
 
       const pitchSafeRate = sound.supportsPitchPreservingRate !== false
-      if (lastEffectiveLatencyMs !== undefined && Math.abs(effectiveLatencyMs - lastEffectiveLatencyMs) >= 20) {
+      const latencyDeltaMs =
+        lastEffectiveLatencyMs !== undefined ? Math.abs(effectiveLatencyMs - lastEffectiveLatencyMs) : 0
+      const manualLatencyChanged = manualLatencyOffsetMs !== lastManualLatencyOffsetMs
+      if (lastEffectiveLatencyMs !== undefined && latencyDeltaMs >= 20) {
         lastEffectiveLatencyMs = effectiveLatencyMs
+        lastManualLatencyOffsetMs = manualLatencyOffsetMs
         if (!pitchSafeRate && sound.crossfadeSeek && Math.abs(current - expected) > 0.02) {
           if (room.currentTrack.duration > 0 && expected >= room.currentTrack.duration) return
           if (sound.rate() !== 1) sound.rate(1)
@@ -190,10 +212,23 @@ export function usePlayerSync(
           resetDrift()
           return
         }
+        if (
+          pitchSafeRate &&
+          manualLatencyChanged &&
+          latencyDeltaMs >= MANUAL_LATENCY_IMMEDIATE_SEEK_MS &&
+          Math.abs(current - expected) > 0.02
+        ) {
+          if (room.currentTrack.duration > 0 && expected >= room.currentTrack.duration) return
+          if (sound.rate() !== 1) sound.rate(1)
+          setHowlPosition(sound, expected, soundIdRef.current)
+          resetDrift()
+          return
+        }
         resetDrift()
         return
       }
       lastEffectiveLatencyMs = effectiveLatencyMs
+      lastManualLatencyOffsetMs = manualLatencyOffsetMs
 
       samples = [...samples.slice(1 - DRIFT_SAMPLE_COUNT), current - expected]
       if (samples.length < DRIFT_SAMPLE_COUNT) return
@@ -265,6 +300,7 @@ export function usePlayerSync(
       lastPlayKey = undefined
       anchorKey = undefined
       lastEffectiveLatencyMs = undefined
+      lastManualLatencyOffsetMs = undefined
       clearScheduled()
       clearWaitingLoadState()
       resetDrift()

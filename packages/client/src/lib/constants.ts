@@ -16,6 +16,12 @@ export const WEB_AUDIO_MAX_RATE_ADJUSTMENT = 0.005
 export const AUDIO_LATENCY_MIN_MS = -300
 export const AUDIO_LATENCY_MAX_MS = 500
 
+/** UI warning threshold (ms) for highlighting noticeable sync drift. */
+export const DRIFT_WARNING_THRESHOLD_MS = 100
+
+/** Manual latency offset delta (ms) that immediately seeks HTML5 audio instead of waiting for slow rate catch-up. */
+export const MANUAL_LATENCY_IMMEDIATE_SEEK_MS = 100
+
 /** Drift threshold (ms) before hard-seeking to correct position.
  * Native HTML5 media seeks may flush decoder buffers on mobile, so only
  * clearly disruptive drift should use this path. */
