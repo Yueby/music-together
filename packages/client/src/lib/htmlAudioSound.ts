@@ -17,6 +17,8 @@ type MediaElementWithPitch = HTMLAudioElement & {
 const pool: HTMLAudioElement[] = []
 /** Elements attached to MediaElementAudioSourceNode stay WebAudio-routed forever and must not be reused for cross-origin streams. */
 const taintedElements = new WeakSet<HTMLAudioElement>()
+/** Elements that have been primed or played within a user gesture so mobile browsers allow subsequent switches. */
+const unlockedElements = new WeakSet<HTMLAudioElement>()
 const unlockWaiters = new Set<() => void>()
 
 let unlocked = false
@@ -61,6 +63,18 @@ function resetMediaElement(element: HTMLAudioElement): void {
 }
 
 function acquireMediaElement(): HTMLAudioElement {
+  for (let index = pool.length - 1; index >= 0; index--) {
+    const candidate = pool[index]
+    if (taintedElements.has(candidate)) {
+      pool.splice(index, 1)
+      continue
+    }
+    if (unlockedElements.has(candidate)) {
+      pool.splice(index, 1)
+      enablePreservesPitch(candidate)
+      return candidate
+    }
+  }
   while (pool.length > 0) {
     const candidate = pool.pop()!
     if (!taintedElements.has(candidate)) {
@@ -118,6 +132,7 @@ function primeElement(element: HTMLAudioElement): Promise<boolean> {
   try {
     return Promise.resolve(element.play()).then(
       () => {
+        unlockedElements.add(element)
         resetMediaElement(element)
         return true
       },
@@ -137,24 +152,41 @@ export function isHtmlAudioPoolUnlocked(): boolean {
 }
 
 /**
- * Prime pooled HTMLAudioElements within a real user gesture (click / touchend / keydown)
+ * Prime any un-primed pooled HTMLAudioElements within a real user gesture (click / touchend / keydown)
  * so both active playback and next-track preload stay unlocked across song switches.
  */
 export async function unlockHtmlAudioPool(): Promise<void> {
-  if (unlocked) {
+  if (typeof Audio === 'undefined') {
+    unlocked = true
     if (unlockWaiters.size > 0) flushUnlockWaiters()
     return
   }
-  if (typeof Audio === 'undefined') {
-    unlocked = true
+
+  if (!unlocked) {
+    while (pool.length < AUDIO_POOL_SIZE) {
+      pool.push(createMediaElement())
+    }
+  }
+
+  // Claim any un-primed idle elements synchronously while still inside the user gesture call stack.
+  const toPrime: HTMLAudioElement[] = []
+  for (let index = pool.length - 1; index >= 0; index--) {
+    const candidate = pool[index]
+    if (taintedElements.has(candidate)) {
+      pool.splice(index, 1)
+      continue
+    }
+    if (!unlockedElements.has(candidate)) {
+      pool.splice(index, 1)
+      toPrime.push(candidate)
+    }
+  }
+
+  if (toPrime.length === 0) {
+    if (unlocked && unlockWaiters.size > 0) flushUnlockWaiters()
     return
   }
 
-  while (pool.length < AUDIO_POOL_SIZE) {
-    pool.push(createMediaElement())
-  }
-  // Claim elements synchronously while still inside the user gesture call stack.
-  const toPrime = pool.splice(0, AUDIO_POOL_SIZE)
   const results = await Promise.all(toPrime.map((element) => primeElement(element)))
   for (const element of toPrime) {
     if (!taintedElements.has(element) && pool.length < AUDIO_POOL_SIZE) {
@@ -186,8 +218,6 @@ export function createHtmlAudioSound(options: PlaybackSoundOptions): PlaybackSou
   let playOp = 0
   let storedRate = 1
   let pendingSeek: number | undefined
-  let internalPause = false
-  let internalPlay = false
   let playListeners: Array<(soundId: number) => void> = []
   let unlockListeners: Array<(soundId: number) => void> = []
 
@@ -241,8 +271,9 @@ export function createHtmlAudioSound(options: PlaybackSoundOptions): PlaybackSou
   }
 
   const handleError = () => {
-    if (!element || state !== 'loading') return
+    if (!element || isUnloaded()) return
     const mediaError = element.error ?? new Error('MEDIA_LOAD_ERROR')
+    ++playOp
     cleanupListeners()
     state = 'unloaded'
     isPlaying = false
@@ -256,14 +287,14 @@ export function createHtmlAudioSound(options: PlaybackSoundOptions): PlaybackSou
   }
 
   const handleEnded = () => {
-    if (state === 'unloaded') return
+    if (isUnloaded()) return
     isPlaying = false
     playListeners = []
     options.onend?.()
   }
 
   const handleNativePause = () => {
-    if (!element || state === 'unloaded' || internalPause || element.ended) return
+    if (!element || isUnloaded() || element.ended) return
     if (!isPlaying) return
     isPlaying = false
     playListeners = []
@@ -271,7 +302,7 @@ export function createHtmlAudioSound(options: PlaybackSoundOptions): PlaybackSou
   }
 
   const handleNativePlay = () => {
-    if (!element || state === 'unloaded' || internalPlay || isPlaying) return
+    if (!element || isUnloaded() || isPlaying) return
     isPlaying = true
     options.onplay?.()
   }
@@ -341,25 +372,23 @@ export function createHtmlAudioSound(options: PlaybackSoundOptions): PlaybackSou
       const op = ++playOp
       isPlaying = true
       element.muted = false
-      internalPlay = true
       let playPromise: Promise<unknown>
       try {
         playPromise = Promise.resolve(element.play())
       } catch (error) {
         playPromise = Promise.reject(error)
-      } finally {
-        internalPlay = false
       }
       playPromise.then(
         () => {
-          if (state === 'unloaded' || playOp !== op) return
+          if (isUnloaded() || playOp !== op) return
           isPlaying = true
           unlocked = true
+          unlockedElements.add(element)
           options.onplay?.()
           flushPlayListeners(op)
         },
         (error: unknown) => {
-          if (state === 'unloaded' || playOp !== op || isAbortError(error)) return
+          if (isUnloaded() || playOp !== op || isAbortError(error)) return
           isPlaying = false
           playListeners = []
           options.onplayerror?.(id, error)
@@ -373,13 +402,10 @@ export function createHtmlAudioSound(options: PlaybackSoundOptions): PlaybackSou
       playListeners = []
       const wasPlaying = isPlaying
       isPlaying = false
-      internalPause = true
       try {
         element.pause()
       } catch {
         /* ignore */
-      } finally {
-        internalPause = false
       }
       if (wasPlaying || state === 'loaded') {
         options.onpause?.()
