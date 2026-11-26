@@ -7,12 +7,11 @@ import { Separator } from '@/components/ui/separator'
 import { Switch } from '@/components/ui/switch'
 import { canCopyText, copyText, getRoomShareUrl } from '@/lib/clipboard'
 import { storage } from '@/lib/storage'
-import { usePlayerStore } from '@/stores/playerStore'
 import { useRoomStore } from '@/stores/roomStore'
 import type { AudioQuality, QueueMode, RoomSettingsUpdate } from '@music-together/shared'
 import { LIMITS } from '@music-together/shared'
 import { Check, Copy, Lock, LockOpen, Pencil, X } from 'lucide-react'
-import { useEffect, useMemo, useState } from 'react'
+import { useEffect, useState } from 'react'
 import { toast } from 'sonner'
 import { SettingRow } from './SettingRow'
 
@@ -44,16 +43,8 @@ export function RoomSettingsSection({ onUpdateSettings }: RoomSettingsSectionPro
   const room = useRoomStore((s) => s.room)
   const currentUser = useRoomStore((s) => s.currentUser)
   const roomPassword = useRoomStore((s) => s.roomPassword)
-  const syncDrift = usePlayerStore((s) => s.syncDrift)
   const isOwner = currentUser?.role === 'owner'
   const clipboardAvailable = canCopyText()
-
-  const driftDisplay = useMemo(() => {
-    const ms = Math.round(syncDrift * 1000)
-    const label = ms > 0 ? `+${ms}ms` : `${ms}ms`
-    const isHigh = Math.abs(ms) > 500
-    return { label, isHigh }
-  }, [syncDrift])
   const [passwordInput, setPasswordInput] = useState('')
   const [passwordEnabled, setPasswordEnabled] = useState(room?.hasPassword ?? false)
 
@@ -192,12 +183,6 @@ export function RoomSettingsSection({ onUpdateSettings }: RoomSettingsSectionPro
               </Tooltip>
             )}
           </div>
-        </SettingRow>
-
-        <SettingRow label="同步偏移" description="你的播放进度与房间的差距，偏大时会自动校正">
-          <span className={`text-sm font-mono ${driftDisplay.isHigh ? 'text-yellow-500' : 'text-muted-foreground'}`}>
-            {driftDisplay.label}
-          </span>
         </SettingRow>
 
         <SettingRow label="音质" description={isOwner ? '切换后对下一首歌生效' : '房间统一的播放音质，仅房主可修改'}>

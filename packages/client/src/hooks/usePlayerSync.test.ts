@@ -391,6 +391,64 @@ describe('scheduled playback with loading audio', () => {
       expect(useRoomStore.getState().room?.playState.currentTime).toBe(80)
       expect(howl.seek.mock.calls.some(([position]) => position === 80)).toBe(false)
     })
+
+    it('immediately seeks HTML5 audio on large manual latency changes (>=100ms) and reset, but not on small nudges', () => {
+      const { howl } = setup(true)
+      let playbackAnchor = 42
+      let anchorTimeMs = 100_000
+      act(() => {
+        setRoom()
+        howl.finishLoad()
+        howl.seek.mockImplementation((target?: number) => {
+          if (target !== undefined) {
+            playbackAnchor = target
+            anchorTimeMs = Date.now()
+            return playbackAnchor
+          }
+          return playbackAnchor + (Date.now() - anchorTimeMs) / 1000
+        })
+        vi.advanceTimersByTime(250)
+      })
+      const seekCallsBefore = howl.seek.mock.calls.filter(([pos]) => pos !== undefined).length
+
+      // Small manual change (+40ms) should not trigger an immediate hard seek
+      act(() => {
+        usePlayerStore.getState().setAudioLatencyOffsetMs(40)
+        vi.advanceTimersByTime(250)
+      })
+      expect(howl.seek.mock.calls.filter(([pos]) => pos !== undefined).length).toBe(seekCallsBefore)
+
+      // Large manual jump (+40ms -> +300ms, delta 260ms) immediately seeks to compensated position
+      act(() => {
+        usePlayerStore.getState().setAudioLatencyOffsetMs(300)
+        vi.advanceTimersByTime(250)
+      })
+      expect(howl.seek).toHaveBeenLastCalledWith(43.05, 1)
+
+      // Resetting back to auto (300ms -> 0ms, delta 300ms) also immediately seeks back
+      act(() => {
+        usePlayerStore.getState().setAudioLatencyOffsetMs(null)
+        vi.advanceTimersByTime(250)
+      })
+      expect(howl.seek).toHaveBeenLastCalledWith(43, 1)
+    })
+
+    it('clears stale syncDrift when room is playing but local audio stops playing', () => {
+      const { howl } = setup(true)
+      act(() => {
+        setRoom()
+        howl.finishLoad()
+        howl.seek.mockImplementation(() => 42 + (Date.now() - 100_000) / 1000 + 0.04)
+        vi.advanceTimersByTime(1_250)
+      })
+      expect(usePlayerStore.getState().syncDrift).toBeCloseTo(0.04, 3)
+
+      act(() => {
+        howl.pause()
+        vi.advanceTimersByTime(250)
+      })
+      expect(usePlayerStore.getState().syncDrift).toBe(0)
+    })
   })
 
   it('schedules a loaded WebAudio resume on the hardware clock with a compensated target', () => {

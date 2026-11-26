@@ -98,7 +98,7 @@ export const usePlayerStore = create<PlayerStore>((set) => ({
         audioLoadStartedAt: startedAt === undefined ? (previous.audioLoadStartedAt ?? Date.now()) : startedAt,
       }
     }),
-  setSyncDrift: (drift) => set({ syncDrift: drift }),
+  setSyncDrift: (syncDrift) => set((state) => (state.syncDrift === syncDrift ? state : { syncDrift })),
   setAudioLatencyOffsetMs: (offset) => {
     const audioLatencyOffsetMs = normalizeAudioLatencyOffset(offset)
     storage.setAudioLatencyOffsetMs(audioLatencyOffsetMs)

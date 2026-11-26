@@ -85,8 +85,9 @@ describe('RoomSettingsSection queue mode', () => {
   it('explains every row of the room page, whoever is looking', () => {
     show('member', 'keep')
     const labels = Array.from(container.querySelectorAll('label')).map((l) => l.textContent)
-    // 房间名 / 房间号 / 同步偏移 / 音质 / 队列模式 / 密码保护 / 昵称，每行标签下都有一行说明
-    expect(labels.length).toBeGreaterThanOrEqual(7)
+    // 房间名 / 房间号 / 音质 / 队列模式 / 密码保护 / 昵称，每行标签下都有一行说明
+    expect(labels.length).toBeGreaterThanOrEqual(6)
+    expect(labels).not.toContain('同步偏移')
     expect(hints()).toHaveLength(labels.length)
   })
 })
