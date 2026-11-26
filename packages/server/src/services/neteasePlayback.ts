@@ -8,6 +8,7 @@ import { logger } from '../utils/logger.js'
 import { isStreamUrlExpired } from './streamUrlLifetime.js'
 
 const TIMEOUT_MS = 8_000
+const FAILURE_BACKOFF_MS = 60_000
 const PROBE_BYTES = 4_096
 const LEVELS: Record<AudioQuality, string> = {
   128: 'standard',
@@ -24,7 +25,8 @@ interface PublicKeyState {
 }
 
 let refreshAt = 0
-let keyRegistration: Promise<void> | undefined
+let retryAt = 0
+let keyRegistration: Promise<boolean> | undefined
 
 function record(value: unknown): Record<string, unknown> | null {
   return typeof value === 'object' && value !== null ? (value as Record<string, unknown>) : null
@@ -74,16 +76,18 @@ async function registerKey(): Promise<void> {
   refreshAt = key.nextUpdateTime - Math.min(60_000, (key.nextUpdateTime - now) / 10)
 }
 
-async function ensureKey(): Promise<void> {
-  if (keyRegistration) return keyRegistration
-  if (Date.now() < refreshAt) return
-  refreshAt = 0
-  keyRegistration = registerKey()
-  try {
-    await keyRegistration
-  } finally {
-    keyRegistration = undefined
-  }
+async function ensureKey(): Promise<boolean> {
+  if (Date.now() < retryAt) return false
+  if (Date.now() < refreshAt) return true
+  keyRegistration ??= registerKey()
+    .then(() => true)
+    .catch(() => {
+      retryAt = Date.now() + FAILURE_BACKOFF_MS
+      logger.warn('netease_playback_failed')
+      return false
+    })
+    .finally(() => { keyRegistration = undefined })
+  return keyRegistration
 }
 
 function safeCdnUrl(value: unknown): string | null {
@@ -172,7 +176,7 @@ async function probeAudio(url: string): Promise<boolean> {
 export async function getNeteasePlaybackUrl(id: string, bitrate: number, cookie: string): Promise<string | null> {
   if (!cookie || !/^\d+$/.test(id) || !Object.hasOwn(LEVELS, bitrate)) return null
   try {
-    await ensureKey()
+    if (!(await ensureKey())) return null
     const response = record(
       await ncmApi.song_url_v1({
         id,
@@ -190,7 +194,10 @@ export async function getNeteasePlaybackUrl(id: string, bitrate: number, cookie:
     if (!url || isStreamUrlExpired('netease', url) || !(await probeAudio(url))) return null
     return isStreamUrlExpired('netease', url) ? null : url
   } catch (error) {
-    if (error instanceof Error && error.message === 'xeapi public key is missing') refreshAt = 0
+    if (error instanceof Error && error.message === 'xeapi public key is missing') {
+      refreshAt = 0
+      retryAt = 0
+    }
     // SDK/fetch errors can embed credentials and signed URLs. Never pass them to the logger.
     logger.warn('netease_playback_failed')
     return null

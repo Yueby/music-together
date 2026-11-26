@@ -165,7 +165,7 @@ describe('authController membership changing while a login is being verified', (
 
     it('is added to the room pool while the user is still in the room', async () => {
       verifyingWhile(() => undefined)
-      const { send } = setup()
+      const { send, io } = setup()
       await send(event, payload)
       expect(mocks.addCookie).toHaveBeenCalledExactlyOnceWith(
         'ROOM01',
@@ -176,6 +176,9 @@ describe('authController membership changing while a login is being verified', (
         1,
         undefined,
       )
+      expect(mocks.notifyRestoredPlaybackCookie).toHaveBeenCalledExactlyOnceWith(io, 'ROOM01', 'netease')
+      expect(mocks.notifyRestoredPlaybackCookie.mock.invocationCallOrder[0])
+        .toBeGreaterThan(mocks.addCookie.mock.invocationCallOrder[0])
     })
 
     it('is not added when the room was destroyed in the meantime, so no cookie pool is re-created', async () => {
@@ -183,6 +186,7 @@ describe('authController membership changing while a login is being verified', (
       const { send, last } = setup()
       await send(event, payload)
       expect(mocks.addCookie).not.toHaveBeenCalled()
+      expect(mocks.notifyRestoredPlaybackCookie).not.toHaveBeenCalled()
       // The user is still told how the login went.
       expect(last(EVENTS.AUTH_SET_COOKIE_RESULT)).toMatchObject({ success: true, platform: 'netease' })
     })

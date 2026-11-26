@@ -1,5 +1,6 @@
 import crypto from 'node:crypto'
 import QRCode from 'qrcode'
+import { QR_STATUS } from '@music-together/shared'
 import type { Playlist } from '@music-together/shared'
 import type { GetUserInfoResult, UserInfoData } from './authProvider.js'
 import { logger } from '../utils/logger.js'
@@ -217,7 +218,7 @@ export async function generateQrCode(): Promise<{ key: string; qrimg: string } |
     const qrData = body?.data as Record<string, unknown> | undefined
     const key = qrData?.qrcode as string | undefined
     if (!key) {
-      logger.error('Kugou QR: failed to get qrcode key', body)
+      logger.error('Kugou QR: failed to get qrcode key')
       return null
     }
 
@@ -226,8 +227,8 @@ export async function generateQrCode(): Promise<{ key: string; qrimg: string } |
 
     logger.info('Kugou QR code generated')
     return { key, qrimg }
-  } catch (err) {
-    logger.error('Kugou QR generation failed', err)
+  } catch {
+    logger.error('Kugou QR generation failed')
     return null
   }
 }
@@ -265,21 +266,25 @@ export async function checkQrStatus(key: string): Promise<{
     })
 
     const d = body?.data as Record<string, unknown> | undefined
-    const rawStatus = Number(d?.status ?? 0)
+    if (d?.status == null) return { status: QR_STATUS.WAITING_SCAN, message: '暂时无法检查登录状态，请稍候' }
+    const rawStatus = Number(d.status)
     const status = STATUS_MAP[rawStatus] ?? 800
     const message = STATUS_MESSAGES[status] ?? `未知状态 (${rawStatus})`
 
-    if (status === 803 && d?.token && d?.userid) {
-      const token = String(d.token)
-      const userid = String(d.userid)
+    if (status === QR_STATUS.SUCCESS) {
+      const token = typeof d.token === 'string' ? d.token.trim() : ''
+      const userid = typeof d.userid === 'number' || typeof d.userid === 'string' ? String(d.userid).trim() : ''
+      if (!token || /[;\r\n]/.test(token) || !/^\d+$/.test(userid) || Number(userid) <= 0) {
+        return { status: QR_STATUS.EXPIRED, message: '未获取到有效登录凭据，请重新扫码' }
+      }
       const cookie = `token=${token};userid=${userid}`
       return { status, message, cookie }
     }
 
     return { status, message }
-  } catch (err) {
-    logger.error('Kugou QR check failed', err)
-    return { status: 800, message: '检查状态失败' }
+  } catch {
+    logger.warn('Kugou QR check failed')
+    return { status: QR_STATUS.WAITING_SCAN, message: '暂时无法检查登录状态，请稍候' }
   }
 }
 

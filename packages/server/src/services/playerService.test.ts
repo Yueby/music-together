@@ -4,6 +4,7 @@ import { roomRepo } from '../repositories/roomRepository.js'
 import { toPublicRoomState } from '../utils/roomUtils.js'
 import type { RoomData } from '../repositories/types.js'
 import { musicProvider } from './musicProvider.js'
+import * as authService from './authService.js'
 import { config } from '../config.js'
 import { clearAllTimers } from './roomLifecycleService.js'
 import { joinRoom, leaveRoom } from './roomService.js'
@@ -34,7 +35,7 @@ const track: Track = {
   source: 'netease',
   sourceId: 'track-1',
   urlId: 'track-1',
-  streamUrl: 'https://example.com/song.mp3',
+  streamUrl: 'https://m801.music.126.net/20990101080000/signature/song.mp3',
 }
 
 function room(): RoomData {
@@ -100,6 +101,7 @@ describe('playerService state transitions', () => {
     }
     data.queue = [original]
     roomRepo.set(data.id, data)
+    vi.spyOn(authService, 'getAnyCookie').mockImplementation((source) => source === 'tencent' ? 'fixture-cookie' : null)
     vi.spyOn(musicProvider, 'search').mockResolvedValue([replacement])
     vi.spyOn(musicProvider, 'getStreamUrl').mockImplementation(async (source) =>
       source === 'tencent' ? 'https://example.com/replacement.mp3' : null,
@@ -118,6 +120,49 @@ describe('playerService state transitions', () => {
     expect(emit).toHaveBeenCalledWith(EVENTS.PLAYER_PLAY, { track: queued, playState: expect.anything() })
     await vi.advanceTimersByTimeAsync(2_000)
     expect(data.currentTrack).toEqual(queued)
+  })
+
+  it.each([
+    { vip: true, currentCookie: 'non-vip-cookie', targetCookie: 'other-platform-cookie' },
+    { vip: false, currentCookie: null, targetCookie: null },
+  ])('removes an unavailable song when automatic fallback is inapplicable (%j)', async ({
+    vip, currentCookie, targetCookie,
+  }) => {
+    const data = room()
+    const unavailable = { ...track, vip, streamUrl: vip ? track.streamUrl : undefined }
+    data.queue = [unavailable]
+    roomRepo.set(data.id, data)
+    vi.spyOn(authService, 'getAnyCookie').mockImplementation((source) => source === 'netease' ? currentCookie : targetCookie)
+    const search = vi.spyOn(musicProvider, 'search').mockResolvedValue([])
+    const stream = vi.spyOn(musicProvider, 'getStreamUrl').mockResolvedValue(null)
+    const { io, emit } = ioMock()
+
+    const wasEnabled = config.autoFallback.enabled
+    config.autoFallback.enabled = true
+    try {
+      expect(await playTrackInRoom(io as never, data.id, unavailable)).toBe(false)
+    } finally {
+      config.autoFallback.enabled = wasEnabled
+    }
+
+    expect(data.queue).toEqual([])
+    expect(search).not.toHaveBeenCalled()
+    expect(stream).toHaveBeenCalledTimes(vip ? 0 : 3)
+    expect(emit).not.toHaveBeenCalledWith(EVENTS.ROOM_AUTO_FALLBACK, expect.anything())
+    expect(emit).toHaveBeenCalledWith(EVENTS.ROOM_ERROR, expect.objectContaining({ message: expect.stringContaining('VIP') }))
+  })
+
+  it.each(['tencent', 'kugou'] as const)('resolves %s queue URLs through the provider again', async (source) => {
+    const data = room()
+    const queued = { ...track, source, streamUrl: 'https://example.com/stale.mp3' }
+    const freshUrl = 'https://example.com/fresh.mp3'
+    data.queue = [queued]
+    roomRepo.set(data.id, data)
+    const stream = vi.spyOn(musicProvider, 'getStreamUrl').mockResolvedValue(freshUrl)
+
+    expect(await playTrackInRoom(ioMock().io as never, data.id, queued)).toBe(true)
+    expect(stream).toHaveBeenCalledExactlyOnceWith(source, queued.urlId, data.audioQuality, undefined)
+    expect(data.pendingPlayback?.track?.streamUrl).toBe(freshUrl)
   })
 
   it('pauses at the scheduled execution position without seeking clients backwards', () => {
@@ -1168,7 +1213,8 @@ describe('playback readiness', () => {
   })
 
   it('stops when every client fails and the mode would repeat the only track', async () => {
-    const { io, emit, data, next, revision } = await prepareTrack()
+    const { io, emit, data, next, revision } = await prepareTrack({ ...track, id: 'track-2', urlId: 'track-2' })
+    const invalidate = vi.spyOn(musicProvider, 'invalidateStreamUrl')
     data.queue = [next]
     data.playMode = 'loop-one'
 
@@ -1178,6 +1224,10 @@ describe('playback readiness', () => {
 
     expect(data.pendingPrepare).toBeNull()
     expect(data.currentTrack).toBeNull()
+    expect(data.queue[0].streamUrl).toBeUndefined()
+    expect(next.streamUrl).toBe(track.streamUrl)
+    expect(invalidate).toHaveBeenCalledExactlyOnceWith(next.source, next.urlId)
+    expect(emit).toHaveBeenCalledWith(EVENTS.QUEUE_UPDATED, { queue: data.queue })
     expect(emit).not.toHaveBeenCalledWith(EVENTS.PLAYER_PLAY, expect.anything())
   })
 

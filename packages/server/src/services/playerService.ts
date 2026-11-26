@@ -1,4 +1,4 @@
-import type { AudioQuality, MusicSource, PlayMode, PlayState, ScheduledPlayState, Track } from '@music-together/shared'
+import type { MusicSource, PlayMode, PlayState, ScheduledPlayState, Track } from '@music-together/shared'
 import { EVENTS, ERROR_CODE, NTP, TIMING, effectivePlayMode } from '@music-together/shared'
 import { roomRepo } from '../repositories/roomRepository.js'
 import { musicProvider } from './musicProvider.js'
@@ -7,7 +7,7 @@ import { resolvePlayableTrack } from './trackFallbackService.js'
 import * as authService from './authService.js'
 import { estimateCurrentTime } from './syncService.js'
 import { isStreamUrlExpired } from './streamUrlLifetime.js'
-import { resolveStreamUrl as resolveStreamUrlWithFallback } from './streamUrlResolver.js'
+import { resolveStreamUrl } from './streamUrlResolver.js'
 import { broadcastRoomList, isShuttingDown } from './roomLifecycleService.js'
 import { registerRoomCleanup } from './roomCleanupRegistry.js'
 import { toPublicRoomState } from '../utils/roomUtils.js'
@@ -76,9 +76,9 @@ function emitStreamError(emit: TypedSocket['emit']): void {
   emit(EVENTS.ROOM_ERROR, { code: ERROR_CODE.STREAM_FAILED, message: '无法获取播放链接，请稍后重试' })
 }
 
-async function refreshTrackUrl(roomId: string, room: RoomData, track: Track): Promise<Track | null> {
+async function refreshTrackUrl(roomId: string, room: RoomData, track: Track, valid: () => boolean): Promise<Track | null> {
   const cookie = authService.getAnyCookie(track.source, roomId)
-  const url = await resolveStreamUrl(track.source, track.urlId, room.audioQuality, cookie ?? undefined)
+  const url = await resolveStreamUrl(musicProvider, track.source, track.urlId, room.audioQuality, cookie ?? undefined, valid)
   return url && !isStreamUrlExpired(track.source, url) ? { ...track, streamUrl: url } : null
 }
 
@@ -93,7 +93,7 @@ async function refreshPlayback(
   const valid = playbackGuard(roomId, room, generation)
   const track = getLatestPlayback(room).track!
   try {
-    const fresh = await refreshTrackUrl(roomId, room, track)
+    const fresh = await refreshTrackUrl(roomId, room, track, valid)
     if (!valid()) return
     if (!fresh) {
       emitStreamError(io.to(roomId).emit.bind(io.to(roomId)))
@@ -249,13 +249,6 @@ function schedulePlaybackCommit(
   room.pendingPlayback = { type, track, playState, timer }
 }
 
-// ---------------------------------------------------------------------------
-// Audio quality fallback
-// ---------------------------------------------------------------------------
-
-const resolveStreamUrl = (source: MusicSource, urlId: string, bitrate: AudioQuality, cookie?: string) =>
-  resolveStreamUrlWithFallback(musicProvider, source, urlId, bitrate, cookie)
-
 /**
  * Resolve stream URL / cover, set current track, and broadcast PLAYER_PLAY.
  * Returns true on success, false on failure.
@@ -356,8 +349,14 @@ function releasePreparedPlayback(io: TypedServer, roomId: string, room: RoomData
   if (room.pendingPrepare !== prepare) return
   cancelPrepare(room)
   if (roomRepo.get(roomId) !== room || controlGenerations.get(roomId) !== prepare.generation) return
-  if (!room.queue.some((item) => item.id === prepare.track.id)) return
+  const queued = room.queue.find((item) => item.id === prepare.track.id)
+  if (!queued) return
   if (prepare.pendingSockets.size === 0 && prepare.readyCount === 0 && prepare.failedCount > 0) {
+    if (queued.streamUrl !== undefined) {
+      room.queue = room.queue.map((item) => item === queued ? { ...item, streamUrl: undefined } : item)
+      io.to(roomId).emit(EVENTS.QUEUE_UPDATED, { queue: room.queue })
+    }
+    musicProvider.invalidateStreamUrl(prepare.track.source, prepare.track.urlId)
     void playNextTrackInRoom(io, roomId, room.playMode, {
       expectedTrackId: prepare.track.id,
       expectedRevision: prepare.revision,
@@ -515,14 +514,14 @@ export async function preloadUpcoming(io: TypedServer, roomId: string): Promise<
   announcedPreloads.delete(roomId)
 
   const quality = room.audioQuality
+  const valid = () =>
+    roomRepo.get(roomId) === room && room.audioQuality === quality &&
+    getLatestPlayback(room).track === current && effectivePlayMode(room.queueMode, room.playMode) === mode
   try {
     // Always resolve afresh: a URL left on the item may belong to another audio quality.
-    const fresh = await refreshTrackUrl(roomId, room, next)
+    const fresh = await refreshTrackUrl(roomId, room, next, valid)
     // Anything may have changed while the provider answered (including the audio quality the URL was resolved for).
-    if (!fresh || roomRepo.get(roomId) !== room || room.audioQuality !== quality ||
-      getLatestPlayback(room).track !== current || effectivePlayMode(room.queueMode, room.playMode) !== mode) {
-      return
-    }
+    if (!fresh || !valid()) return
     const item = mode === 'shuffle'
       ? getPlannedShuffleNext(room, current.id)
       : queueService.getNextTrack(roomId, room.playMode, current.id)
@@ -849,7 +848,7 @@ export async function notifyRestoredPlaybackCookie(io: TypedServer, roomId: stri
 
   pending.phase = 'retrying'
   const valid = playbackGuard(roomId, room)
-  const fresh = await refreshTrackUrl(roomId, room, pending.track).catch(() => null)
+  const fresh = await refreshTrackUrl(roomId, room, pending.track, valid).catch(() => null)
   if (restoredRefreshes.get(room) !== pending) return
   restoredRefreshes.delete(room)
   if (fresh && valid() && !isShuttingDown() && room.users.length) {
@@ -896,7 +895,7 @@ async function startRestoredPlayback(io: TypedServer, room: RoomData): Promise<b
     // Register before resolving the URL so cookies verified during the first request also trigger recovery.
     const pending: RestoredRefresh = { track, phase: 'refreshing' }
     if (!authService.getAnyCookie(track.source, room.id)) restoredRefreshes.set(room, pending)
-    const fresh = await refreshTrackUrl(room.id, room, track).catch(() => null)
+    const fresh = await refreshTrackUrl(room.id, room, track, valid).catch(() => null)
     const canSync = !isShuttingDown() && room.users.length > 0
     const canApply = canSync && valid()
     if (fresh || !canApply) {
@@ -967,7 +966,7 @@ async function syncCurrentPlayback(
     const valid = playbackGuard(roomId, room)
     const stillJoined = () => valid() && roomRepo.getSocketMapping(socket.id)?.roomId === roomId
     try {
-      joinTrack = await refreshTrackUrl(roomId, room, joinTrack)
+      joinTrack = await refreshTrackUrl(roomId, room, joinTrack, stillJoined)
     } catch {
       joinTrack = null
     }

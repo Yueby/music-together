@@ -5,12 +5,12 @@ import { config } from '../config.js'
 import type { TypedServer } from '../middleware/types.js'
 import type { RoomData } from '../repositories/types.js'
 import { logger } from '../utils/logger.js'
-import { getAnyCookie } from './authService.js'
+import { getAllPlatformStatus, getAnyCookie } from './authService.js'
 import { fallbackCooldown } from './fallbackCooldown.js'
 import { musicProvider } from './musicProvider.js'
 import { removeTrack } from './queueService.js'
 import { resolveStreamUrl } from './streamUrlResolver.js'
-import { isStreamUrlExpired } from './streamUrlLifetime.js'
+import { getStreamUrlExpiresAt, isStreamUrlExpired } from './streamUrlLifetime.js'
 
 // Keep scope minimal: only support netease <-> tencent auto fallback.
 const SUPPORTED_SOURCES: ReadonlySet<Exclude<MusicSource, 'kugou'>> = new Set(['netease', 'tencent'])
@@ -154,7 +154,6 @@ async function tryAlternativeTrack(
   io: TypedServer,
   room: RoomData,
   track: Track,
-  vipRequired: boolean,
   valid: () => boolean,
 ): Promise<Track | null> {
   const roomId = room.id
@@ -162,24 +161,25 @@ async function tryAlternativeTrack(
   if (!config.autoFallback.enabled || fromSource === 'kugou' || !fallbackCooldown.canTry(roomId, track.id)) return null
   const toSource = getFallbackTargetSource(fromSource)
   if (!toSource) return null
+  if (!getAnyCookie(toSource, roomId)) return null
 
   fallbackCooldown.mark(roomId, track.id, 60_000)
   const event = { attemptId: nanoid(), fromSource, toSource, trackTitle: track.title }
-  const reasonType = vipRequired ? 'VIP_REQUIRED' : 'UNKNOWN'
   io.to(roomId).emit(EVENTS.ROOM_AUTO_FALLBACK, {
     ...event,
     status: 'trying',
-    reasonType,
-    reasonDetail: vipRequired ? 'VIP 歌曲未登录' : undefined,
+    reasonType: 'UNKNOWN',
   })
 
   try {
     const best = await findBestAlternativeTrack(track, toSource)
     if (!valid()) return null
-    if (best) {
+    const cookie = getAnyCookie(toSource, roomId)
+    if (best && cookie && (!best.track.vip || getAllPlatformStatus(roomId).some(
+      (status) => status.platform === toSource && status.hasVip,
+    ))) {
       const { source, urlId } = best.track
-      const cookie = getAnyCookie(source, roomId)
-      const streamUrl = await resolveStreamUrl(musicProvider, source, urlId, room.audioQuality, cookie ?? undefined)
+      const streamUrl = await resolveStreamUrl(musicProvider, source, urlId, room.audioQuality, cookie, valid)
       if (!valid()) return null
       if (streamUrl) {
         const replacement: Track = { ...best.track, id: track.id, requestedBy: track.requestedBy, streamUrl }
@@ -194,7 +194,7 @@ async function tryAlternativeTrack(
     logger.error('Auto fallback failed', undefined, { roomId })
   }
 
-  io.to(roomId).emit(EVENTS.ROOM_AUTO_FALLBACK, { ...event, status: 'failed', reasonType })
+  io.to(roomId).emit(EVENTS.ROOM_AUTO_FALLBACK, { ...event, status: 'failed', reasonType: 'UNKNOWN' })
   return null
 }
 
@@ -205,28 +205,33 @@ export async function resolvePlayableTrack(
   track: Track,
   valid: () => boolean,
 ): Promise<Track | null> {
-  if (track.streamUrl && !isStreamUrlExpired(track.source, track.streamUrl)) return { ...track }
-
+  if (!valid()) return null
   const roomId = room.id
   const cookie = getAnyCookie(track.source, roomId)
-  const vipRequired = !!track.vip && !cookie
-  try {
-    const streamUrl = await resolveStreamUrl(musicProvider, track.source, track.urlId, room.audioQuality, cookie ?? undefined)
-    if (!valid()) return null
-    if (streamUrl) return { ...track, streamUrl }
+  const vipRequired = !!track.vip && !getAllPlatformStatus(roomId).some(
+    (status) => status.platform === track.source && status.hasVip,
+  )
+  if (!vipRequired) {
+    if (track.streamUrl && getStreamUrlExpiresAt(track.source, track.streamUrl) !== null &&
+        !isStreamUrlExpired(track.source, track.streamUrl)) return { ...track }
 
-    const replacement = await tryAlternativeTrack(io, room, track, vipRequired, valid)
-    if (!valid()) return null
-    if (replacement) return replacement
-  } catch {
-    if (!valid()) return null
-    logger.error('Could not resolve track stream URL', undefined, { roomId })
-    removeTrack(roomId, track.id)
-    io.to(roomId).emit(EVENTS.QUEUE_UPDATED, { queue: room.queue })
-    return null
+    try {
+      const streamUrl = await resolveStreamUrl(
+        musicProvider, track.source, track.urlId, room.audioQuality, cookie ?? undefined, valid,
+      )
+      if (!valid()) return null
+      if (streamUrl) return { ...track, streamUrl }
+
+      const replacement = await tryAlternativeTrack(io, room, track, valid)
+      if (!valid()) return null
+      if (replacement) return replacement
+    } catch {
+      if (!valid()) return null
+      logger.error('Could not resolve track stream URL', undefined, { roomId })
+    }
   }
 
-  const hint = vipRequired ? '（VIP 歌曲，需要有用户登录 VIP 账号）' : ''
+  const hint = vipRequired || !cookie ? '（如需播放 VIP 歌曲，请在房间内登录对应平台的 VIP 账号）' : ''
   logger.warn(`Cannot get stream URL for "${track.title}"${hint}, removing from queue`, { roomId })
   removeTrack(roomId, track.id)
   io.to(roomId).emit(EVENTS.QUEUE_UPDATED, { queue: room.queue })

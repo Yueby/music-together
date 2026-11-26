@@ -1,5 +1,6 @@
 import QRCode from 'qrcode'
 import { LRUCache } from 'lru-cache'
+import { QR_STATUS } from '@music-together/shared'
 import type { Playlist } from '@music-together/shared'
 import type { GetUserInfoResult } from './authProvider.js'
 import { logger } from '../utils/logger.js'
@@ -284,7 +285,6 @@ export async function generateQrCode(): Promise<{ key: string; qrimg: string } |
     if (!qrsig) {
       logger.error('QQ QR: qrsig not found in response headers', {
         setCookieCount: setCookies.length,
-        rawSetCookie: response.headers.get('set-cookie')?.slice(0, 200),
       })
       return null
     }
@@ -300,8 +300,8 @@ export async function generateQrCode(): Promise<{ key: string; qrimg: string } |
 
     logger.info('QQ Music QR code generated successfully')
     return { key: qrsig, qrimg }
-  } catch (err) {
-    logger.error('QQ QR generation failed', err)
+  } catch {
+    logger.error('QQ QR generation failed')
     return null
   }
 }
@@ -327,9 +327,9 @@ export async function checkQrStatus(qrsig: string): Promise<{
   cookie?: string
 }> {
   try {
-    // 如果该 qrsig 正在处理登录（check_sig 等耗时操作），直接返回成功状态
+    // 交换登录凭据完成前，仍需继续轮询。
     if (qrProcessingSet.has(qrsig)) {
-      return { status: 803, message: '登录成功，正在获取用户信息...' }
+      return { status: QR_STATUS.SCANNED, message: '已确认扫码，正在获取登录凭据' }
     }
 
     const ptqrtoken = hash33(qrsig)
@@ -372,6 +372,7 @@ export async function checkQrStatus(qrsig: string): Promise<{
       signal: AbortSignal.timeout(10_000),
     })
 
+    if (!response.ok) return { status: QR_STATUS.WAITING_SCAN, message: '暂时无法检查登录状态，请稍候' }
     const text = await response.text()
 
     // 组合新获得的环境 Cookies（例如下发的 pt2gguin 等）
@@ -397,7 +398,7 @@ export async function checkQrStatus(qrsig: string): Promise<{
     const match = text.match(/ptuiCB\('(\d+)','([^']*)','([^']*)','([^']*)','([^']*)'(?:,'([^']*)')?/)
     if (!match) {
       logger.warn('QQ QR: unexpected ptqrlogin response format', { length: text.length })
-      return { status: 800, message: '检查状态失败（响应格式异常）' }
+      return { status: QR_STATUS.WAITING_SCAN, message: '检查状态失败（响应格式异常）' }
     }
 
     const [, code, , checkSigUrl, , msg, nickname] = match
@@ -408,6 +409,8 @@ export async function checkQrStatus(qrsig: string): Promise<{
     // 登录成功 — 通过 check_sig 获取 p_skey/skey 并换取 OAuth musickey
     if (code === '0') {
       qrProcessingSet.add(qrsig)
+      const missingCookie = { status: QR_STATUS.EXPIRED, message: '未获取到有效登录凭据，请重新扫码' }
+      let shouldRetry = false
 
       try {
         const uinStr = checkSigUrl?.match(/uin=([^&]+)/)?.[1]
@@ -415,7 +418,7 @@ export async function checkQrStatus(qrsig: string): Promise<{
 
         if (!uinStr || !ptsigx) {
           logger.warn('QQ QR: Missing uin or ptsigx in check_sig URL')
-          return { status: 803, message: mapped.message }
+          return missingCookie
         }
 
         // 第3步：请求 ptlogin2 的 check_sig 换取 p_skey 和其他全套环境 Cookie
@@ -424,50 +427,43 @@ export async function checkQrStatus(qrsig: string): Promise<{
 
         if (!fullCookie) {
           logger.warn('QQ QR: Failed to pass check_sig')
-          return { status: 803, message: mapped.message, cookie: mergedCookie }
+          return missingCookie
         }
 
         // 从完整的 fullCookie 中切分出 p_skey（给 GTK 哈希使用）
-        const pSkeyMatch = fullCookie.match(/p_skey=([^;]+)/)
-        const pSkey = pSkeyMatch ? pSkeyMatch[1] : ''
+        const pSkey = getCookieValue(fullCookie, 'p_skey')
         if (!pSkey) {
           logger.warn('QQ QR: check_sig succeeded but missing p_skey in parsed fullCookie')
+          return missingCookie
         }
+        const uin = Number(uinStr.replace(/^o0*/, ''))
+        if (!Number.isSafeInteger(uin) || uin <= 0) return missingCookie
 
         // 第4步：携带包含 p_skey，pt4_token 的全套鉴权上下文发 POST 获取 auth code
         logger.info('QQ QR: step 4 - fetching OAuth code')
         const authCode = await fetchOAuthCode(pSkey, fullCookie)
 
-        if (!authCode) {
-          logger.warn('QQ QR: Failed to get OAuth code')
-          // fail over 到仅包含 p_skey 的普通 cookie
-          const uinInt = Number(uinStr.replace(/^o0*/, ''))
-          return {
-            status: 803,
-            message: mapped.message,
-            cookie: `uin=${uinInt}; p_skey=${pSkey}; skey=${pSkey}; qqmusic_key=${pSkey}; qm_keyst=${pSkey}`,
+        // 第5步：用获得的 auth code 及 zzc 签名请求换取音乐平台的核心加密票据
+        if (authCode) {
+          const finalCookie = await fetchMusicKeySession(authCode)
+          if (finalCookie) {
+            logger.info(`QQ Music QR login success: ${nickname || uinStr} (got zzc-signed musickey)`)
+            return { status: QR_STATUS.SUCCESS, message: mapped.message, cookie: finalCookie }
           }
         }
 
-        // 第5步：用获得的 auth code 及 zzc 签名请求换取音乐平台的核心加密票据
-        logger.info('QQ QR: step 5 - exchanging code for musickey')
-        const finalCookie = await fetchMusicKeySession(authCode)
-
-        if (finalCookie) {
-          logger.info(`QQ Music QR login success: ${nickname || uinStr} (got zzc-signed musickey)`)
-          return { status: 803, message: mapped.message, cookie: finalCookie }
-        }
-
-        // 若第五步失败仍可回退到携带 p_skey 的基础 cookie
-        const fallbackUin = Number(uinStr.replace(/^o0*/, ''))
+        // 无 musickey 时使用已获取的 p_skey，由控制器验证账号。
         return {
-          status: 803,
+          status: QR_STATUS.SUCCESS,
           message: mapped.message,
-          cookie: `uin=${fallbackUin}; p_skey=${pSkey}; skey=${pSkey}; qqmusic_key=${pSkey}; qm_keyst=${pSkey}`,
+          cookie: `uin=${uin}; p_skey=${pSkey}; skey=${pSkey}; qqmusic_key=${pSkey}; qm_keyst=${pSkey}`,
         }
+      } catch (error) {
+        shouldRetry = true
+        throw error
       } finally {
         qrProcessingSet.delete(qrsig)
-        qrSessionMap.delete(qrsig)
+        if (!shouldRetry) qrSessionMap.delete(qrsig)
       }
     }
 
@@ -477,9 +473,9 @@ export async function checkQrStatus(qrsig: string): Promise<{
     }
 
     return mapped
-  } catch (err) {
-    logger.error('QQ QR check failed', err)
-    return { status: 800, message: '检查状态失败' }
+  } catch {
+    logger.warn('QQ QR check failed')
+    return { status: QR_STATUS.WAITING_SCAN, message: '暂时无法检查登录状态，请稍候' }
   }
 }
 
@@ -687,8 +683,8 @@ async function fetchMusicKeySession(code: string): Promise<string | null> {
       return `uin=${data.musicid}; qm_keyst=${data.musickey}; qqmusic_key=${data.musickey}; o_cookie=${data.musicid}; o_refresh_token=${data.refresh_token || ''}`
     }
     return null
-  } catch (err) {
-    logger.error('QQ QR: MusicKey Session Exchange Failed', err)
+  } catch {
+    logger.error('QQ QR: MusicKey Session Exchange Failed')
     return null
   }
 }
