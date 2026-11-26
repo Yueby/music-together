@@ -254,8 +254,7 @@ export function useHowl(onTrackEnd: () => void) {
           })()
 
           if (playbackSoundFactory.supportsHtml5Analysis && isSameOriginStream) {
-            const sound = (howl as unknown as { _sounds?: Array<{ _node?: HTMLAudioElement }> })._sounds?.[0]
-            const audioElement = sound?._node
+            const audioElement = howl.claimMediaElementForAnalysis?.()
             if (audioElement && typeof AudioContext !== 'undefined') {
               try {
                 const context = new AudioContext()
@@ -299,9 +298,6 @@ export function useHowl(onTrackEnd: () => void) {
                 (scheduledSeekTarget !== undefined || elapsed > LOAD_COMPENSATION_THRESHOLD_S) &&
                 Math.abs((howl.seek(undefined, playedSoundId) as number) - correctedTime) > 0.03
               ) {
-                // Public Howler seek pauses and restarts a playing HTML5 sound.
-                // That second mobile play() delay recreates the exact lag this
-                // correction is meant to remove.
                 setHowlPosition(howl, correctedTime, playedSoundId)
               }
               const latestVolume = usePlayerStore.getState().volume

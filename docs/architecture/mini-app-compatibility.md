@@ -93,9 +93,9 @@ SDK 0.3 的受控动态字节读取和 Web Audio 已在早期探针中实测（�
 
 ### 共享播放器媒体对象
 
-`client/src/lib/PlaybackSound.ts` 定义现有播放器 Hook 消费的最小媒体接口；默认 `playbackSoundFactory.ts` 原样将 options 传给 Howler。`useHowl` 只替换媒体创建入口，`usePlayer` 继续复用，`usePlayerSync` 保留既有计划执行、EMA 漂移校正和 conductor 上报逻辑。
+`client/src/lib/PlaybackSound.ts` 定义现有播放器 Hook 消费的最小媒体接口；默认 `playbackSoundFactory.ts` 通过 `htmlAudioSound.ts` 创建池化的原生 `HTMLAudioElement` 媒体对象。`useHowl` 只替换媒体创建入口，`usePlayer` 继续复用，`usePlayerSync` 保留既有计划执行、EMA 漂移校正和 conductor 上报逻辑。
 
-**首播耗时与码率上限**：网页端用 `<audio>` 流式播放（Howler `html5: true`，收到第一段就能播），微应用做不到——沙箱只有 Web Audio，`decodeAudioData` 需要完整文件，SDK 的 `audio.play` / `video.playProgram` 只播 manifest 声明并校验过的资源（固定文件，或每段带 `sha256`/`size` 的分段），不适用动态歌曲。沙箱 CSP 还有 `media-src 'none'`（沙箱实测：`<audio>` 加载 `blob:` URL 会被拦截），所以 `<audio>` / MediaSource 的边下边播也走不通。所以微应用的首播耗时就是整个文件的下载时间，而瓶颈是服务器（海外）到音乐 CDN 的链路：实测 2MB 封面约 0.6–0.7MB/s（偶发降到 50KB/s），音频约 1–1.5MB/s，320kbps 的 4 分钟歌（约 10MB）要 6–9 秒。服务端因此给微应用音频接口加了码率上限 `MAPP_AUDIO_MAX_BITRATE`（默认 128kbps，约 4MB，耗时约为 320kbps 的 40%，上游带宽也最省），取房间音质与上限中较小者，网页端不受影响；需要更高音质可设为 192/320/999。服务端流式转发音频，缓存的是取链结果。压缩音频字节的预取、缓存与解码由客户端处理。
+**首播耗时与码率上限**：网页端用原生 `<audio>` 流式播放（收到第一段就能播），微应用做不到——沙箱只有 Web Audio，`decodeAudioData` 需要完整文件，SDK 的 `audio.play` / `video.playProgram` 只播 manifest 声明并校验过的资源（固定文件，或每段带 `sha256`/`size` 的分段），不适用动态歌曲。沙箱 CSP 还有 `media-src 'none'`（沙箱实测：`<audio>` 加载 `blob:` URL 会被拦截），所以 `<audio>` / MediaSource 的边下边播也走不通。所以微应用的首播耗时就是整个文件的下载时间，而瓶颈是服务器（海外）到音乐 CDN 的链路：实测 2MB 封面约 0.6–0.7MB/s（偶发降到 50KB/s），音频约 1–1.5MB/s，320kbps 的 4 分钟歌（约 10MB）要 6–9 秒。服务端因此给微应用音频接口加了码率上限 `MAPP_AUDIO_MAX_BITRATE`（默认 128kbps，约 4MB，耗时约为 320kbps 的 40%，上游带宽也最省），取房间音质与上限中较小者，网页端不受影响；需要更高音质可设为 192/320/999。服务端流式转发音频，缓存的是取链结果。压缩音频字节的预取、缓存与解码由客户端处理。
 
 **切歌预取**：微应用必须经 SDK 下载整个文件才能解码（约 10MB 实测 7 秒），不预取时每次切歌都会比房主晚数秒、从曲目中途开始。服务端在每首歌开始后广播 `player:preload`（见 data-flow），`MappPlaybackSoundFactory.preload` 交给 `MappAudioEngine.preloadRoomTrack` 提前下载下一首的压缩字节（仅一份，不含解码后的音频，避免占用数倍内存）；切歌时 `loadRoomTrack` 接手同一首的预取（含仍在传输中的），只剩解码。鉴权沿用 `roomAudio`：下一首已在房间队列里，服务端的“曲目属于该房间”检查照常通过。
 

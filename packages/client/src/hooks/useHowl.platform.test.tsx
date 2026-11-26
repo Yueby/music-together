@@ -18,7 +18,6 @@ const nativeAudio = vi.hoisted(() =>
   }),
 )
 vi.mock('@/lib/playbackSoundFactory', () => ({ playbackSoundFactory: bridge }))
-vi.mock('howler', () => ({ Howl: nativeAudio }))
 vi.mock('sonner', () => ({ toast: { error: vi.fn() } }))
 
 const track: Track = {
@@ -104,6 +103,10 @@ describe('shared playback hook with the SDK media factory', () => {
       vi.fn(() => 1),
     )
     vi.stubGlobal('cancelAnimationFrame', vi.fn())
+    vi.stubGlobal(
+      'Audio',
+      nativeAudio,
+    )
     vi.stubGlobal(
       'fetch',
       vi.fn(() => {

@@ -1,33 +1,14 @@
-import { Howl, Howler } from 'howler'
-
-let unlocked = false
+import { isHtmlAudioPoolUnlocked, unlockHtmlAudioPool } from './htmlAudioSound'
 
 export function isAudioUnlocked(): boolean {
-  return unlocked
+  return isHtmlAudioPoolUnlocked()
 }
 
 /**
- * Call within a real user interaction (click / keydown).
- * Unlocks the Howler global AudioContext so all subsequent
- * playback works without further interaction.
+ * Call within a real user interaction (click / keydown / touchend).
+ * Primes the pooled HTMLAudioElements so subsequent playback and song switches
+ * work on mobile browsers without re-triggering autoplay restrictions.
  */
 export async function unlockAudio(): Promise<void> {
-  if (unlocked) return
-
-  // 1. Resume Howler's global AudioContext
-  const ctx = Howler.ctx
-  if (ctx && ctx.state === 'suspended') {
-    await ctx.resume()
-  }
-
-  // 2. Play a silent WAV to force-activate (iOS Safari compat)
-  const silentHowl = new Howl({
-    src: ['data:audio/wav;base64,UklGRiQAAABXQVZFZm10IBAAAAABAAEAQB8AAIA+AAACABAAZGF0YQAAAAA='],
-    volume: 0,
-    html5: true,
-  })
-  silentHowl.play()
-  silentHowl.once('end', () => silentHowl.unload())
-
-  unlocked = true
+  await unlockHtmlAudioPool()
 }

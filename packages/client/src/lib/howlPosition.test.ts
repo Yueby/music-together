@@ -2,29 +2,22 @@ import { describe, expect, it, vi } from 'vitest'
 import { setHowlPosition } from './howlPosition'
 
 describe('setHowlPosition', () => {
-  it('updates a playing HTML5 media element without invoking Howler seek', () => {
+  it('seeks with soundId when provided and clamps negative targets to 0', () => {
     const seek = vi.fn()
-    const sound = { _id: 7, _node: { currentTime: 10 }, _seek: 10, _rateSeek: 10 }
-    const howl = {
-      _sounds: [sound],
-      playing: vi.fn(() => true),
-      seek,
-    }
+    const howl = { playing: vi.fn(() => true), seek }
 
-    setHowlPosition(howl as never, 12.5, 7)
+    setHowlPosition(howl, 12.5, 7)
+    expect(seek).toHaveBeenLastCalledWith(12.5, 7)
 
-    expect(sound._node.currentTime).toBe(12.5)
-    expect(sound._seek).toBe(12.5)
-    expect(sound._rateSeek).toBe(12.5)
-    expect(seek).not.toHaveBeenCalled()
+    setHowlPosition(howl, -3, 7)
+    expect(seek).toHaveBeenLastCalledWith(0, 7)
   })
 
-  it('falls back to the public Howler seek API when playback is paused', () => {
+  it('omits soundId when not provided', () => {
     const seek = vi.fn()
-    const howl = { _sounds: [], playing: vi.fn(() => false), seek }
+    const howl = { playing: vi.fn(() => false), seek }
 
-    setHowlPosition(howl as never, 8, 3)
-
-    expect(seek).toHaveBeenCalledWith(8, 3)
+    setHowlPosition(howl, 8)
+    expect(seek).toHaveBeenCalledExactlyOnceWith(8)
   })
 })
