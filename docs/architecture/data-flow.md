@@ -189,8 +189,8 @@ interface ChatMessage {
 - **revision 边界**：准备和计划动作各自取已提交、待准备和待执行 revision 中的最大值加 1。定时器还校验待执行动作的对象身份，防止已被替换的回调提交。切换房主或其代表 Socket 时保留播放时间戳、位置和 revision
 - **切歌准备（`player:prepare` / `player:ready`）**：解析曲目播放链接和封面后，服务端记录当时在房间内的 Socket，广播 `{ track, revision, deadlineAt }`，客户端加载音频后回传 `{ trackId, revision }`。收到全部匹配确认、剩余未确认连接全部离开，或等待达到 3,500ms 时，服务端广播带新 revision 和执行时间的 `player:play`。准备期间加入的连接收到同一份 `player:prepare`，等待集合保持在切歌时的快照。空房间直接广播计划播放，有效的新控制取消旧准备定时器
 - Scheduled action（seek/pause/resume）执行时自动重置 `rate(1)`，SEEK 同时应用 payload 中的最终 `isPlaying`，避免 PAUSE/RESUME 被后续 SEEK 取消后出现客户端与服务端播放状态相反；执行后同步更新 `roomStore.playState`（不含 `serverTimeToExecute`），确保 recovery effect 读到最新状态
-- **加载与执行边界**：收到 RESUME 或播放态 SEEK 时，加载中的音轨保持暂停，直到受 action ID 保护的执行回调才启用期望播放目标。若到点仍未加载完成，不向 Howler 排队 seek/play，由 `onload` 根据当时的服务端时间计算补偿位置并只启动一次；已在播放的 SEEK 则持续播放到执行时间后再定位，不重复启动。
-- **预取下一首（`player:preload`）**：服务端下发计划播放后，以及队列或播放设置变化后，提前解析下一首的链接，写回队列项的 `streamUrl`，并广播 `player:preload { track }`。随机模式为当前曲目保存一个选定的下一首，切歌时优先使用；该曲被移除时重新选择。消耗队列跳过当前曲目，微应用单曲循环复用当前解码缓冲。网页端按曲目 ID 和链接保留一份静音的 HTML5 Howl，准备或播放同一音源时直接接管。微应用提前获取压缩音频字节。预取失败时按正常路径加载
+- **加载与执行边界**：收到 RESUME 或播放态 SEEK 时，加载中的音轨保持暂停，直到受 action ID 保护的执行回调才启用期望播放目标。若到点仍未加载完成，不提前排队 seek/play，由 `onload` 根据当时的服务端时间计算补偿位置并只启动一次；已在播放的 SEEK 则持续播放到执行时间后再定位，不重复启动。
+- **预取下一首（`player:preload`）**：服务端下发计划播放后，以及队列或播放设置变化后，提前解析下一首的链接，写回队列项的 `streamUrl`，并广播 `player:preload { track }`。随机模式为当前曲目保存一个选定的下一首，切歌时优先使用；该曲被移除时重新选择。消耗队列跳过当前曲目，微应用单曲循环复用当前解码缓冲。网页端按曲目 ID 和链接在双槽位解锁 `<audio>` 池中保留一份静音预加载实例，准备或播放同一音源时直接接管。微应用提前获取压缩音频字节。预取失败时按正常路径加载
 - **取消过期操作**：较新的控制动作取消尚未执行的定时器和音频时钟排程，执行时校验 revision。`scheduledPlayback` bridge 负责跨 Hook 取消。加载期间记录最新的期望播放状态，解码结束后按最新目标启动。准备阶段的本机加载失败也回传就绪，播放受阻或停滞时只尝试本机恢复
 
 ## Layer 3：周期性比例漂移校正（EMA + Proportional Rate + Hard Seek）

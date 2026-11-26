@@ -19,6 +19,8 @@ export interface PlaybackSound {
   once(event: 'play' | 'unlock', listener: (soundId: number) => void): unknown
   load(): unknown
   unload(): unknown
+  /** Returns the underlying HTMLAudioElement for same-origin WebAudio analysis and marks it non-recyclable. */
+  claimMediaElementForAnalysis?(): HTMLAudioElement | null
 }
 
 export type AudioLoadPhase = 'idle' | 'buffering' | 'downloading' | 'decoding' | 'waiting'

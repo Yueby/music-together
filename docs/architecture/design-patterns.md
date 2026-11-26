@@ -32,7 +32,7 @@ const room = useRoomStore.getState().room
 
 ```
 usePlayer                             useRoom
-├── useHowl (Howler.js 实例)          ├── useRoomState (核心房间事件)
+├── useHowl (PlaybackSound 实例)       ├── useRoomState (核心房间事件)
 ├── useLyric (歌词解析)                ├── useChatSync (聊天事件)
 └── usePlayerSync                     ├── useQueueSync (队列事件)
     ├── Scheduled Execution           ├── useAuthSync (Cookie 持久化 + toast 反馈，永不删除 cookie)

@@ -13,7 +13,6 @@
 | 请求缓存 | @tanstack/react-query | ^5.108.4 | 搜索、发现、歌手、歌单与歌词客户端缓存和并发去重 |
 | 路由 | react-router | ^8.5.2 | 客户端路由（v8 ESM；仓库统一使用 Node >=24.15.0） |
 | 实时通信 | socket.io-client | ^4.8.4 | Socket.IO 客户端 |
-| 音频 | howler | ^2.2.4 | 音频播放引擎 |
 | 歌词 | @applemusic-like-lyrics/core / react / lyric | ^0.6.0 / ^0.6.0 / ^1.1.0 | AMLL 歌词解析、逐词动画与动态背景 |
 | 动画 | motion | ^14.14.0 | React 动画 |
 | 虚拟列表 | @tanstack/react-virtual | ^3.14.26 | 搜索和歌单大列表 |

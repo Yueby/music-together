@@ -130,7 +130,7 @@ src/
 │   ├── useServerCapacity.ts    #   订阅服务器容量和准入排队事件
 │   ├── useSocketEvent.ts       #   通用 Socket 事件订阅工具 Hook（自动 on/off，ref 稳定）
 │   ├── usePlayer.ts            #   播放器主 hook（组合 useHowl + useLyric + usePlayerSync）
-│   ├── useHowl.ts              #   Howler.js 音频实例管理
+│   ├── useHowl.ts              #   音频实例生命周期管理（消费 PlaybackSound 抽象）
 │   ├── useLyric.ts             #   歌词加载（服务端 TTML 代理 → 平台逐词 YRC/KRC → LRC）
 │   ├── useBackgroundAlbum.ts   #   流体背景的封面来源：需读字节的宿主把 Blob URL 转成已加载的 `<img>`（避免库内 fetch 被 CSP 拦截）
 │   ├── usePlayerSync.ts        #   播放同步（Scheduled Execution + conductor 上报 + 周期性漂移校正）
@@ -194,7 +194,8 @@ src/
 ├── storageBackend.ts       #   默认浏览器存储操作，原 storage facade 复用
 ├── RoomCommands.ts         #   统一房间命令边界及 Web 默认事件透传
 ├── PlaybackSound.ts        #   共享播放器最窄媒体对象接口
-├── playbackSoundFactory.ts #   默认 Web Howler 创建入口，宿主可选择对应媒体实现
+├── htmlAudioSound.ts       #   Web 原生 HTMLAudioElement 双槽位池化封装（保音调调速、无重启原地 seek、手势解锁复用）
+├── playbackSoundFactory.ts #   默认 Web 原生 HTMLAudio 创建入口，宿主可选择对应媒体实现
 ├── socket.ts               #   Socket.IO 网页客户端实例
 ├── platform/SdkRoomSocket.ts #   可注入的微应用 SDK Socket.IO 传输（不替换网页实例）
     ├── storage.ts              #   localStorage 封装（带类型校验）

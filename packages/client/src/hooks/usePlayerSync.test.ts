@@ -1,19 +1,19 @@
 // @vitest-environment jsdom
 import { act, cleanup, renderHook } from '@testing-library/react'
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
-import type { HowlOptions } from 'howler'
 import { EVENTS, type RoomState, type ScheduledPlayState, type Track } from '@music-together/shared'
+import type { PlaybackSoundOptions } from '@/lib/PlaybackSound'
 import { useHowl } from './useHowl'
 import { usePlayerSync } from './usePlayerSync'
 import { usePlayerStore } from '@/stores/playerStore'
 import { useRoomStore } from '@/stores/roomStore'
 
 const audio = vi.hoisted(() => {
-  const instances: ReturnType<typeof createHowl>[] = []
+  const instances: ReturnType<typeof createSound>[] = []
   const handlers = new Map<string, (data: { playState: ScheduledPlayState }) => void>()
   const clock = { calibrated: true }
 
-  function createHowl(options: HowlOptions) {
+  function createSound(options: PlaybackSoundOptions) {
     let loaded = false
     let playing = false
     let position = 0
@@ -21,18 +21,18 @@ const audio = vi.hoisted(() => {
     return {
       finishLoad() {
         loaded = true
-        options.onload?.(1)
+        options.onload?.()
       },
       state: vi.fn(() => (loaded ? 'loaded' : 'loading')),
       playing: vi.fn(() => playing),
       play: vi.fn(() => {
         playing = true
-        options.onplay?.(1)
+        options.onplay?.()
         return 1
       }),
       pause: vi.fn(() => {
         playing = false
-        options.onpause?.(1)
+        options.onpause?.()
       }),
       seek: vi.fn<(target?: number, id?: number) => number>((target) => {
         if (target !== undefined) position = target
@@ -45,6 +45,7 @@ const audio = vi.hoisted(() => {
       duration: vi.fn(() => 120),
       volume: vi.fn(),
       once: vi.fn(),
+      load: vi.fn(),
       unload: vi.fn(),
     }
   }
@@ -53,11 +54,15 @@ const audio = vi.hoisted(() => {
     instances,
     handlers,
     clock,
-    Howl: vi.fn(function (options: HowlOptions) {
-      const howl = createHowl(options)
-      instances.push(howl)
-      return howl
-    }),
+    factory: {
+      allowLoadRetry: true,
+      supportsHtml5Analysis: true,
+      create: vi.fn((_track: Track, options: PlaybackSoundOptions) => {
+        const sound = createSound(options)
+        instances.push(sound)
+        return sound
+      }),
+    },
     socket: {
       id: 'test-socket',
       connected: true,
@@ -70,7 +75,7 @@ const audio = vi.hoisted(() => {
   }
 })
 
-vi.mock('howler', () => ({ Howl: audio.Howl }))
+vi.mock('@/lib/playbackSoundFactory', () => ({ playbackSoundFactory: audio.factory }))
 vi.mock('@/providers/SocketProvider', () => ({ useSocketContext: () => ({ socket: audio.socket }) }))
 vi.mock('@/lib/clockSync', () => ({
   getServerTime: () => Date.now(),
