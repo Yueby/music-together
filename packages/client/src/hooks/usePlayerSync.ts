@@ -33,6 +33,8 @@ import { EVENTS } from '@music-together/shared'
 import type { PlaybackSound } from '@/lib/PlaybackSound'
 import { useEffect, useRef, type RefObject } from 'react'
 
+const VISIBILITY_SYNC_COOLDOWN_MS = 2_000
+
 export function usePlayerSync(
   howlRef: RefObject<PlaybackSound | null>,
   soundIdRef: RefObject<number | undefined>,
@@ -201,34 +203,27 @@ export function usePlayerSync(
       const pitchSafeRate = sound.supportsPitchPreservingRate !== false
       const latencyDeltaMs =
         lastEffectiveLatencyMs !== undefined ? Math.abs(effectiveLatencyMs - lastEffectiveLatencyMs) : 0
-      const manualLatencyChanged = manualLatencyOffsetMs !== lastManualLatencyOffsetMs
-      if (lastEffectiveLatencyMs !== undefined && latencyDeltaMs >= 20) {
-        lastEffectiveLatencyMs = effectiveLatencyMs
-        lastManualLatencyOffsetMs = manualLatencyOffsetMs
-        if (!pitchSafeRate && sound.crossfadeSeek && Math.abs(current - expected) > 0.02) {
-          if (room.currentTrack.duration > 0 && expected >= room.currentTrack.duration) return
-          if (sound.rate() !== 1) sound.rate(1)
-          sound.crossfadeSeek(expected)
-          resetDrift()
-          return
-        }
-        if (
-          pitchSafeRate &&
-          manualLatencyChanged &&
-          latencyDeltaMs >= MANUAL_LATENCY_IMMEDIATE_SEEK_MS &&
-          Math.abs(current - expected) > 0.02
-        ) {
-          if (room.currentTrack.duration > 0 && expected >= room.currentTrack.duration) return
-          if (sound.rate() !== 1) sound.rate(1)
-          setHowlPosition(sound, expected, soundIdRef.current)
-          resetDrift()
-          return
-        }
-        resetDrift()
-        return
-      }
+      const manualLatencyChanged =
+        lastEffectiveLatencyMs !== undefined && manualLatencyOffsetMs !== lastManualLatencyOffsetMs
       lastEffectiveLatencyMs = effectiveLatencyMs
       lastManualLatencyOffsetMs = manualLatencyOffsetMs
+      if (manualLatencyChanged) {
+        resetDrift()
+        if (
+          latencyDeltaMs >= (pitchSafeRate ? MANUAL_LATENCY_IMMEDIATE_SEEK_MS : 20) &&
+          Math.abs(current - expected) > 0.02 &&
+          (room.currentTrack.duration <= 0 || expected < room.currentTrack.duration)
+        ) {
+          if (!pitchSafeRate && sound.crossfadeSeek) {
+            if (sound.rate() !== 1) sound.rate(1)
+            sound.crossfadeSeek(expected)
+          } else if (pitchSafeRate) {
+            if (sound.rate() !== 1) sound.rate(1)
+            setHowlPosition(sound, expected, soundIdRef.current)
+          }
+        }
+        return
+      }
 
       samples = [...samples.slice(1 - DRIFT_SAMPLE_COUNT), current - expected]
       if (samples.length < DRIFT_SAMPLE_COUNT) return
@@ -308,9 +303,19 @@ export function usePlayerSync(
       if (sound?.playing() && sound.rate() !== 1) sound.rate(1)
     }
     const driftTimer = setInterval(sampleDrift, DRIFT_SAMPLE_INTERVAL_MS)
-    const syncTimer = setInterval(() => {
-      if (useRoomStore.getState().room && canSendRoomCommand(socket)) socket.emit(EVENTS.PLAYER_SYNC_REQUEST)
-    }, SYNC_REQUEST_INTERVAL_MS)
+    const requestSync = () => {
+      if (!useRoomStore.getState().room || !canSendRoomCommand(socket)) return false
+      socket.emit(EVENTS.PLAYER_SYNC_REQUEST)
+      return true
+    }
+    const syncTimer = setInterval(requestSync, SYNC_REQUEST_INTERVAL_MS)
+    let lastWakeAt = -Infinity
+    const onVisible = () => {
+      if (document.visibilityState !== 'visible') return
+      const now = performance.now()
+      if (now - lastWakeAt >= VISIBILITY_SYNC_COOLDOWN_MS && requestSync()) lastWakeAt = now
+    }
+    document.addEventListener('visibilitychange', onVisible)
 
     socket.on(EVENTS.PLAYER_SEEK, scheduleAction)
     socket.on(EVENTS.PLAYER_PAUSE, scheduleAction)
@@ -323,6 +328,7 @@ export function usePlayerSync(
     return () => {
       clearInterval(driftTimer)
       clearInterval(syncTimer)
+      document.removeEventListener('visibilitychange', onVisible)
       clearScheduled()
       clearTimeout(rateCheckTimer)
       socket.off(EVENTS.PLAYER_SEEK, scheduleAction)

@@ -3,6 +3,8 @@ import { EVENTS, NTP } from '@music-together/shared'
 import { useSocketContext } from '@/providers/SocketProvider'
 import { recordPing, processPong, resetClockSync, isCalibrated, getMedianRTT } from '@/lib/clockSync'
 
+const VISIBILITY_SYNC_COOLDOWN_MS = 2_000
+
 /**
  * Runs the NTP clock-sync loop for the lifetime of the socket connection.
  *
@@ -55,10 +57,19 @@ export function useClockSync(): void {
 
     const onConnect = () => startCalibration()
     const onDisconnect = clearPingInterval
+    let lastWakeAt = -Infinity
+    const onVisible = () => {
+      if (document.visibilityState !== 'visible' || !socket.connected) return
+      const now = performance.now()
+      if (now - lastWakeAt < VISIBILITY_SYNC_COOLDOWN_MS) return
+      lastWakeAt = now
+      sendPing()
+    }
 
     socket.on(EVENTS.NTP_PONG, onPong)
     socket.on('connect', onConnect)
     socket.on('disconnect', onDisconnect)
+    document.addEventListener('visibilitychange', onVisible)
 
     startCalibration()
 
@@ -66,6 +77,7 @@ export function useClockSync(): void {
       socket.off(EVENTS.NTP_PONG, onPong)
       socket.off('connect', onConnect)
       socket.off('disconnect', onDisconnect)
+      document.removeEventListener('visibilitychange', onVisible)
       clearPingInterval()
       resetClockSync()
     }

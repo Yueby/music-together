@@ -39,6 +39,7 @@ const DISCONNECT_TOAST_ID = 'socket-disconnect'
 const OVERLOAD_TOAST_ID = 'server-overloaded'
 const OVERLOAD_RETRY_MS = 5_000
 const RESTART_TOAST_ID = 'server-restarting'
+const BOOTSTRAP_TOAST_ID = 'identity-bootstrap'
 
 export function SocketProvider({ children }: { children: ReactNode }) {
   const socketRef = useRef<TypedSocket>(getSocket())
@@ -48,6 +49,11 @@ export function SocketProvider({ children }: { children: ReactNode }) {
   useEffect(() => {
     const socket = socketRef.current
     let cancelled = false
+    const bootstrapController = new AbortController()
+    let bootstrapped = false
+    let bootstrapping = false
+    let bootstrapRetryMs = 1_000
+    let bootstrapRetryTimer: ReturnType<typeof setTimeout> | undefined
     let reauthenticating = false
     let overloadRetryTimer: ReturnType<typeof setTimeout> | undefined
     let restartRetryTimer: ReturnType<typeof setTimeout> | undefined
@@ -88,15 +94,16 @@ export function SocketProvider({ children }: { children: ReactNode }) {
       toast.info('服务正在更新，即将自动重连…', { id: RESTART_TOAST_ID })
     }
 
-    const bootstrapIdentity = async (showError = true): Promise<boolean> => {
+    const bootstrapIdentity = async (): Promise<boolean> => {
       try {
         const res = await fetch(`${SERVER_URL}/api/auth/identity/bootstrap`, {
           method: 'POST',
           credentials: 'include',
+          signal: bootstrapController.signal,
         })
+        if (cancelled) return false
         if (!res.ok) {
           storage.clearUserId()
-          if (showError) toast.error('身份初始化失败，请刷新重试')
           return false
         }
 
@@ -108,17 +115,33 @@ export function SocketProvider({ children }: { children: ReactNode }) {
         }
         return true
       } catch {
-        storage.clearUserId()
-        if (showError) toast.error('连接服务器失败，请稍后重试')
+        if (!cancelled) storage.clearUserId()
         return false
       }
     }
 
-    const ensureIdentityAndConnect = async (showError = true): Promise<void> => {
-      const ok = await bootstrapIdentity(showError)
-      if (ok && !cancelled && !socket.connected) {
-        socket.connect()
+    const ensureIdentityAndConnect = async (): Promise<void> => {
+      if (cancelled || bootstrapped || bootstrapping) return
+      clearTimeout(bootstrapRetryTimer)
+      bootstrapping = true
+      const ok = await bootstrapIdentity()
+      bootstrapping = false
+      if (cancelled) return
+      if (ok) {
+        bootstrapped = true
+        toast.dismiss(BOOTSTRAP_TOAST_ID)
+        if (!socket.connected) socket.connect()
+        return
       }
+      if (bootstrapRetryMs === 1_000) {
+        toast.error('身份初始化失败，正在重试…', { id: BOOTSTRAP_TOAST_ID })
+      }
+      bootstrapRetryTimer = setTimeout(ensureIdentityAndConnect, bootstrapRetryMs)
+      bootstrapRetryMs = Math.min(bootstrapRetryMs * 2, 30_000)
+    }
+
+    const onVisible = () => {
+      if (document.visibilityState === 'visible') void ensureIdentityAndConnect()
     }
 
     const onConnectError = async (err: Error) => {
@@ -138,7 +161,7 @@ export function SocketProvider({ children }: { children: ReactNode }) {
 
       reauthenticating = true
       try {
-        const ok = await bootstrapIdentity(false)
+        const ok = await bootstrapIdentity()
         if (ok && !cancelled && !socket.connected) {
           socket.connect()
         }
@@ -152,13 +175,20 @@ export function SocketProvider({ children }: { children: ReactNode }) {
     socket.on('connect_error', onConnectError)
     socket.on(EVENTS.SERVER_HELLO, reportServerVersion)
     socket.on(EVENTS.SERVER_RESTARTING, onRestarting)
-    ensureIdentityAndConnect()
+    window.addEventListener('online', ensureIdentityAndConnect)
+    document.addEventListener('visibilitychange', onVisible)
+    void ensureIdentityAndConnect()
 
     return () => {
       cancelled = true
+      bootstrapController.abort()
+      clearTimeout(bootstrapRetryTimer)
       clearTimeout(overloadRetryTimer)
       clearTimeout(restartRetryTimer)
+      toast.dismiss(BOOTSTRAP_TOAST_ID)
       toast.dismiss(OVERLOAD_TOAST_ID)
+      window.removeEventListener('online', ensureIdentityAndConnect)
+      document.removeEventListener('visibilitychange', onVisible)
       socket.off('connect', onConnect)
       socket.off('disconnect', onDisconnect)
       socket.off('connect_error', onConnectError)

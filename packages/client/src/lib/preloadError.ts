@@ -8,6 +8,7 @@ const PRELOAD_RELOAD_COOLDOWN_MS = 60_000
 
 export function handlePreloadError(event: Event, reload = () => window.location.reload()) {
   if (useRoomStore.getState().room && usePlayerStore.getState().isPlaying) {
+    event.preventDefault()
     useVersionStore.setState({ hasUpdate: true })
     toast.info('发现新版本，方便时可刷新更新', { id: 'vite-preload-error' })
     return

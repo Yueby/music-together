@@ -281,6 +281,7 @@ export function createMappPlaybackSoundFactory(options: MappPlaybackSoundFactory
           .loadRoomTrack({
             roomId,
             trackId: track.id,
+            duration: track.duration,
             mode: options.mode ?? 'stream',
             onLoadProgress: (info) => {
               queueMicrotask(() => {

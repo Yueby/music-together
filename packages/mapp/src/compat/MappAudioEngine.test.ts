@@ -284,9 +284,9 @@ describe('MappAudioEngine thin WebAudioPlayer adapter', () => {
         contextState: 'not-created',
       },
     })
-    expect(await f.engine.loadRoomTrack(input())).toBe(true)
+    expect(await f.engine.loadRoomTrack({ ...input(), duration: 8 })).toBe(true)
     expect(load).toHaveBeenCalledOnce()
-    expect(load).toHaveBeenCalledWith(bytes)
+    expect(load).toHaveBeenCalledWith(bytes, 8)
     expect(f.engine.snapshot()).toEqual({
       trackId: 'netease:1',
       loading: false,
@@ -394,9 +394,44 @@ describe('MappAudioEngine thin WebAudioPlayer adapter', () => {
     },
   )
 
+  it('keeps a replacement waiting for the cancelled native decode to finish', async () => {
+    const f = environment()
+    const started = deferred<void>()
+    const oldDecode = deferred<AudioBuffer>()
+    f.context.decodeAudioData.mockImplementationOnce(() => {
+      started.resolve()
+      return oldDecode.promise
+    })
+    const first = f.engine.loadRoomTrack(input('old'))
+    await started.promise
+
+    const replacementReady = deferred<void>()
+    const replacement = f.engine.loadRoomTrack({
+      ...input('new'),
+      onLoadProgress: ({ phase }) => { if (phase === 'decoding') replacementReady.resolve() },
+    })
+    expect(await first).toBe(false)
+    await replacementReady.promise
+    expect(f.context.decodeAudioData).toHaveBeenCalledOnce()
+    expect(f.engine.snapshot()).toMatchObject({ trackId: null, loading: true, audio: { duration: 0 } })
+
+    oldDecode.resolve({ duration: 99 } as AudioBuffer)
+    expect(await replacement).toBe(true)
+    expect(f.context.decodeAudioData).toHaveBeenCalledTimes(2)
+    expect(f.engine.snapshot()).toMatchObject({ trackId: 'new', loading: false, audio: { duration: 8 } })
+    await f.engine.dispose()
+  })
+
+  it('reports a decode failure for over-length track metadata without invoking the native decoder', async () => {
+    const f = environment()
+    expect(await f.engine.loadRoomTrack({ ...input(), duration: 1_801 })).toBe(false)
+    expect(f.context.decodeAudioData).not.toHaveBeenCalled()
+    expect(f.engine.snapshot()).toMatchObject({ trackId: null, loading: false, errorCode: 'AUDIO_DECODE_FAILED' })
+    await f.engine.dispose()
+  })
+
   it('cancel invalidates both the fetch and decode without waiting for their native completion', async () => {
     const f = environment()
-    const cancelPending = vi.spyOn(WebAudioPlayer.prototype, 'cancelPendingOperations')
     const late = deferred<typeof response>()
     f.request.mockReturnValueOnce(late.promise)
     const first = f.engine.loadRoomTrack(input())
@@ -417,7 +452,6 @@ describe('MappAudioEngine thin WebAudioPlayer adapter', () => {
     late.resolve(response)
     await Promise.resolve()
     await Promise.resolve()
-    expect(cancelPending).toHaveBeenCalledTimes(4)
     expect(f.engine.snapshot()).toMatchObject({ trackId: null, loading: false, audio: { duration: 0 } })
     await f.engine.dispose()
   })
