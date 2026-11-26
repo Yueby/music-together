@@ -4,6 +4,7 @@ import type { PlayMode, VoteAction, VoteState } from '@music-together/shared'
 import { useSocketContext } from '@/providers/SocketProvider'
 import { useSocketEvent } from './useSocketEvent'
 import { toast } from 'sonner'
+import { canSendRoomCommand } from '@/stores/roomStore'
 
 const ACTION_LABELS: Record<VoteAction, string> = {
   pause: '暂停',
@@ -73,6 +74,7 @@ export function useVote() {
 
   const startVote = useCallback(
     (action: VoteAction, payload?: Record<string, unknown>) => {
+      if (!canSendRoomCommand(socket)) return
       socket.emit(EVENTS.VOTE_START, { action, payload })
       toast.info(`已发起投票：${getVoteActionLabel(action, payload)}`)
     },
@@ -81,7 +83,7 @@ export function useVote() {
 
   const castVote = useCallback(
     (approve: boolean) => {
-      socket.emit(EVENTS.VOTE_CAST, { approve })
+      if (canSendRoomCommand(socket)) socket.emit(EVENTS.VOTE_CAST, { approve })
     },
     [socket],
   )

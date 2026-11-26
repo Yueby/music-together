@@ -1,13 +1,15 @@
-import { ERROR_CODE, EVENTS, LIMITS } from '@music-together/shared'
+import { ERROR_CODE, EVENTS, LIMITS, PROTOCOL_VERSION, TIMING } from '@music-together/shared'
 import { afterEach, describe, expect, it, vi } from 'vitest'
+import { config } from '../config.js'
 import type { TypedServer, TypedSocket } from '../middleware/types.js'
 import { chatRepo } from '../repositories/chatRepository.js'
 import { roomRepo } from '../repositories/roomRepository.js'
 import { admissionQueue } from '../services/admissionQueueService.js'
-import { clearAllTimers } from '../services/roomLifecycleService.js'
+import { clearAllTimers, setShuttingDown } from '../services/roomLifecycleService.js'
 import { cleanupRoomRejoinTickets } from '../services/rejoinTicketService.js'
 import { canAdmitClient } from '../services/serverLoadService.js'
 import { executeQueuedAdmission, registerRoomController } from './roomController.js'
+import { initializeSocket } from './index.js'
 
 vi.mock('../services/playerService.js', () => ({
   autoPlayIfEmpty: vi.fn(async () => {}),
@@ -48,7 +50,15 @@ function connect(identityUserId: string) {
     on: (event: string, handler: Handler) => handlers.set(event, handler),
     join: vi.fn(),
     leave: vi.fn(),
-    to: () => ({ emit: vi.fn() }),
+    to: (roomId: string) => ({
+      emit: (event: string, payload: unknown) => {
+        for (const peer of peers) {
+          if (peer.socket.id !== socket.id && roomRepo.getSocketMapping(peer.socket.id)?.roomId === roomId) {
+            peer.emit(event, payload)
+          }
+        }
+      },
+    }),
   }
   const typedSocket = socket as unknown as TypedSocket
   sockets.set(socket.id, typedSocket)
@@ -59,7 +69,7 @@ function connect(identityUserId: string) {
 }
 
 const send = async (peer: Peer, event: string, payload?: unknown) => {
-  await peer.handlers.get(event)!(payload)
+  await peer.handlers.get(event)!.call(peer.socket, payload)
 }
 const emitted = (peer: Peer, event: string) => peer.emit.mock.calls.filter(([name]) => name === event).map(([, p]) => p)
 const lastEmitted = (peer: Peer, event: string) => emitted(peer, event).at(-1) as Record<string, unknown> | undefined
@@ -83,7 +93,9 @@ afterEach(() => {
   peers.length = 0
   sockets.clear()
   admissionQueue.clear()
+  setShuttingDown(false)
   clearAllTimers()
+  vi.useRealTimers()
   vi.clearAllMocks()
   vi.mocked(canAdmitClient).mockReturnValue({ allowed: true })
 })
@@ -345,15 +357,23 @@ describe('guessing a room password', () => {
   })
 
   it('still lets a returning member in with a rejoin ticket while password guesses are locked out', async () => {
+    vi.useFakeTimers()
     const owner = connect(newIdentity('owner'))
     const roomId = await createRoom(owner, 'secret')
     const identity = newIdentity('returning')
     const first = connect(identity)
-    await send(first, EVENTS.ROOM_JOIN, { roomId, nickname: 'Guest', password: 'secret' })
+    const originalTtl = config.rejoin.ttlMs
+    Object.assign(config.rejoin, { ttlMs: 2 * TIMING.ROOM_GRACE_PERIOD_MS })
+    try {
+      await send(first, EVENTS.ROOM_JOIN, { roomId, nickname: 'Guest', password: 'secret' })
+    } finally {
+      Object.assign(config.rejoin, { ttlMs: originalTtl })
+    }
     const { token } = lastEmitted(first, EVENTS.ROOM_REJOIN_TOKEN) as { token: string }
-    // The connection drops (the ticket stays valid), and from the new one wrong passwords pile up.
+    // The configurable ticket outlasts the returning-member entry.
     await send(first, 'disconnect', 'transport close')
     expect(isMember(roomId, identity)).toBe(false)
+    vi.advanceTimersByTime(TIMING.ROOM_GRACE_PERIOD_MS + 1)
 
     const again = connect(identity)
     await guessWrong(again, roomId, max)
@@ -363,5 +383,118 @@ describe('guessing a room password', () => {
     await send(again, EVENTS.ROOM_JOIN, { roomId, nickname: 'Guest', rejoinToken: token })
     expect(isMember(roomId, identity)).toBe(true)
     expect(emitted(again, EVENTS.ROOM_STATE)).toHaveLength(1)
+  })
+})
+
+describe('returning members', () => {
+  it('broadcasts a returning member after a disconnect and skips the duplicate join message', async () => {
+    vi.useFakeTimers()
+    const owner = connect(newIdentity('owner'))
+    const roomId = await createRoom(owner, 'secret')
+    const guest = connect(newIdentity('guest'))
+    await send(guest, EVENTS.ROOM_JOIN, { roomId, nickname: 'Guest', password: 'secret' })
+    vi.advanceTimersByTime(TIMING.ROOM_GRACE_PERIOD_MS + 1)
+    await send(guest, 'disconnect', 'transport close')
+    expect(roomRepo.get(roomId)?.returningMembers?.has(guest.identityUserId)).toBe(true)
+    owner.emit.mockClear()
+
+    const returning = connect(guest.identityUserId)
+    await send(returning, EVENTS.ROOM_JOIN, { roomId, nickname: 'Guest' })
+    expect(isMember(roomId, guest.identityUserId)).toBe(true)
+    expect(emitted(owner, EVENTS.ROOM_USER_JOINED)).toEqual([
+      expect.objectContaining({ id: guest.identityUserId, nickname: 'Guest' }),
+    ])
+    expect(chatRepo.getHistory(roomId).filter((message) => message.content === 'Guest 加入了房间')).toHaveLength(1)
+
+    const { token } = lastEmitted(returning, EVENTS.ROOM_REJOIN_TOKEN) as { token: string }
+    await send(returning, EVENTS.ROOM_LEAVE)
+    expect(roomRepo.get(roomId)?.returningMembers?.has(guest.identityUserId)).toBe(false)
+    const afterExplicitLeave = connect(guest.identityUserId)
+    await send(afterExplicitLeave, EVENTS.ROOM_JOIN, { roomId, nickname: 'Guest', rejoinToken: token })
+    expect(lastError(afterExplicitLeave)).toMatchObject({ code: ERROR_CODE.WRONG_PASSWORD })
+  })
+
+  it('notifies the first member to rejoin a restored room when the second member rejoins', async () => {
+    const owner = connect(newIdentity('owner'))
+    const guest = connect(newIdentity('guest'))
+    const roomId = await createRoom(owner, 'secret')
+    const room = roomRepo.get(roomId)!
+    const departedAt = Date.now()
+    const expiresAt = departedAt + TIMING.ROOM_GRACE_PERIOD_MS
+    room.users = []
+    room.conductorSocketId = null
+    room.awaitingFirstJoin = true
+    room.returningMembers = new Map([
+      [owner.identityUserId, { nickname: 'Owner', departedAt, expiresAt }],
+      [guest.identityUserId, { nickname: 'Guest', departedAt, expiresAt }],
+    ])
+    roomRepo.deleteSocketMapping(owner.socket.id)
+
+    await send(owner, EVENTS.ROOM_JOIN, { roomId, nickname: 'Owner' })
+    expect(lastEmitted(owner, EVENTS.ROOM_STATE)).toMatchObject({ users: [{ id: owner.identityUserId }] })
+    await send(guest, EVENTS.ROOM_JOIN, { roomId, nickname: 'Guest' })
+
+    expect(emitted(owner, EVENTS.ROOM_USER_JOINED)).toEqual([
+      expect.objectContaining({ id: guest.identityUserId, nickname: 'Guest' }),
+    ])
+    expect(chatRepo.getHistory(roomId).filter((message) => message.content.endsWith('加入了房间'))).toEqual([])
+  })
+
+  it.each(['password change', 'admin downgrade'])('revokes disconnected members after %s', async (change) => {
+    const owner = connect(newIdentity('owner'))
+    const roomId = await createRoom(owner, 'secret')
+    const guest = connect(newIdentity('guest'))
+    await send(guest, EVENTS.ROOM_JOIN, { roomId, nickname: 'Guest', password: 'secret' })
+    const { token } = lastEmitted(guest, EVENTS.ROOM_REJOIN_TOKEN) as { token: string }
+    if (change === 'admin downgrade') {
+      await send(owner, EVENTS.ROOM_SET_ROLE, { userId: guest.identityUserId, role: 'admin' })
+    }
+    await send(guest, 'disconnect', 'transport close')
+
+    if (change === 'admin downgrade') {
+      await send(owner, EVENTS.ROOM_SET_ROLE, { userId: guest.identityUserId, role: 'member' })
+    } else {
+      await send(owner, EVENTS.ROOM_SETTINGS, { password: 'new-secret' })
+    }
+    const returning = connect(guest.identityUserId)
+    await send(returning, EVENTS.ROOM_JOIN, { roomId, nickname: 'Guest', rejoinToken: token })
+    expect(lastError(returning)).toMatchObject({ code: ERROR_CODE.WRONG_PASSWORD })
+  })
+})
+
+describe('server lifecycle', () => {
+  it('announces the version, build ID and protocol to a new socket', () => {
+    const peer = connect(newIdentity('hello'))
+    const server = { ...io, on: (_event: string, handler: (socket: TypedSocket) => void) => {
+      handler(peer.socket as unknown as TypedSocket)
+    } }
+    initializeSocket(server as unknown as TypedServer)
+    expect(emitted(peer, EVENTS.SERVER_HELLO)).toEqual([
+      { version: config.version, buildId: config.buildId, protocol: PROTOCOL_VERSION },
+    ])
+  })
+
+  it('cleans up the mapping without leaving during shutdown and rejects create and join', async () => {
+    const owner = connect(newIdentity('owner'))
+    const roomId = await createRoom(owner)
+    const guest = connect(newIdentity('guest'))
+    await send(guest, EVENTS.ROOM_JOIN, { roomId, nickname: 'Guest' })
+    const history = [...chatRepo.getHistory(roomId)]
+    setShuttingDown(true)
+
+    await send(owner, 'disconnect', 'server shutting down')
+    expect(roomRepo.getSocketMapping(owner.socket.id)).toBeUndefined()
+    expect(roomRepo.get(roomId)).toMatchObject({ hostId: owner.identityUserId, users: expect.arrayContaining([
+      expect.objectContaining({ id: owner.identityUserId, role: 'owner' }),
+    ]) })
+    expect(chatRepo.getHistory(roomId)).toEqual(history)
+
+    const newcomer = connect(newIdentity('newcomer'))
+    for (const event of [EVENTS.ROOM_CREATE, EVENTS.ROOM_JOIN]) {
+      await send(newcomer, event, { roomId, nickname: 'Newcomer' })
+      expect(lastError(newcomer)).toMatchObject({ code: ERROR_CODE.SERVER_RESTARTING })
+    }
+    expect(roomRepo.getAllIds()).toEqual([roomId])
+    expect(roomRepo.getSocketMapping(newcomer.socket.id)).toBeUndefined()
   })
 })

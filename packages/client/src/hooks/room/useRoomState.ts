@@ -3,6 +3,9 @@ import { useRoomStore } from '@/stores/roomStore'
 import { storage } from '@/lib/storage'
 import { hostRuntime } from '@/lib/hostRuntime'
 import { authAutoResend } from '@/lib/authAutoResend'
+import { stopActiveAudio } from '@/lib/audioPlaybackLifecycle'
+import { resetAllRoomState } from '@/lib/resetStores'
+import { cancelScheduledPlay } from '@/lib/scheduledPlayback'
 import { ERROR_CODE, EVENTS, rejoinTicketExpiry } from '@music-together/shared'
 import type { AudioQuality, QueueMode, RoomAutoFallbackEvent, RoomState, User, UserRole } from '@music-together/shared'
 import { useEffect, useRef } from 'react'
@@ -41,14 +44,10 @@ export function useRoomState() {
     }
 
     const onRoomState = (roomState: RoomState) => {
-      // ROOM_STATE is also broadcast whenever someone joins or the mode changes. Only the
-      // state that *enters* a room (this client just joined, or rejoined after a disconnect —
-      // the connection guard clears the store then) should repopulate the cookie pool;
-      // re-sending on every broadcast burns the server's auth rate limit.
-      const enteringRoom = useRoomStore.getState().room?.id !== roomState.id
+      const store = useRoomStore.getState()
+      const enteringRoom = store.room?.id !== roomState.id || store.connectionStatus === 'reconnecting'
 
-      // setRoom automatically derives currentUser from room.users
-      useRoomStore.getState().setRoom(roomState)
+      store.setRoom(roomState)
       // 仅 owner 专用 ROOM_STATE 携带密码明文；公开 ROOM_STATE 不应清空本地密码缓存。
       if ('password' in roomState) {
         useRoomStore.getState().setRoomPassword(roomState.password ?? null)
@@ -143,12 +142,18 @@ export function useRoomState() {
     const onError = (error: { code: string; message: string }) => {
       // WRONG_PASSWORD is handled by RoomPage's own UI (gate password field),
       // so skip the generic toast to avoid duplicate feedback.
-      if (error.code === ERROR_CODE.WRONG_PASSWORD) return
+      if (error.code === ERROR_CODE.WRONG_PASSWORD || error.code === ERROR_CODE.SERVER_RESTARTING) return
 
-      toast.error(error.message)
-      if (error.code === ERROR_CODE.ROOM_NOT_FOUND) {
+      const { room, connectionStatus } = useRoomStore.getState()
+      const reconnecting = connectionStatus === 'reconnecting'
+      if (error.code === ERROR_CODE.ROOM_NOT_FOUND || (reconnecting && error.code === ERROR_CODE.JOIN_FAILED)) {
+        if (room) storage.clearRejoinToken(room.id)
+        cancelScheduledPlay()
+        stopActiveAudio()
+        resetAllRoomState()
         navigateRef.current('/', { replace: true })
       }
+      toast.error(error.code === ERROR_CODE.ROOM_NOT_FOUND && reconnecting ? '服务已更新，房间未能恢复' : error.message)
     }
 
     socket.on(EVENTS.ROOM_STATE, onRoomState)

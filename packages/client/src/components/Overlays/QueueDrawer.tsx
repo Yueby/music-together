@@ -6,7 +6,7 @@ import { Drawer, DrawerContent, DrawerHeader, DrawerTitle } from '@/components/u
 import { Tooltip, TooltipContent, TooltipTrigger } from '@/components/ui/tooltip'
 import { cn } from '@/lib/utils'
 import { usePlayerStore } from '@/stores/playerStore'
-import { useRoomStore } from '@/stores/roomStore'
+import { canSendRoomCommand, useRoomStore } from '@/stores/roomStore'
 import { useSocketContext } from '@/providers/SocketProvider'
 import type { Track } from '@music-together/shared'
 import { EVENTS } from '@music-together/shared'
@@ -440,6 +440,7 @@ export function QueueDrawer({ open, onOpenChange, onRemoveFromQueue, onReorderQu
   }
 
   const handlePlayTrack = (track: Track) => {
+    if (!canSendRoomCommand(socket)) return
     if (canPlay) {
       socket.emit(EVENTS.PLAYER_PLAY, { track })
     } else if (canVote) {
@@ -452,6 +453,7 @@ export function QueueDrawer({ open, onOpenChange, onRemoveFromQueue, onReorderQu
   }
 
   const handleRemoveTrack = (track: Track) => {
+    if (!canSendRoomCommand(socket)) return
     if (canRemove) {
       onRemoveFromQueue(track.id)
       toast.success(`已移除「${track.title}」`)

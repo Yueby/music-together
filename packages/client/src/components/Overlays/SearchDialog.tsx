@@ -16,6 +16,7 @@ import { PlatformSelect } from '@/components/PlatformSelect'
 import { hasArtistPages } from '@/lib/artistLink'
 import { cn } from '@/lib/utils'
 import { openArtistPage } from '@/stores/artistPageStore'
+import { canSendRoomCommand } from '@/stores/roomStore'
 import { useSearch, type SearchType } from '@/hooks/useSearch'
 import { usePlaylist } from '@/hooks/usePlaylist'
 import { useQueueMembership } from '@/hooks/useQueueMembership'
@@ -138,7 +139,7 @@ export function SearchDialog({ open, onOpenChange, onAddToQueue, onInsertAfterCu
   const handleAddBatch = useCallback(
     (tracks: Track[], playlistName?: string) => {
       if (tracks.length === 0) return
-      socket.emit(EVENTS.QUEUE_ADD_BATCH, { tracks, playlistName })
+      if (canSendRoomCommand(socket)) socket.emit(EVENTS.QUEUE_ADD_BATCH, { tracks, playlistName })
       markPending(tracks)
     },
     [socket, markPending],

@@ -3,9 +3,9 @@ import { EVENTS } from '@music-together/shared'
 import type { TypedSocket } from './socket'
 import { roomCommands } from './RoomCommands'
 
-function fixture() {
+function fixture(connected = true) {
   const emit = vi.fn()
-  const socket = { emit } as unknown as TypedSocket
+  const socket = { emit, connected } as unknown as TypedSocket
   return { socket, emit }
 }
 
@@ -41,6 +41,12 @@ describe('Web room commands', () => {
 
     expect(roomCommands.leave(socket)).toBeUndefined()
     expect(emit).toHaveBeenCalledExactlyOnceWith(EVENTS.ROOM_LEAVE)
+  })
+
+  it('does not buffer a leave during a disconnect', () => {
+    const { socket, emit } = fixture(false)
+    roomCommands.leave(socket)
+    expect(emit).not.toHaveBeenCalled()
   })
 
   it('does not retry or mask socket errors', () => {

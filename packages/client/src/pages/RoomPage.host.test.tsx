@@ -2,7 +2,7 @@
 import { act, StrictMode, type ReactNode } from 'react'
 import { createRoot } from 'react-dom/client'
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
-import type { RoomState } from '@music-together/shared'
+import { ERROR_CODE, EVENTS, type RoomState } from '@music-together/shared'
 import { useRoomStore } from '@/stores/roomStore'
 import RoomPage from './RoomPage'
 
@@ -122,9 +122,12 @@ describe('shared RoomPage host room commands', () => {
   })
   afterEach(async () => {
     await act(async () => root.unmount())
+    if (vi.isFakeTimers()) vi.runOnlyPendingTimers()
+    else await new Promise<void>((resolve) => setTimeout(resolve, 0))
     container.remove()
     vi.unstubAllGlobals()
     vi.restoreAllMocks()
+    vi.useRealTimers()
   })
   async function render() {
     await act(async () => root.render(<RoomPage />))
@@ -192,13 +195,14 @@ describe('shared RoomPage host room commands', () => {
       expect(fixture.leaveRoom).not.toHaveBeenCalled()
     })
 
-    it('does not queue a leave for after the reconnect when the socket is already disconnected', async () => {
+    it('delegates local leave to cancel recovery when unmounting during an outage', async () => {
       useRoomStore.setState({ room: joinedRoom })
       await render()
       fixture.context.socket.connected = false
 
       await unmount()
-      expect(fixture.leaveRoom).not.toHaveBeenCalled()
+      expect(fixture.leaveRoom).toHaveBeenCalledOnce()
+      expect(fixture.context.socket.emit).not.toHaveBeenCalled()
     })
   })
 
@@ -221,6 +225,57 @@ describe('shared RoomPage host room commands', () => {
       expect.objectContaining({ roomId: 'ABC123' }),
       { automatic: true },
     )
+  })
+
+  it.each([
+    ERROR_CODE.ROOM_ENTRY_LIMITED,
+    ERROR_CODE.SERVER_FULL,
+    ERROR_CODE.RATE_LIMITED,
+    ERROR_CODE.SERVER_RESTARTING,
+  ])('retries after %s and clears the reconnect notice on confirmation', async (code) => {
+    vi.useFakeTimers()
+    const room = { id: 'ABC123', name: 'Fixture room', users: [] } as unknown as RoomState
+    useRoomStore.getState().setRoom(room)
+    await render()
+    expect(fixture.commands.join).not.toHaveBeenCalled()
+
+    fixture.context.isConnected = false
+    fixture.context.socket.connected = false
+    await act(async () => useRoomStore.getState().setConnectionStatus('reconnecting'))
+    expect(container.textContent).toContain('连接中断，正在重连')
+    expect(fixture.commands.join).not.toHaveBeenCalled()
+
+    fixture.context.isConnected = true
+    fixture.context.socket.connected = true
+    await render()
+    expect(fixture.commands.join).toHaveBeenCalledOnce()
+    const roomError = fixture.context.socket.on.mock.calls.filter(([event]) => event === EVENTS.ROOM_ERROR).at(-1)![1]
+    await act(async () => roomError({ code, message: 'Try again later' }))
+    expect(fixture.leaveRoom).not.toHaveBeenCalled()
+    expect(useRoomStore.getState().connectionStatus).toBe('reconnecting')
+    await act(async () => { await vi.advanceTimersByTimeAsync(999) })
+    expect(fixture.commands.join).toHaveBeenCalledOnce()
+    await act(async () => { await vi.advanceTimersByTimeAsync(1) })
+    expect(fixture.commands.join).toHaveBeenCalledTimes(2)
+
+    await act(async () => useRoomStore.getState().setRoom(room))
+    expect(container.textContent).not.toContain('连接中断，正在重连')
+  })
+
+  it('cancels a pending retry when a reconnect password is rejected', async () => {
+    vi.useFakeTimers()
+    const room = { id: 'ABC123', name: 'Fixture room', users: [] } as unknown as RoomState
+    useRoomStore.getState().setRoom(room)
+    useRoomStore.getState().setConnectionStatus('reconnecting')
+    await render()
+
+    const roomError = fixture.context.socket.on.mock.calls.filter(([event]) => event === EVENTS.ROOM_ERROR).at(-1)![1]
+    await act(async () => roomError({ code: ERROR_CODE.ROOM_ENTRY_LIMITED, message: 'Try again later' }))
+    await act(async () => roomError({ code: ERROR_CODE.WRONG_PASSWORD, message: 'Wrong password' }))
+    await act(async () => { await vi.advanceTimersByTimeAsync(1000) })
+
+    expect(fixture.leaveRoom).toHaveBeenCalledOnce()
+    expect(fixture.commands.join).toHaveBeenCalledOnce()
   })
 
   it('delegates automatic entry through the host command boundary', async () => {

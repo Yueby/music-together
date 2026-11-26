@@ -1,14 +1,14 @@
 import { SERVER_URL } from '@/lib/config'
 import { hostRuntime } from '@/lib/hostRuntime'
 import { metadataFetch } from '@/lib/metadataFetch'
-import { useEffect, useState } from 'react'
+import { reportServerVersion, useVersionStore } from '@/stores/versionStore'
+import { useEffect } from 'react'
 
 /**
- * Check once on mount whether the server is running a newer version
- * than the client was built with. Returns `true` when an update is available.
+ * Check on mount and share the result with the socket handshake.
  */
 export function useVersionCheck() {
-  const [hasUpdate, setHasUpdate] = useState(false)
+  const status = useVersionStore()
 
   useEffect(() => {
     if (!hostRuntime.versionCheck) return
@@ -16,10 +16,8 @@ export function useVersionCheck() {
 
     metadataFetch(`${SERVER_URL}/api/version`, { signal: controller.signal })
       .then((res) => (res.ok ? res.json() : null))
-      .then((data: { version: string } | null) => {
-        if (data?.version && data.version !== __APP_VERSION__) {
-          setHasUpdate(true)
-        }
+      .then((data: Parameters<typeof reportServerVersion>[0] | null) => {
+        if (data && !controller.signal.aborted) reportServerVersion(data)
       })
       .catch(() => {
         // Silently ignore — network errors, server down, etc.
@@ -28,5 +26,8 @@ export function useVersionCheck() {
     return () => controller.abort()
   }, [])
 
-  return hasUpdate
+  return {
+    hasUpdate: hostRuntime.versionCheck && status.hasUpdate,
+    breakingUpdate: hostRuntime.versionCheck && status.breakingUpdate,
+  }
 }

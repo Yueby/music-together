@@ -24,7 +24,7 @@ import {
 import { cancelScheduledPlay } from '@/lib/scheduledPlayback'
 import { useSocketContext } from '@/providers/SocketProvider'
 import { usePlayerStore } from '@/stores/playerStore'
-import { useRoomStore } from '@/stores/roomStore'
+import { canSendRoomCommand, useRoomStore } from '@/stores/roomStore'
 import type { ScheduledPlayState, ServerToClientEvents } from '@music-together/shared'
 import { EVENTS } from '@music-together/shared'
 import type { PlaybackSound } from '@/lib/PlaybackSound'
@@ -141,10 +141,10 @@ export function usePlayerSync(
     }
 
     const sampleDrift = () => {
-      const room = useRoomStore.getState().room
+      const { room, connectionStatus } = useRoomStore.getState()
       const sound = howlRef.current
       const now = getServerTime()
-      if (!isCalibrated() || !room?.currentTrack || !room.playState.isPlaying || !sound?.playing() ||
+      if (connectionStatus === 'reconnecting' || !isCalibrated() || !room?.currentTrack || !room.playState.isPlaying || !sound?.playing() ||
           now < room.playState.serverTimestamp) return
 
       const { currentTime, serverTimestamp, revision } = room.playState
@@ -232,10 +232,12 @@ export function usePlayerSync(
       anchorKey = undefined
       clearScheduled()
       resetDrift()
+      const sound = howlRef.current
+      if (sound?.playing() && sound.rate() !== 1) sound.rate(1)
     }
     const driftTimer = setInterval(sampleDrift, DRIFT_SAMPLE_INTERVAL_MS)
     const syncTimer = setInterval(() => {
-      if (useRoomStore.getState().room) socket.emit(EVENTS.PLAYER_SYNC_REQUEST)
+      if (useRoomStore.getState().room && canSendRoomCommand(socket)) socket.emit(EVENTS.PLAYER_SYNC_REQUEST)
     }, SYNC_REQUEST_INTERVAL_MS)
 
     socket.on(EVENTS.PLAYER_SEEK, scheduleAction)

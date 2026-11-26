@@ -1,7 +1,7 @@
 import { useSocketContext } from '@/providers/SocketProvider'
 import { hostRuntime } from '@/lib/hostRuntime'
 import { usePlayerStore } from '@/stores/playerStore'
-import { useRoomStore } from '@/stores/roomStore'
+import { canSendRoomCommand, useRoomStore } from '@/stores/roomStore'
 import type { VoteAction } from '@music-together/shared'
 import { defineAbilityFor, EVENTS, TIMING } from '@music-together/shared'
 import { useCallback, useEffect, useMemo, useRef } from 'react'
@@ -72,6 +72,7 @@ export function useMediaSession({ play, pause, next, prev, seek }: MediaSessionC
   const lastVoteRef = useRef(0)
   const startVote = useCallback(
     (action: VoteAction) => {
+      if (!canSendRoomCommand(socket)) return
       const now = Date.now()
       if (now - lastVoteRef.current < TIMING.PLAYER_NEXT_DEBOUNCE_MS) return
       lastVoteRef.current = now

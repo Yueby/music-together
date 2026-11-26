@@ -37,29 +37,32 @@ const roomDeletionTimers = new Map<string, ReturnType<typeof setTimeout>>()
 /** 防抖广播：100ms trailing debounce */
 let broadcastTimer: ReturnType<typeof setTimeout> | null = null
 let pendingIO: TypedServer | null = null
+let shuttingDown = false
+
+export function isShuttingDown(): boolean {
+  return shuttingDown
+}
+
+export function setShuttingDown(value: boolean): void {
+  shuttingDown = value
+}
 
 // ---------------------------------------------------------------------------
 // Room deletion timer
 // ---------------------------------------------------------------------------
 
-export function scheduleDeletion(roomId: string, io?: TypedServer): void {
+export function scheduleDeletion(roomId: string, io?: TypedServer, delayMs: number = config.room.gracePeriodMs): void {
   // Prevent duplicate timers if called multiple times for the same room
   cancelDeletionTimer(roomId)
 
   logger.info(
-    `Room ${roomId} is empty, will be deleted in ${config.room.gracePeriodMs / 1000}s unless someone rejoins`,
+    `Room ${roomId} is empty, will be deleted in ${delayMs / 1000}s unless someone rejoins`,
     { roomId },
   )
   const timer = setTimeout(() => {
     const r = roomRepo.get(roomId)
     if (r && r.users.length === 0) {
-      for (const [name, cleanup] of getRoomCleanupHooks()) {
-        try {
-          cleanup(roomId)
-        } catch {
-          logger.warn('Room cleanup hook failed', { roomId, name })
-        }
-      }
+      cleanupRoomResources(roomId)
       roomRepo.delete(roomId)
       chatRepo.deleteRoom(roomId)
       roomDeletionTimers.delete(roomId)
@@ -71,8 +74,18 @@ export function scheduleDeletion(roomId: string, io?: TypedServer): void {
       }
       notifyCapacityChanged()
     }
-  }, config.room.gracePeriodMs)
+  }, delayMs)
   roomDeletionTimers.set(roomId, timer)
+}
+
+function cleanupRoomResources(roomId: string): void {
+  for (const [name, cleanup] of getRoomCleanupHooks()) {
+    try {
+      cleanup(roomId)
+    } catch {
+      logger.warn('Room cleanup hook failed', { roomId, name })
+    }
+  }
 }
 
 export function cancelDeletionTimer(roomId: string): void {
@@ -123,5 +136,8 @@ export function clearAllTimers(): void {
   }
   pendingIO = null
 
+  if (shuttingDown) {
+    for (const roomId of roomRepo.getAllIds()) cleanupRoomResources(roomId)
+  }
   logger.info('All roomLifecycleService timers cleared')
 }

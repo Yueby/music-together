@@ -124,7 +124,7 @@ describe('RoomAudioSource controlled SDK transport', () => {
     expect(fixture.body.getReader).not.toHaveBeenCalled()
   })
 
-  it.each([429, 503])('retries once after HTTP %i (bytes) and returns the second answer', async (status) => {
+  it.each([429, 502, 503, 504])('retries once after HTTP %i (bytes) and returns the second answer', async (status) => {
     vi.useFakeTimers()
     const request = vi
       .fn()
@@ -139,7 +139,9 @@ describe('RoomAudioSource controlled SDK transport', () => {
       })
     const onProgress = vi.fn()
     const result = read({ request }, { onProgress })
-    await vi.advanceTimersByTimeAsync(2_000)
+    await vi.advanceTimersByTimeAsync(1_999)
+    expect(request).toHaveBeenCalledTimes(1)
+    await vi.advanceTimersByTimeAsync(2_001)
     await expect(result).resolves.toMatchObject({ bytes: mp3 })
     expect(request).toHaveBeenCalledTimes(2)
     expect(onProgress.mock.calls).toEqual([
@@ -148,14 +150,14 @@ describe('RoomAudioSource controlled SDK transport', () => {
     ])
   })
 
-  it('retries a busy stream response once, releasing the discarded body', async () => {
+  it.each([429, 502, 504])('retries HTTP %i (stream), releasing the discarded body', async (status) => {
     vi.useFakeTimers()
     const busy = streamFixture()
-    busy.response.status = 429
+    busy.response.status = status
     const fine = streamFixture()
     const stream = vi.fn().mockResolvedValueOnce(busy.response).mockResolvedValueOnce(fine.response)
     const result = read({ stream }, { mode: 'stream' })
-    await vi.advanceTimersByTimeAsync(2_000)
+    await vi.advanceTimersByTimeAsync(4_000)
     await expect(result).resolves.toMatchObject({ bytes: mp3 })
     expect(stream).toHaveBeenCalledTimes(2)
     expect(busy.body.cancel).toHaveBeenCalledOnce()
@@ -166,9 +168,32 @@ describe('RoomAudioSource controlled SDK transport', () => {
     vi.useFakeTimers()
     const request = vi.fn().mockResolvedValue({ status: 429, headers: {}, body: new Uint8Array() })
     const result = expect(read({ request })).rejects.toMatchObject({ code: 'HTTP_ERROR' })
-    await vi.advanceTimersByTimeAsync(2_000)
+    await vi.advanceTimersByTimeAsync(4_000)
     await result
     expect(request).toHaveBeenCalledTimes(2)
+  })
+
+  it.each(['bytes', 'stream'] as const)('limits REQUEST_FAILED to one retry for %s', async (mode) => {
+    vi.useFakeTimers()
+    const send = vi.fn().mockRejectedValue({ code: 'REQUEST_FAILED' })
+    const result = expect(read({ request: send, stream: send }, { mode })).rejects.toMatchObject({ code: 'REQUEST_FAILED' })
+    await vi.advanceTimersByTimeAsync(1_999)
+    expect(send).toHaveBeenCalledTimes(1)
+    await vi.advanceTimersByTimeAsync(2_001)
+    await result
+    expect(send).toHaveBeenCalledTimes(2)
+  })
+
+  it('releases a stream interrupted after headers and retries from the beginning', async () => {
+    vi.useFakeTimers()
+    const interrupted = streamFixture(vi.fn().mockRejectedValue({ code: 'REQUEST_FAILED' }))
+    const healthy = streamFixture()
+    const stream = vi.fn().mockResolvedValueOnce(interrupted.response).mockResolvedValueOnce(healthy.response)
+    const result = read({ stream }, { mode: 'stream' })
+    await vi.advanceTimersByTimeAsync(4_000)
+    await expect(result).resolves.toMatchObject({ bytes: mp3 })
+    expect(interrupted.reader.cancel).toHaveBeenCalledOnce()
+    expect(stream).toHaveBeenCalledTimes(2)
   })
 
   it('stops waiting to retry when the caller cancels', async () => {
@@ -330,12 +355,15 @@ describe('RoomAudioSource controlled SDK transport', () => {
   )
 
   it('returns only fixed errors for SDK failures', async () => {
+    vi.useFakeTimers()
     const secret = 'https://private.invalid/?jwt=secret'
     for (const error of [new Error(secret), { code: secret }, { code: 'UNREVIEWED_CODE', message: secret }]) {
-      await expect(read({ request: vi.fn().mockRejectedValue(error) })).rejects.toMatchObject({
+      const rejected = expect(read({ request: vi.fn().mockRejectedValue(error) })).rejects.toMatchObject({
         code: 'REQUEST_FAILED',
         message: 'REQUEST_FAILED',
       })
+      await vi.advanceTimersByTimeAsync(4_000)
+      await rejected
     }
     await expect(read({ request: vi.fn().mockRejectedValue({ code: 'PERMISSION_DENIED' }) })).rejects.toMatchObject({
       code: 'PERMISSION_DENIED',

@@ -15,10 +15,12 @@ function deriveCurrentUser(room: RoomState | null): User | null {
 interface RoomStore {
   room: RoomState | null
   currentUser: User | null
+  connectionStatus: 'connected' | 'reconnecting'
   /** 房间密码明文（从 ROOM_SETTINGS 事件接收） */
   roomPassword: string | null
 
   setRoom: (room: RoomState | null) => void
+  setConnectionStatus: (status: RoomStore['connectionStatus']) => void
   updateRoom: (partial: Partial<RoomState>) => void
   setRoomPassword: (password: string | null) => void
   addUser: (user: User) => void
@@ -29,9 +31,11 @@ interface RoomStore {
 export const useRoomStore = create<RoomStore>((set) => ({
   room: null,
   currentUser: null,
+  connectionStatus: 'connected',
   roomPassword: null,
 
-  setRoom: (room) => set({ room, currentUser: deriveCurrentUser(room) }),
+  setRoom: (room) => set({ room, currentUser: deriveCurrentUser(room), connectionStatus: 'connected' }),
+  setConnectionStatus: (connectionStatus) => set({ connectionStatus }),
 
   updateRoom: (partial) =>
     set((state) => {
@@ -73,5 +77,10 @@ export const useRoomStore = create<RoomStore>((set) => ({
       return { room }
     }),
 
-  reset: () => set({ room: null, currentUser: null, roomPassword: null }),
+  reset: () => set({ room: null, currentUser: null, roomPassword: null, connectionStatus: 'connected' }),
 }))
+
+/** Room writes must not enter Socket.IO's offline send buffer or race re-entry. */
+export function canSendRoomCommand(socket: { connected: boolean }): boolean {
+  return socket.connected && useRoomStore.getState().connectionStatus === 'connected'
+}

@@ -2,8 +2,8 @@ import { config as loadEnv } from 'dotenv'
 
 loadEnv({ quiet: true })
 import * as z from 'zod/v4'
-import { MUSIC_SOURCES, TIMING } from '@music-together/shared'
-import type { AudioQuality, MusicSource } from '@music-together/shared'
+import { MUSIC_SOURCES, PROTOCOL_VERSION, TIMING } from '@music-together/shared'
+import type { AudioQuality, MusicSource, ServerHelloEvent } from '@music-together/shared'
 import { readFileSync } from 'node:fs'
 import { resolve, dirname } from 'node:path'
 import { fileURLToPath } from 'node:url'
@@ -13,13 +13,17 @@ const __dirname = dirname(fileURLToPath(import.meta.url))
 const rootPkg = JSON.parse(readFileSync(resolve(__dirname, '../../../package.json'), 'utf-8'))
 
 const isProd = process.env.NODE_ENV === 'production'
+const developmentIdentitySecret = 'dev-identity-secret-change-me'
 const envSchema = z.object({
   PORT: z.coerce.number().int().positive().default(3001),
   CLIENT_URL: z.string().default(''),
   CORS_ORIGINS: z.string().default(''),
   IDENTITY_SECRET: isProd
     ? z.string().min(32, '生产环境必须设置至少 32 字符的 IDENTITY_SECRET')
-    : z.string().min(16).default('dev-identity-secret-change-me'),
+    : z.preprocess(
+        (value) => (typeof value === 'string' && !value.trim() ? undefined : value),
+        z.string().min(16).default(developmentIdentitySecret),
+      ),
   IDENTITY_TTL_DAYS: z.coerce.number().int().positive().default(30),
   REJOIN_TTL_MS: z.coerce.number().int().positive().default(TIMING.ROOM_GRACE_PERIOD_MS),
   IDENTITY_COOKIE_SECURE: z.enum(['true', 'false']).optional(),
@@ -139,6 +143,15 @@ const explicitOrigins = [env.CLIENT_URL, ...env.CORS_ORIGINS.split(',')]
 
 export const config = {
   version: rootPkg.version as string,
+  buildId: process.env.BUILD_ID?.trim() || 'dev',
+  stateDir: process.env.STATE_DIR?.trim() || '',
+  roomSnapshot: {
+    enabled: process.env.ROOM_SNAPSHOT_ENABLED !== 'false',
+    maxAgeMs: parseInt(process.env.ROOM_SNAPSHOT_MAX_AGE_MS ?? '', 10) || 10 * 60_000,
+    continuityMs: parseInt(process.env.ROOM_RESTORE_CONTINUITY_MS ?? '', 10) || 120_000,
+    rejoinWindowMs: parseInt(process.env.RESTORE_REJOIN_WINDOW_MS ?? '', 10) || TIMING.RESTORE_REJOIN_WINDOW_MS,
+    intervalMs: 15_000,
+  },
   port: env.PORT,
   isProd,
   clientUrl: explicitOrigins[0] ?? 'auto',
@@ -151,6 +164,7 @@ export const config = {
   },
   identity: {
     secret: env.IDENTITY_SECRET,
+    hasPersistentSecret: Boolean(env.IDENTITY_SECRET.trim()) && env.IDENTITY_SECRET !== developmentIdentitySecret,
     ttlDays: env.IDENTITY_TTL_DAYS,
     cookieSecure: env.IDENTITY_COOKIE_SECURE ? env.IDENTITY_COOKIE_SECURE === 'true' : null,
   },
@@ -184,3 +198,7 @@ export const config = {
     memoryLimitMb: env.CAPACITY_MEMORY_LIMIT_MB,
   },
 } as const
+
+export function getServerVersion(): ServerHelloEvent {
+  return { version: config.version, buildId: config.buildId, protocol: PROTOCOL_VERSION }
+}

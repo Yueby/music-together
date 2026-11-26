@@ -1,6 +1,7 @@
 import type { PlayMode, Track } from '@music-together/shared'
 import { effectivePlayMode, LIMITS } from '@music-together/shared'
 import { roomRepo } from '../repositories/roomRepository.js'
+import type { RoomData } from '../repositories/types.js'
 
 export function addTrack(roomId: string, track: Track): boolean {
   const room = roomRepo.get(roomId)
@@ -110,7 +111,11 @@ export function reorderTracks(roomId: string, trackIds: string[]): void {
  */
 export function getNextTrack(roomId: string, playMode?: PlayMode, fromTrackId?: string): Track | null {
   const room = roomRepo.get(roomId)
-  if (!room || room.queue.length === 0) return null
+  return room ? getNextTrackForRoom(room, playMode, fromTrackId) : null
+}
+
+export function getNextTrackForRoom(room: RoomData, playMode?: PlayMode, fromTrackId?: string): Track | null {
+  if (room.queue.length === 0) return null
 
   // In a queue that is consumed as it plays, the looping modes mean nothing: it just goes forward.
   const mode = effectivePlayMode(room.queueMode, playMode ?? room.playMode ?? 'sequential')

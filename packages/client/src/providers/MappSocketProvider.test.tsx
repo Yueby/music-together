@@ -126,7 +126,7 @@ describe('MappSocketProvider', () => {
     expect(capturedContext!.isConnected).toBe(false)
   })
 
-  it.each(['REJOIN_FAILED', 'REJOIN_TOKEN_MISSING', 'REJOIN_TOKEN_EXPIRED', 'IDENTITY_CHANGED'])(
+  it.each(['REJOIN_FAILED', 'IDENTITY_CHANGED'])(
     'projects %s as an explicit manual-entry requirement',
     async (errorCode) => {
       const session = createFakeSession({ connected: true, userId: 'confirmed-user' })

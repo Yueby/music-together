@@ -11,6 +11,7 @@ const mocks = vi.hoisted(() => ({
   removeCookie: vi.fn(),
   addCookie: vi.fn(),
   hasCookie: vi.fn(() => false),
+  notifyRestoredPlaybackCookie: vi.fn(),
   mapping: { roomId: 'ROOM01', userId: 'user-1' } as { roomId: string; userId: string } | undefined,
   /** Rooms that currently exist, by id; each lists the ids of the users in it. */
   rooms: new Map<string, { users: Array<{ id: string }> }>(),
@@ -35,6 +36,9 @@ vi.mock('../services/authService.js', () => ({
   getAllPlatformStatus: () => [],
   getUserAuthStatus: () => [],
 }))
+vi.mock('../services/playerService.js', () => ({
+  notifyRestoredPlaybackCookie: mocks.notifyRestoredPlaybackCookie,
+}))
 
 import { registerAuthController } from './authController.js'
 
@@ -53,7 +57,7 @@ function setup() {
   registerAuthController(io as never, socket as never)
   const send = async (event: string, data: unknown) => handlers.get(event)!(data)
   const last = (event: string) => emitted.filter(([name]) => name === event).at(-1)?.[1]
-  return { send, last }
+  return { send, last, io }
 }
 
 beforeEach(() => {
@@ -65,6 +69,14 @@ beforeEach(() => {
 })
 
 describe('authController input', () => {
+  it('releases restored playback after storing a returning member’s cookie', async () => {
+    const { send, io } = setup()
+    mocks.provider.getUserInfo.mockResolvedValueOnce({ ok: true, data: { nickname: 'Listener', vipType: 11 } })
+    await send(EVENTS.AUTH_SET_COOKIE, { platform: 'netease', cookie: 'fixture-cookie' })
+    expect(mocks.addCookie).toHaveBeenCalledOnce()
+    expect(mocks.notifyRestoredPlaybackCookie).toHaveBeenCalledExactlyOnceWith(io, 'ROOM01', 'netease')
+    expect(mocks.notifyRestoredPlaybackCookie.mock.invocationCallOrder[0]).toBeGreaterThan(mocks.addCookie.mock.invocationCallOrder[0])
+  })
   it.each([undefined, null, {}, { platform: 'spotify' }, { platform: 5 }, 'netease'])(
     'refuses a QR request for %j without calling any provider',
     async (payload) => {

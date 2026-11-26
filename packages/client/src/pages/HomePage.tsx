@@ -18,6 +18,7 @@ import { useSocketContext } from '@/providers/SocketProvider'
 import { useRoomStore } from '@/stores/roomStore'
 import { useChatStore } from '@/stores/chatStore'
 import { useVersionCheck } from '@/hooks/useVersionCheck'
+import { Button } from '@/components/ui/button'
 import { EVENTS, ERROR_CODE, rejoinTicketExpiry, type RoomListItem, type RoomState } from '@music-together/shared'
 import { GitFork, Headphones } from 'lucide-react'
 import { motion } from 'motion/react'
@@ -30,7 +31,7 @@ export default function HomePage() {
   const { socket } = useSocketContext()
   const { rooms, isLoading, createRoom, joinRoom } = useLobby()
   const { capacity, admissionQueue, cancelQueue } = useServerCapacity()
-  const hasUpdate = useVersionCheck()
+  const { hasUpdate } = useVersionCheck()
 
   const [createDialogOpen, setCreateDialogOpen] = useState(false)
   const [passwordDialog, setPasswordDialog] = useState<{ open: boolean; room: RoomListItem | null }>({
@@ -335,6 +336,11 @@ export default function HomePage() {
               </span>
             )}
           </span>
+          {hasUpdate && (
+            <Button variant="outline" size="sm" onClick={() => window.location.reload()}>
+              刷新更新
+            </Button>
+          )}
           {hostRuntime.externalLinks && (
             <a
               href="https://github.com/Yueby/music-together"

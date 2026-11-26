@@ -2,6 +2,8 @@ import express, { type Express } from 'express'
 import { existsSync } from 'node:fs'
 import path from 'node:path'
 
+const pwaFiles = new Set(['sw.js', 'registerSW.js', 'manifest.webmanifest'])
+
 /** Mount after all API routes. Returns whether the client build is available. */
 export function mountFallbackRoutes(app: Express, clientDist: string): boolean {
   app.use('/api', (_req, res) => {
@@ -23,7 +25,9 @@ export function mountFallbackRoutes(app: Express, clientDist: string): boolean {
     express.static(clientDist, {
       maxAge: '1h',
       setHeaders: (res, filePath) => {
-        if (filePath.endsWith('index.html')) res.setHeader('Cache-Control', indexCacheControl)
+        const file = path.basename(filePath)
+        if (file === 'index.html') res.setHeader('Cache-Control', indexCacheControl)
+        else if (pwaFiles.has(file)) res.setHeader('Cache-Control', 'no-cache')
       },
     }),
   )

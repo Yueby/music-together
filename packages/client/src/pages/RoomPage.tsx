@@ -3,7 +3,7 @@ import { useParams, useNavigate } from 'react-router'
 import { EVENTS, ERROR_CODE } from '@music-together/shared'
 import { motion } from 'motion/react'
 import { toast } from 'sonner'
-import { Loader2 } from 'lucide-react'
+import { Loader2, RefreshCw, WifiOff, X } from 'lucide-react'
 import { AdmissionQueueCard } from '@/components/AdmissionQueuePanel'
 import { InteractionGate } from '@/components/InteractionGate'
 import { AudioPlayer } from '@/components/Player/AudioPlayer'
@@ -16,6 +16,7 @@ import { ArtistDialog } from '@/components/Overlays/ArtistDialog'
 import { SettingsDialog, type SettingsTab } from '@/components/Overlays/SettingsDialog'
 import { PasswordDialog } from '@/components/Lobby/PasswordDialog'
 import { Drawer, DrawerContent, DrawerHeader, DrawerTitle } from '@/components/ui/drawer'
+import { Button } from '@/components/ui/button'
 import { cn } from '@/lib/utils'
 import { isAudioUnlocked, unlockAudio } from '@/lib/audioUnlock'
 import { roomCheck } from '@/lib/roomCheck'
@@ -36,6 +37,8 @@ import { useClockSync } from '@/hooks/useClockSync'
 import { usePlayerHotkeys } from '@/hooks/usePlayerHotkeys'
 import { storage } from '@/lib/storage'
 import { roomCommands } from '@/lib/RoomCommands'
+import { hostRuntime } from '@/lib/hostRuntime'
+import { useVersionCheck } from '@/hooks/useVersionCheck'
 
 /** Invisible component that runs NTP clock-sync only while in a room. */
 function ClockSyncRunner() {
@@ -84,6 +87,9 @@ export default function RoomPage() {
   const { addTrack, insertAfterCurrent, removeTrack, reorderTracks, clearQueue } = useQueue()
 
   const room = useRoomStore((s) => s.room)
+  const connectionStatus = useRoomStore((s) => s.connectionStatus)
+  const { hasUpdate, breakingUpdate } = useVersionCheck()
+  const [dismissedUpdate, setDismissedUpdate] = useState(false)
   const chatOpen = useChatStore((s) => s.isChatOpen)
   const setChatOpen = useChatStore((s) => s.setIsChatOpen)
   const chatUnreadCount = useChatStore((s) => s.unreadCount)
@@ -112,6 +118,7 @@ export default function RoomPage() {
   const [passwordNeeded, setPasswordNeeded] = useState(false)
   const [passwordError, setPasswordError] = useState<string | null>(null)
   const [passwordLoading, setPasswordLoading] = useState(false)
+  const [joinRetry, setJoinRetry] = useState(0)
 
   const joiningRef = useRef(false)
   const manualJoinRef = useRef(false)
@@ -182,8 +189,15 @@ export default function RoomPage() {
   // with ROOM_STATE, so the in-flight flag must not survive the disconnect —
   // otherwise the auto-join below would never re-run after reconnecting.
   useEffect(() => {
-    if (!isConnected) joiningRef.current = false
-  }, [isConnected])
+    const onDisconnect = () => {
+      joiningRef.current = false
+    }
+    if (!isConnected) onDisconnect()
+    socket.on('disconnect', onDisconnect)
+    return () => {
+      socket.off('disconnect', onDisconnect)
+    }
+  }, [isConnected, socket])
 
   // --- Auto-join if room state is missing (e.g. page refresh, direct URL access) ---
   // Only after the interaction gate is open — avoids autoplay warnings.
@@ -193,10 +207,11 @@ export default function RoomPage() {
     if (requiresManualJoin && !manualJoinRef.current) {
       joiningRef.current = false
       passwordRef.current = undefined
+      if (useRoomStore.getState().room) leaveRoom()
       setGateOpen(false)
       return
     }
-    if (!room && isConnected && !joiningRef.current && roomId) {
+    if ((!room || connectionStatus === 'reconnecting') && isConnected && !joiningRef.current && roomId) {
       joiningRef.current = true
       const nickname = storage.getNickname()
       if (!nickname) {
@@ -217,17 +232,39 @@ export default function RoomPage() {
       joiningRef.current = accepted
       manualJoinRef.current = false
     }
-    if (room) {
-      joiningRef.current = false
-    }
-  }, [gateOpen, room, isConnected, socket, roomId, requiresManualJoin])
+  }, [gateOpen, room, connectionStatus, isConnected, socket, roomId, requiresManualJoin, joinRetry, leaveRoom])
 
   // --- Handle ROOM_ERROR — password errors, fallback dialog ---
   useEffect(() => {
+    let retryTimer: ReturnType<typeof setTimeout> | undefined
+    const clearJoinRetry = () => {
+      clearTimeout(retryTimer)
+      retryTimer = undefined
+    }
     const onRoomError = (error: { code: string; message: string }) => {
+      const reconnecting = useRoomStore.getState().connectionStatus === 'reconnecting'
+      const serverRestarting = error.code === ERROR_CODE.SERVER_RESTARTING
+      if (
+        serverRestarting ||
+        (reconnecting &&
+          (error.code === ERROR_CODE.ROOM_ENTRY_LIMITED ||
+            error.code === ERROR_CODE.SERVER_FULL ||
+            error.code === ERROR_CODE.RATE_LIMITED))
+      ) {
+        if (!joiningRef.current || retryTimer !== undefined || isLeavingRef.current) return
+        if (serverRestarting && reconnecting && hostRuntime.kind === 'mapp') return
+        retryTimer = setTimeout(() => {
+          retryTimer = undefined
+          joiningRef.current = false
+          setJoinRetry((attempt) => attempt + 1)
+        }, 1000)
+        return
+      }
+      clearJoinRetry()
       joiningRef.current = false
 
       if (error.code === ERROR_CODE.WRONG_PASSWORD) {
+        if (reconnecting) leaveRoom()
         // If we came through the gate, revert to gate with error
         if (!passwordNeeded && !gateOpen) {
           // Gate was not yet open — shouldn't happen, but handle gracefully
@@ -257,6 +294,9 @@ export default function RoomPage() {
 
     // On successful join, dismiss any password state
     const onRoomState = () => {
+      clearJoinRetry()
+      joiningRef.current = false
+      passwordRef.current = undefined
       if (passwordNeeded) {
         setPasswordNeeded(false)
         setPasswordError(null)
@@ -281,12 +321,15 @@ export default function RoomPage() {
     socket.on(EVENTS.ROOM_ERROR, onRoomError)
     socket.on(EVENTS.ROOM_STATE, onRoomState)
     socket.on(EVENTS.ADMISSION_CANCELLED, onAdmissionCancelled)
+    socket.on('disconnect', clearJoinRetry)
     return () => {
+      clearJoinRetry()
       socket.off(EVENTS.ROOM_ERROR, onRoomError)
       socket.off(EVENTS.ROOM_STATE, onRoomState)
       socket.off(EVENTS.ADMISSION_CANCELLED, onAdmissionCancelled)
+      socket.off('disconnect', clearJoinRetry)
     }
-  }, [socket, passwordNeeded, gateOpen, navigate])
+  }, [socket, passwordNeeded, gateOpen, navigate, leaveRoom])
 
   // Leave the room when the page unmounts without an explicit leave (browser /
   // phone back button, route change, error-boundary reset). Otherwise the server
@@ -307,11 +350,8 @@ export default function RoomPage() {
       mountedRef.current = false
       setTimeout(() => {
         if (mountedRef.current || isLeavingRef.current) return
-        // Disconnected: the server already dropped us and the connection guard
-        // reset the stores. Emitting now would be buffered and replayed after reconnect.
-        if (!socket.connected) return
         if (!useRoomStore.getState().room && useServerStatusStore.getState().admissionQueue) {
-          socket.emit(EVENTS.ADMISSION_CANCEL)
+          if (socket.connected) socket.emit(EVENTS.ADMISSION_CANCEL)
           useServerStatusStore.getState().clearAdmissionQueue()
           return
         }
@@ -324,7 +364,7 @@ export default function RoomPage() {
 
   const handlePasswordSubmit = useCallback(
     (password: string) => {
-      if (!roomId) return
+      if (!roomId || !isConnected) return
       const nickname = storage.getNickname()
       if (!nickname) return
       setPasswordLoading(true)
@@ -336,7 +376,7 @@ export default function RoomPage() {
         rejoinToken: storage.getRejoinToken(roomId) ?? undefined,
       })
     },
-    [socket, roomId],
+    [socket, roomId, isConnected],
   )
 
   // If password dialog is dismissed without submitting, navigate home
@@ -440,6 +480,36 @@ export default function RoomPage() {
             onOpenMembers={handleOpenMembers}
             onLeaveRoom={handleLeaveRoom}
           />
+
+          {connectionStatus === 'reconnecting' && (
+            <div
+              role="status"
+              className="flex shrink-0 items-center gap-2 border-b border-border/50 bg-muted/50 px-4 py-2 text-sm text-muted-foreground"
+            >
+              <WifiOff className="size-4 shrink-0" aria-hidden="true" />
+              <span>连接中断，正在重连（本地音频继续播放）…</span>
+            </div>
+          )}
+          {hasUpdate && !dismissedUpdate && (
+            <div className="flex shrink-0 items-center gap-2 border-b border-border/50 bg-muted/50 px-4 text-sm">
+              <RefreshCw className="size-4 shrink-0 text-muted-foreground" aria-hidden="true" />
+              <span role="status" className="flex-1">
+                {breakingUpdate ? '发现新版本，连接协议已更新' : '发现新版本'}
+              </span>
+              <Button variant="ghost" className="h-11 shrink-0 px-2" onClick={() => window.location.reload()}>
+                刷新更新
+              </Button>
+              <Button
+                variant="ghost"
+                size="icon"
+                className="size-11 shrink-0"
+                aria-label="关闭更新提示"
+                onClick={() => setDismissedUpdate(true)}
+              >
+                <X className="size-4" />
+              </Button>
+            </div>
+          )}
 
           <div className="flex min-h-0 flex-1 overflow-hidden p-2 md:p-3 lg:p-4">
             <div className="min-w-0 flex-1 overflow-hidden rounded-2xl">

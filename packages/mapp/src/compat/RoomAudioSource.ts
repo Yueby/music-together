@@ -46,8 +46,8 @@ const ENDPOINT = 'roomAudio'
 export const ROOM_AUDIO_MAX_BYTES = 32 * 1024 * 1024
 /** The server may keep a request in line for up to 15 s before it starts relaying, and may be asked once more. */
 const TIMEOUT_MS = 75_000
-/** 429: no relay slot became free in time; 503: the upstream CDN hiccuped. Both usually pass within seconds. */
-const RETRYABLE_STATUSES = new Set([429, 503])
+/** Relay capacity, upstream errors and deployment gateway failures usually pass within seconds. */
+const RETRYABLE_STATUSES = new Set([429, 502, 503, 504])
 const MAX_ATTEMPTS = 2
 const RETRY_DELAY_MS = 2_000
 const PROGRESS_THROTTLE_MS = 80
@@ -124,6 +124,39 @@ export async function readRoomAudio(options: ReadRoomAudioOptions): Promise<Room
   )
   aborted.catch(() => {})
   const wait = <T>(operation: Promise<T>) => Promise.race([operation, aborted])
+  const canRetryRequestError = (error: unknown, mayRetry: boolean) =>
+    mayRetry && !controller.signal.aborted && sdkError(error).code === 'REQUEST_FAILED'
+  async function backoff() {
+    let retryTimer: ReturnType<typeof setTimeout> | undefined
+    try {
+      await wait(new Promise<void>((resolve) => {
+        retryTimer = setTimeout(resolve, RETRY_DELAY_MS + Math.floor(Math.random() * RETRY_DELAY_MS))
+      }))
+    } finally {
+      clearTimeout(retryTimer)
+    }
+  }
+
+  async function requestOnce<T extends { status: number }>(
+    send: () => Promise<T>,
+    mayRetry: boolean,
+    discard?: (response: T) => void,
+  ): Promise<T | undefined> {
+    let response: T
+    try {
+      response = await wait(send())
+    } catch (error) {
+      if (!canRetryRequestError(error, mayRetry)) throw error
+      await backoff()
+      return
+    }
+    if (mayRetry && RETRYABLE_STATUSES.has(response.status)) {
+      discard?.(response)
+      await backoff()
+      return
+    }
+    return response
+  }
   const request = {
     method: 'GET' as const,
     query: { roomId, trackId },
@@ -152,30 +185,33 @@ export async function readRoomAudio(options: ReadRoomAudioOptions): Promise<Room
         // The SDK only exposes HTTP status once the bytes request resolves.
         const updates: RoomAudioProgress[] = []
         let receiving = true
-        const response = await wait(
-          sdk.http.request(ENDPOINT, {
-            ...request,
-            responseType: 'bytes',
-            onDownloadProgress: ({ loaded, total }) => {
-              if (!receiving || controller.signal.aborted) return
-              enforceDownloadLimit({ loaded })
-              if (onProgress && Number.isFinite(loaded) && loaded >= 0) {
-                report(
-                  {
-                    loadedBytes: loaded,
-                    totalBytes: total && Number.isFinite(total) && total > 0 ? total : undefined,
-                  },
-                  (progress) => updates.push(progress),
-                )
-              }
-            },
-          }),
+        const response = await requestOnce(
+          async () => {
+            try {
+              return await sdk.http.request(ENDPOINT, {
+                ...request,
+                responseType: 'bytes',
+                onDownloadProgress: ({ loaded, total }) => {
+                  if (!receiving || controller.signal.aborted) return
+                  enforceDownloadLimit({ loaded })
+                  if (onProgress && Number.isFinite(loaded) && loaded >= 0) {
+                    report(
+                      {
+                        loadedBytes: loaded,
+                        totalBytes: total && Number.isFinite(total) && total > 0 ? total : undefined,
+                      },
+                      (progress) => updates.push(progress),
+                    )
+                  }
+                },
+              })
+            } finally {
+              receiving = false
+            }
+          },
+          mayRetry,
         )
-        receiving = false
-        if (mayRetry && RETRYABLE_STATUSES.has(response.status)) {
-          await wait(new Promise<void>((resolve) => setTimeout(resolve, RETRY_DELAY_MS)))
-          continue
-        }
+        if (!response) continue
         checkResponse(response)
         bytes = Uint8Array.from(response.body)
         for (const update of updates) {
@@ -184,27 +220,35 @@ export async function readRoomAudio(options: ReadRoomAudioOptions): Promise<Room
         }
         break
       }
-      const pending = sdk.http.stream(ENDPOINT, { ...request, onDownloadProgress: enforceDownloadLimit })
-      // A response that arrives after cancellation is never read; release its body.
-      void pending.then(
-        (late) => {
-          if (controller.signal.aborted) void late.body.cancel().catch(() => {})
+      const response = await requestOnce(
+        async () => {
+          const pending = await sdk.http.stream(ENDPOINT, { ...request, onDownloadProgress: enforceDownloadLimit })
+          // A response that arrives after cancellation is never read; release its body.
+          if (controller.signal.aborted) void pending.body.cancel().catch(() => {})
+          return pending
         },
-        () => {},
+        mayRetry,
+        ({ body }) => {
+          void body.cancel().catch(() => {})
+        },
       )
-      const response = await wait(pending)
-      if (mayRetry && RETRYABLE_STATUSES.has(response.status)) {
-        void response.body.cancel().catch(() => {})
-        await wait(new Promise<void>((resolve) => setTimeout(resolve, RETRY_DELAY_MS)))
-        continue
-      }
+      if (!response) continue
       stream = response.body
       totalBytes = checkResponse(response)
       report({ loadedBytes: 0, totalBytes })
       reader = stream.getReader()
       // readChunks already merges into a fresh array that nothing else references; copying it again would only
       // add another whole track (up to 32 MiB) to the peak memory of a sandboxed frame.
-      bytes = await readChunks(reader, wait, (loadedBytes) => report({ loadedBytes, totalBytes }))
+      try {
+        bytes = await readChunks(reader, wait, (loadedBytes) => report({ loadedBytes, totalBytes }))
+      } catch (error) {
+        if (!canRetryRequestError(error, mayRetry)) throw error
+        void reader.cancel().catch(() => {})
+        reader = undefined
+        stream = undefined
+        await backoff()
+        continue
+      }
       break
     }
     if (!bytes.byteLength) throw new RoomAudioError('EMPTY_AUDIO')

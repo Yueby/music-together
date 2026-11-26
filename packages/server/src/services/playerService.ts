@@ -8,7 +8,7 @@ import * as authService from './authService.js'
 import { estimateCurrentTime } from './syncService.js'
 import { isStreamUrlExpired } from './streamUrlLifetime.js'
 import { resolveStreamUrl as resolveStreamUrlWithFallback } from './streamUrlResolver.js'
-import { broadcastRoomList } from './roomLifecycleService.js'
+import { broadcastRoomList, isShuttingDown } from './roomLifecycleService.js'
 import { registerRoomCleanup } from './roomCleanupRegistry.js'
 import { toPublicRoomState } from '../utils/roomUtils.js'
 import { config } from '../config.js'
@@ -26,9 +26,19 @@ const controlGenerations = new Map<string, number>()
 type PrepareSnapshot = Pick<PendingPrepare, 'track' | 'startAt'>
 const interruptedPrepares = new WeakMap<RoomData, PrepareSnapshot>()
 const endOfTrackTimers = new Map<string, ReturnType<typeof setTimeout>>()
+const restoredPlaybackTasks = new WeakMap<RoomData, Promise<boolean>>()
+const restoredCookieWaits = new WeakMap<RoomData, { source: MusicSource; release: () => void }>()
+type RestoredRefresh = {
+  track: Track
+  phase: 'refreshing' | 'cookie-arrived' | 'awaiting-cookie' | 'retrying'
+}
+const restoredRefreshes = new WeakMap<RoomData, RestoredRefresh>()
 const END_OF_TRACK_GRACE_MS = 5_000
+const RESTORED_COOKIE_WAIT_MS = 2_000
 
 function beginControl(roomId: string, room: RoomData): number {
+  restoredRefreshes.delete(room)
+  restoredCookieWaits.get(room)?.release()
   interruptedPrepares.delete(room)
   cancelPrepare(room)
   cancelEndOfTrack(roomId)
@@ -93,31 +103,28 @@ async function refreshPlayback(
       scheduleTrackStart(io, roomId, room, fresh, seekTime)
       return
     }
-    const latest = getLatestPlayback(room)
-    const scheduleTime = getScheduleTime(roomId)
-    const elapsed = latest.playState.isPlaying
-      ? Math.max(0, (scheduleTime - latest.playState.serverTimestamp) / 1000)
-      : 0
-    const playState = scheduled(
-      {
-        isPlaying: seekTime === undefined || latest.playState.isPlaying,
-        currentTime: Math.min(
-          fresh.duration > 0 ? fresh.duration : Infinity,
-          seekTime ?? latest.playState.currentTime + elapsed,
-        ),
-        serverTimestamp: scheduleTime,
-        revision: getNextRevision(room),
-      },
-      roomId,
-      scheduleTime,
-    )
-    schedulePlaybackCommit(io, room, 'play', fresh, playState)
-    io.to(roomId).emit(EVENTS.PLAYER_PLAY, { track: fresh, playState })
+    scheduleRefreshedPlayback(io, room, fresh, seekTime === undefined || getLatestPlayback(room).playState.isPlaying, seekTime)
   } catch {
     if (valid()) emitStreamError(io.to(roomId).emit.bind(io.to(roomId)))
   } finally {
     restoreEndOfTrack(io, room, generation)
   }
+}
+
+function scheduleRefreshedPlayback(
+  io: TypedServer, room: RoomData, track: Track, isPlaying: boolean, seekTime?: number,
+): void {
+  const latest = getLatestPlayback(room).playState
+  const scheduleTime = getScheduleTime(room.id)
+  const elapsed = latest.isPlaying ? Math.max(0, (scheduleTime - latest.serverTimestamp) / 1000) : 0
+  const playState = scheduled({
+    isPlaying,
+    currentTime: Math.min(track.duration > 0 ? track.duration : Infinity, seekTime ?? latest.currentTime + elapsed),
+    serverTimestamp: scheduleTime,
+    revision: getNextRevision(room),
+  }, room.id, scheduleTime)
+  schedulePlaybackCommit(io, room, 'play', track, playState)
+  io.to(room.id).emit(EVENTS.PLAYER_PLAY, { track, playState })
 }
 
 function withPlayMutex<T>(roomId: string, fn: () => Promise<T>): Promise<T> {
@@ -200,12 +207,12 @@ function scheduleEndOfTrack(io: TypedServer, room: RoomData, track: Track | null
 }
 
 /** Keep the original end time when a control leaves the current playback running. */
-function restoreEndOfTrack(io: TypedServer, room: RoomData, generation: number): void {
+function restoreEndOfTrack(io: TypedServer, room: RoomData, generation: number | undefined): void {
   if (roomRepo.get(room.id) !== room || controlGenerations.get(room.id) !== generation) return
   if (room.pendingPrepare || room.pendingPlayback || endOfTrackTimers.has(room.id)) return
   const track = room.currentTrack
   if (!room.playState.isPlaying || !track || track.duration <= 0) return
-  const elapsedMs = Math.max(0, Date.now() - room.playState.serverTimestamp)
+  const elapsedMs = Date.now() - room.playState.serverTimestamp
   if (elapsedMs >= Math.max(0, (track.duration - room.playState.currentTime) * 1000) + END_OF_TRACK_GRACE_MS) return
   scheduleEndOfTrack(io, room, track, room.playState, elapsedMs)
 }
@@ -464,6 +471,13 @@ function getPlannedShuffleNext(room: RoomData, currentId: string): Track | undef
   const next = room.queue.find((item) => item.id === plan.nextTrackId)
   if (plan.afterTrackId === currentId && next && next.id !== currentId) return next
   plannedShuffleNext.delete(room.id)
+}
+
+export function getUpcomingTrackForSnapshot(room: RoomData, current: Track | null): Track | null {
+  if (effectivePlayMode(room.queueMode, room.playMode) === 'shuffle') {
+    return current ? getPlannedShuffleNext(room, current.id) ?? null : null
+  }
+  return queueService.getNextTrackForRoom(room, room.playMode, current?.id)
 }
 
 /**
@@ -817,23 +831,112 @@ export function playPrevTrackInRoom(
 // Playback sync for newly-joined clients
 // ---------------------------------------------------------------------------
 
-/**
- * Send current playback state to a socket that just joined a room.
- * Handles auto-resume when alone, and auto-play from queue.
- */
+export async function notifyRestoredPlaybackCookie(io: TypedServer, roomId: string, source: MusicSource): Promise<void> {
+  const room = roomRepo.get(roomId)
+  if (!room || isShuttingDown() || !room.users.length) return
+  const wait = restoredCookieWaits.get(room)
+  if (wait?.source === source) {
+    wait.release()
+    return
+  }
+  const pending = restoredRefreshes.get(room)
+  if (!pending || pending.track !== room.currentTrack || pending.track.source !== source) return
+  if (pending.phase === 'refreshing') {
+    pending.phase = 'cookie-arrived'
+    return
+  }
+  if (pending.phase !== 'awaiting-cookie') return
+
+  pending.phase = 'retrying'
+  const valid = playbackGuard(roomId, room)
+  const fresh = await refreshTrackUrl(roomId, room, pending.track).catch(() => null)
+  if (restoredRefreshes.get(room) !== pending) return
+  restoredRefreshes.delete(room)
+  if (fresh && valid() && !isShuttingDown() && room.users.length) {
+    scheduleRefreshedPlayback(io, room, fresh, room.playState.isPlaying)
+  }
+}
+
+function waitForRestoredPlaybackCookie(room: RoomData, source: MusicSource): Promise<void> {
+  return new Promise((resolve) => {
+    const release = () => {
+      clearTimeout(timer)
+      restoredCookieWaits.delete(room)
+      resolve()
+    }
+    const timer = setTimeout(release, RESTORED_COOKIE_WAIT_MS)
+    restoredCookieWaits.set(room, { source, release })
+  })
+}
+
+async function startRestoredPlayback(io: TypedServer, room: RoomData): Promise<boolean> {
+  const track = room.currentTrack
+  if (!track) return true
+  const generation = controlGenerations.get(room.id)
+  const valid = playbackGuard(room.id, room, generation)
+  const expired = hasExpiredUrl(track)
+  if (expired && !authService.getAnyCookie(track.source, room.id)) {
+    await waitForRestoredPlaybackCookie(room, track.source)
+  }
+  if (isShuttingDown() || !room.users.length) return false
+  if (!valid()) return true
+
+  if (room.playState.isPlaying) {
+    if (track.duration > 0 && estimateCurrentTime(room.id) >= track.duration) {
+      await playNextTrackInRoom(io, room.id, room.playMode, {
+        expectedTrackId: track.id,
+        expectedRevision: room.playState.revision,
+        skipDebounce: true,
+      })
+      return true
+    }
+    restoreEndOfTrack(io, room, generation)
+  }
+  if (expired) {
+    // Register before resolving the URL so cookies verified during the first request also trigger recovery.
+    const pending: RestoredRefresh = { track, phase: 'refreshing' }
+    if (!authService.getAnyCookie(track.source, room.id)) restoredRefreshes.set(room, pending)
+    const fresh = await refreshTrackUrl(room.id, room, track).catch(() => null)
+    const canSync = !isShuttingDown() && room.users.length > 0
+    const canApply = canSync && valid()
+    if (fresh || !canApply) {
+      if (restoredRefreshes.get(room) === pending) restoredRefreshes.delete(room)
+      if (fresh && canApply) room.currentTrack = fresh
+    } else if (restoredRefreshes.get(room) === pending) {
+      const cookieArrived = pending.phase === 'cookie-arrived'
+      pending.phase = 'awaiting-cookie'
+      if (cookieArrived) void notifyRestoredPlaybackCookie(io, room.id, track.source)
+    }
+    if (!canSync) return false
+  }
+  return true
+}
+
 export async function syncPlaybackToSocket(
   io: TypedServer,
   socket: TypedSocket,
   roomId: string,
   room: RoomData,
 ): Promise<void> {
+  const restored = Boolean(room.awaitingFirstJoin)
+  if (restored) {
+    let task = restoredPlaybackTasks.get(room)
+    if (!task) {
+      task = startRestoredPlayback(io, room).finally(() => {
+        restoredPlaybackTasks.delete(room)
+        if (room.users.length) room.awaitingFirstJoin = false
+      })
+      restoredPlaybackTasks.set(room, task)
+    }
+    if (!(await task) || roomRepo.getSocketMapping(socket.id)?.roomId !== roomId) return
+  }
   const prepare = room.pendingPrepare
   if (prepare) {
     const { track, revision, deadlineAt } = prepare
     socket.emit(EVENTS.PLAYER_PREPARE, { track, revision, deadlineAt })
     return
   }
-  await syncCurrentPlayback(io, socket, roomId, room)
+  await syncCurrentPlayback(io, socket, roomId, room, restored)
   // Someone who joins mid-track missed the announcement of the next one: without it their client would still
   // start the next track cold, seconds behind everybody else.
   const upcoming = announcedPreloads.get(roomId)
@@ -848,10 +951,15 @@ async function syncCurrentPlayback(
   socket: TypedSocket,
   roomId: string,
   room: RoomData,
+  restored: boolean,
 ): Promise<void> {
   const isAloneInRoom = room.users.length === 1
   let joinTrack = getLatestPlayback(room).track
   if (joinTrack && hasExpiredUrl(joinTrack)) {
+    if (restored) {
+      emitStreamError(socket.emit.bind(socket))
+      return
+    }
     if (!room.pendingPlayback && isAloneInRoom && !room.playState.isPlaying) {
       resumeTrack(io, roomId)
       return
@@ -885,7 +993,7 @@ async function syncCurrentPlayback(
   } else if (room.currentTrack?.streamUrl) {
     if (!joinTrack) return
     // Alone in room + track was paused → schedule the same auto-resume used by direct controls.
-    if (isAloneInRoom && !room.playState.isPlaying && !hasExpiredUrl(room.currentTrack)) {
+    if (!restored && isAloneInRoom && !room.playState.isPlaying && !hasExpiredUrl(room.currentTrack)) {
       resumeTrack(io, roomId)
       const resumeState = room.pendingPlayback?.playState
       if (resumeState) {
@@ -946,6 +1054,8 @@ function cleanupPlayerRoom(roomId: string): void {
   cancelEndOfTrack(roomId)
   const room = roomRepo.get(roomId)
   if (room) {
+    restoredRefreshes.delete(room)
+    restoredCookieWaits.get(room)?.release()
     interruptedPrepares.delete(room)
     cancelPrepare(room)
     cancelPendingPlayback(room)

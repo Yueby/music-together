@@ -22,6 +22,6 @@ export const roomCommands: RoomCommands = {
     return true
   },
   leave(socket) {
-    socket.emit(EVENTS.ROOM_LEAVE)
+    if (socket.connected) socket.emit(EVENTS.ROOM_LEAVE)
   },
 }

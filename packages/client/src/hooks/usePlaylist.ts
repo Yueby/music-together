@@ -1,7 +1,7 @@
 import { useCallback, useEffect, useRef, useState } from 'react'
 import { EVENTS, MAPP_PLAYLIST_PAGE_MAX, type MusicSource, type Playlist, type Track } from '@music-together/shared'
 import { useSocketContext } from '@/providers/SocketProvider'
-import { useRoomStore } from '@/stores/roomStore'
+import { canSendRoomCommand, useRoomStore } from '@/stores/roomStore'
 import { SERVER_URL } from '@/lib/config'
 import { hostRuntime } from '@/lib/hostRuntime'
 import { metadataFetch } from '@/lib/metadataFetch'
@@ -260,21 +260,21 @@ export function usePlaylist() {
 
   const addTrackToQueue = useCallback(
     (track: Track) => {
-      socket.emit(EVENTS.QUEUE_ADD, { track })
+      if (canSendRoomCommand(socket)) socket.emit(EVENTS.QUEUE_ADD, { track })
     },
     [socket],
   )
 
   const insertTrackAfterCurrent = useCallback(
     (track: Track) => {
-      socket.emit(EVENTS.QUEUE_INSERT_AFTER_CURRENT, { track })
+      if (canSendRoomCommand(socket)) socket.emit(EVENTS.QUEUE_INSERT_AFTER_CURRENT, { track })
     },
     [socket],
   )
 
   const addBatchToQueue = useCallback(
     (tracks: Track[], playlistName?: string) => {
-      socket.emit(EVENTS.QUEUE_ADD_BATCH, { tracks, playlistName })
+      if (canSendRoomCommand(socket)) socket.emit(EVENTS.QUEUE_ADD_BATCH, { tracks, playlistName })
     },
     [socket],
   )

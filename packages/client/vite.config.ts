@@ -62,6 +62,7 @@ export default defineConfig({
   ],
   define: {
     __APP_VERSION__: JSON.stringify(rootPkg.version),
+    __BUILD_ID__: JSON.stringify(process.env.BUILD_ID?.trim() || 'dev'),
   },
   server: {
     host: true,

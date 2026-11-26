@@ -22,10 +22,11 @@ import musicRoutes from './routes/music.js'
 import { createPlatformMediaRouter } from './routes/platformMedia.js'
 import { createPlatformMetadataRouter } from './routes/platformMetadata.js'
 import roomRoutes from './routes/rooms.js'
+import { sendServerVersion } from './routes/version.js'
 import { createPlatformResolvers, PlatformAuth, readPlatformConfig } from './services/platformAuth.js'
-import { clearAllTimers } from './services/roomLifecycleService.js'
-import { admissionQueue } from './services/admissionQueueService.js'
-import { getPublicServerCapacity, startServerLoadMonitor, stopServerLoadMonitor } from './services/serverLoadService.js'
+import { restoreRoomsFromSnapshot, startSnapshotScheduler } from './services/roomSnapshotService.js'
+import { getPublicServerCapacity, startServerLoadMonitor } from './services/serverLoadService.js'
+import { shutdownServer } from './services/shutdownService.js'
 import { logger } from './utils/logger.js'
 import { resolveSocketClientIp } from './utils/trustProxy.js'
 
@@ -109,9 +110,7 @@ app.get('/api/health', (_req, res) => {
 })
 
 // Version check (client polls on startup to detect updates)
-app.get('/api/version', (_req, res) => {
-  res.json({ version: config.version })
-})
+app.get('/api/version', sendServerVersion)
 
 // --- Serve client SPA (条件挂载，仅当构建产物存在时) ---
 const __dirname = path.dirname(fileURLToPath(import.meta.url))
@@ -138,6 +137,8 @@ io.use((socket, next) => {
   next()
 })
 initializeSocket(io)
+restoreRoomsFromSnapshot(io)
+startSnapshotScheduler()
 startServerLoadMonitor(io)
 
 httpServer.on('error', (err: NodeJS.ErrnoException) => {
@@ -164,24 +165,8 @@ httpServer.listen(config.port, () => {
   }
 })
 
-// Graceful shutdown
-function shutdown(signal: string) {
-  logger.info(`Received ${signal}, shutting down gracefully...`)
-  stopServerLoadMonitor()
-  admissionQueue.clear()
-  clearAllTimers()
-  io.close(() => {
-    httpServer.close(() => {
-      logger.info('Server closed')
-      process.exit(0)
-    })
-  })
-  // Force exit after 10s
-  setTimeout(() => process.exit(1), 10_000).unref()
-}
-
-process.on('SIGTERM', () => shutdown('SIGTERM'))
-process.on('SIGINT', () => shutdown('SIGINT'))
+process.on('SIGTERM', () => void shutdownServer('SIGTERM', io, httpServer))
+process.on('SIGINT', () => void shutdownServer('SIGINT', io, httpServer))
 
 // All rooms live in this one process's memory: a stray error in a timer or a socket handler must be logged, not take
 // every room down with it.

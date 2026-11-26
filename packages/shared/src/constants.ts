@@ -47,12 +47,16 @@ export const LIMITS = {
   PLAYLIST_ID_MAX_LENGTH: 200,
 } as const
 
+export const PROTOCOL_VERSION = 1
+
 export const TIMING = {
   ROOM_GRACE_PERIOD_MS: 60_000,
   PLAYER_NEXT_DEBOUNCE_MS: 500,
   VOTE_TIMEOUT_MS: 30_000,
   /** Maximum time the server waits for online clients to ACK PLAYER_READY before starting playback anyway. */
   READY_GATE_TIMEOUT_MS: 3_500,
+  /** Grace window for restored rooms and returning-member passwordless rejoin after server restart. */
+  RESTORE_REJOIN_WINDOW_MS: 120_000,
 } as const
 
 /** QR code login status codes (shared between client polling and server responses) */

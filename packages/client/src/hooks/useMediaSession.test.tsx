@@ -8,7 +8,7 @@ import { useMediaSession } from './useMediaSession'
 
 const fixture = vi.hoisted(() => ({
   runtime: { kind: 'web' as const, nativeMediaSession: true },
-  socket: { id: 'fixture-socket', on: vi.fn(), off: vi.fn(), emit: vi.fn() },
+  socket: { id: 'fixture-socket', connected: true, on: vi.fn(), off: vi.fn(), emit: vi.fn() },
 }))
 vi.mock('@/lib/hostRuntime', () => ({ hostRuntime: fixture.runtime }))
 vi.mock('@/providers/SocketProvider', () => ({

@@ -30,6 +30,31 @@ openssl rand -base64 48
 
 然后通过容器环境变量传入。未设置时服务会拒绝启动。
 
+### 房间快照与重启
+
+| 环境变量 | 默认值 | 用途 |
+| --- | --- | --- |
+| `STATE_DIR` | Docker 为 `/app/data`，本地为空 | 加密房间快照的存储目录 |
+| `ROOM_SNAPSHOT_ENABLED` | `true` | 设为 `false` 关闭快照 |
+| `ROOM_SNAPSHOT_MAX_AGE_MS` | `600000` | 启动时可接受的最大快照年龄 |
+| `ROOM_RESTORE_CONTINUITY_MS` | `120000` | 重启间隔在此范围内时，播放时钟继续推进 |
+| `RESTORE_REJOIN_WINDOW_MS` | `120000` | 启动后保留空房及原成员免密码重入的时间 |
+| `BUILD_ID` | `dev`，CI 为提交 SHA | 前后端构建标识，见 `GET /api/version` 与 `server:hello` |
+
+快照在房间状态变化时每 15 秒检查并保存一次，收到 SIGTERM 或 SIGINT 时再保存一次。文件为 `room-snapshot.v1.bin`，由稳定的 `IDENTITY_SECRET` 派生密钥并使用 AES-256-GCM 加密。目录未配置、不可写或使用本地默认身份密钥时会停用快照，服务照常运行。轮换 `IDENTITY_SECRET` 将使旧快照失效。过期、无效或解密失败的文件会改名为 `.rejected`。
+
+建议在 Docker Compose 中为 `/app/data` 挂载命名卷，使快照在替换容器后仍可读取，并配置 `stop_grace_period: 15s`。
+
+```yaml
+services:
+  music-together:
+    stop_grace_period: 15s
+    volumes:
+      - music-together-data:/app/data
+volumes:
+  music-together-data:
+```
+
 其他变量详见根目录 `.env.example`：
 
 ```text
@@ -146,6 +171,8 @@ docker run -d \
   --restart unless-stopped \
   -p 3001:3001 \
   -e IDENTITY_SECRET='<至少32字符的随机密钥>' \
+  -v music-together-data:/app/data \
+  --stop-timeout 15 \
   ghcr.io/yueby/music-together:latest
 ```
 
