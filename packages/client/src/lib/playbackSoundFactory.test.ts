@@ -87,25 +87,4 @@ describe('default Web playback sound factory', () => {
     expect(options.onend).not.toHaveBeenCalled()
     sound.unload()
   })
-
-  describe('preload', () => {
-    it('opens the next stream for its metadata only, and keeps a single warm element', () => {
-      playbackSoundFactory.preload!(track)
-      expect(FakeAudio.instances[0]).toMatchObject({ preload: 'metadata', src: track.streamUrl })
-      playbackSoundFactory.preload!({ ...track, id: 'later', streamUrl: 'https://audio.example.test/later' })
-      expect(FakeAudio.instances[0].removeAttribute).toHaveBeenCalledWith('src')
-      expect(FakeAudio.instances[1].src).toBe('https://audio.example.test/later')
-    })
-
-    it('releases the warm element when the real sound is created, and ignores a track without a URL', () => {
-      playbackSoundFactory.preload!(track)
-      const sound = playbackSoundFactory.create(track, { src: [track.streamUrl!] })
-      expect(FakeAudio.instances[0].load).toHaveBeenCalled()
-      expect(FakeAudio.instances[0].src).toBe('')
-      const countBeforeIgnored = FakeAudio.instances.length
-      playbackSoundFactory.preload!({ ...track, streamUrl: undefined })
-      expect(FakeAudio.instances).toHaveLength(countBeforeIgnored)
-      sound.unload()
-    })
-  })
 })

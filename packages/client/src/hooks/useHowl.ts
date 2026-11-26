@@ -343,16 +343,17 @@ export function useHowl(onTrackEnd: () => void) {
           const active = desiredPlaybackRef.current
           if (active?.howl !== howl) return
           if (playbackSoundFactory.allowLoadRetry && !retry) {
-            // Howler's load() adds a second media node and can later select the failed one for playback.
-            console.warn('Howl load error, retrying')
-            loadTrack(track, seekTo, active.autoPlay, active.onLoadSettled, {
-              startedAt: loadStartTime,
+            console.warn('Audio load/stream error, retrying')
+            const resumeSeek = initialized ? usePlayerStore.getState().currentTime : seekTo
+            loadTrack(track, resumeSeek, active.autoPlay, active.onLoadSettled, {
+              startedAt: initialized ? Date.now() : loadStartTime,
               getSeekTime: active.getSeekTime,
             })
             return
           }
           setAudioLoadState({ phase: 'idle' })
-          console.error('Howl load failed')
+          setIsPlaying(false)
+          console.error('Audio load/stream failed')
           toast.error(`本机无法加载「${trackTitleRef.current}」`)
           settleLoad(true)
           howlRef.current = null
@@ -399,6 +400,7 @@ export function useHowl(onTrackEnd: () => void) {
       }
       const preload = preloadRef.current
       const promoted = preload?.track.id === track.id && preload.track.streamUrl === track.streamUrl
+      if (!promoted) discardPreload()
       const howl = promoted ? preload.sound : playbackSoundFactory.create(track, callbacks)
       if (promoted) {
         preloadRef.current = null
@@ -413,7 +415,7 @@ export function useHowl(onTrackEnd: () => void) {
         else settleLoad(false)
       }
     },
-    [onTrackEnd, startTimeUpdate, stopTimeUpdate],
+    [discardPreload, onTrackEnd, startTimeUpdate, stopTimeUpdate],
   )
 
   const setDesiredPlayback = useCallback((shouldPlay: boolean, getSeekTime?: () => number) => {

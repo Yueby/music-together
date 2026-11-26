@@ -158,4 +158,52 @@ describe('useHowl track loading', () => {
 
     expect(sound.volume).toHaveBeenCalledExactlyOnceWith(0.3)
   })
+
+  it('retries mid-stream errors after load using the latest playback position', () => {
+    vi.spyOn(console, 'warn').mockImplementation(() => {})
+    bridge.allowLoadRetry = true
+    try {
+      act(() => playback.loadTrack(track, 0, true))
+      act(() => options.onload?.())
+      act(() => usePlayerStore.getState().setCurrentTime(47))
+
+      const retrySound = fakeSound()
+      let retryOptions!: PlaybackSoundOptions
+      bridge.create.mockImplementationOnce((_track: Track, opts: PlaybackSoundOptions) => {
+        retryOptions = opts
+        return retrySound
+      })
+
+      act(() => options.onloaderror?.(1, 'NETWORK_DROP'))
+      expect(bridge.create).toHaveBeenCalledTimes(2)
+      expect(usePlayerStore.getState().currentTime).toBe(47)
+
+      act(() => retryOptions.onload?.())
+      expect(retrySound.seek).toHaveBeenCalledWith(47)
+    } finally {
+      bridge.allowLoadRetry = false
+    }
+  })
+
+  it('unloads a stale preload before creating a non-preloaded track so pooled audio elements stay available', () => {
+    bridge.supportsHtml5Analysis = true
+    try {
+      const order: string[] = []
+      const preloadedSound = fakeSound()
+      preloadedSound.unload.mockImplementation(() => order.push('unload-preload'))
+
+      bridge.create.mockImplementationOnce(() => preloadedSound)
+      act(() => playback.preloadTrack({ ...track, id: 'preloaded', streamUrl: 'https://media.example.test/pre.mp3' }))
+
+      bridge.create.mockImplementationOnce(() => {
+        order.push('create-next')
+        return fakeSound()
+      })
+      act(() => playback.loadTrack({ ...track, id: 'other', streamUrl: 'https://media.example.test/other.mp3' }, 0, false))
+
+      expect(order).toEqual(['unload-preload', 'create-next'])
+    } finally {
+      bridge.supportsHtml5Analysis = false
+    }
+  })
 })

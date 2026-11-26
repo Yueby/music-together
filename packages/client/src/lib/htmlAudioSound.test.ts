@@ -256,4 +256,49 @@ describe('htmlAudioSound', () => {
     expect(onloaderror).not.toHaveBeenCalled()
     expect(onend).not.toHaveBeenCalled()
   })
+
+  it('reports mid-stream errors after canplay and releases the element back to the pool', async () => {
+    const onloaderror = vi.fn()
+    const sound = createHtmlAudioSound({
+      src: ['https://audio.example.test/track.mp3'],
+      onloaderror,
+    })
+    const el = FakeAudioElement.instances[0]
+    el.emitCanPlay()
+    sound.play()
+    await Promise.resolve()
+    expect(sound.state()).toBe('loaded')
+    expect(sound.playing()).toBe(true)
+
+    el.emitError()
+    expect(onloaderror).toHaveBeenCalledOnce()
+    expect(sound.state()).toBe('unloaded')
+    expect(sound.playing()).toBe(false)
+
+    // Released element is recycled into the pool for the retry sound
+    const retry = createHtmlAudioSound({ src: ['https://audio.example.test/track.mp3'] })
+    expect(FakeAudioElement.instances).toHaveLength(1)
+    retry.unload()
+  })
+
+  it('primes newly created un-primed pooled elements on subsequent user gestures', async () => {
+    await unlockHtmlAudioPool()
+    expect(FakeAudioElement.instances).toHaveLength(2)
+
+    // Occupy both unlocked slots, then create a 3rd un-primed element
+    const a = createHtmlAudioSound({ src: ['https://audio.example.test/a.mp3'] })
+    const b = createHtmlAudioSound({ src: ['https://audio.example.test/b.mp3'] })
+    const c = createHtmlAudioSound({ src: ['https://audio.example.test/c.mp3'] })
+    expect(FakeAudioElement.instances).toHaveLength(3)
+    const thirdEl = FakeAudioElement.instances[2]
+    expect(thirdEl.play).not.toHaveBeenCalled()
+
+    // Return the un-primed 3rd element to the pool and run unlock again
+    c.unload()
+    await unlockHtmlAudioPool()
+    expect(thirdEl.play).toHaveBeenCalledOnce()
+
+    a.unload()
+    b.unload()
+  })
 })
