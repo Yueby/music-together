@@ -10,7 +10,7 @@ import { canSendRoomCommand, useRoomStore } from '@/stores/roomStore'
 import type { PlayMode, VoteAction } from '@music-together/shared'
 import { EVENTS, TIMING, effectivePlayMode } from '@music-together/shared'
 import { ArrowRightToLine, ListMusic, Pause, Play, Repeat, Repeat1, Shuffle, SkipBack, SkipForward } from 'lucide-react'
-import { AnimatePresence, motion, useReducedMotion } from 'motion/react'
+import { AnimatePresence, m, useReducedMotion } from 'motion/react'
 import { memo, useEffect, useLayoutEffect, useRef, useState } from 'react'
 
 /** Design-time width (px) at which the controls are laid out — CSS zoom scales from this baseline */
@@ -51,7 +51,7 @@ function AudioLoadWave({ decoding, reducedMotion }: { decoding: boolean; reduced
             className={cn('w-[3px] rounded-full bg-white/85', bar.staticHeight)}
           />
         ) : (
-          <motion.span
+          <m.span
             key={bar.id}
             data-wave-bar={bar.id}
             className="h-5 w-[3px] origin-center rounded-full bg-white/90"
@@ -267,7 +267,7 @@ export const PlayerControls = memo(function PlayerControls({
           <div className="flex flex-1 items-center justify-start">
             <Tooltip delayDuration={300}>
               <TooltipTrigger asChild>
-                <motion.div whileTap={{ scale: 0.9 }}>
+                <m.div whileTap={{ scale: 0.9 }}>
                   <Button
                     variant="ghost"
                     size="icon"
@@ -277,7 +277,7 @@ export const PlayerControls = memo(function PlayerControls({
                     aria-label={modeConfig.label}
                   >
                     <AnimatePresence mode="wait" initial={false}>
-                      <motion.div
+                      <m.div
                         key={playMode}
                         initial={{ scale: 0.6, opacity: 0 }}
                         animate={{ scale: 1, opacity: 1 }}
@@ -285,10 +285,10 @@ export const PlayerControls = memo(function PlayerControls({
                         transition={{ duration: 0.15 }}
                       >
                         <ModeIcon className="size-5" />
-                      </motion.div>
+                      </m.div>
                     </AnimatePresence>
                   </Button>
-                </motion.div>
+                </m.div>
               </TooltipTrigger>
               <TooltipContent>{modeConfig.label}</TooltipContent>
             </Tooltip>
@@ -303,7 +303,7 @@ export const PlayerControls = memo(function PlayerControls({
             ) : (
               <Tooltip delayDuration={300}>
                 <TooltipTrigger asChild>
-                  <motion.div whileTap={{ scale: 0.9 }}>
+                  <m.div whileTap={{ scale: 0.9 }}>
                     <Button
                       variant="ghost"
                       size="icon"
@@ -314,7 +314,7 @@ export const PlayerControls = memo(function PlayerControls({
                     >
                       <SkipBack className="size-5" fill="currentColor" />
                     </Button>
-                  </motion.div>
+                  </m.div>
                 </TooltipTrigger>
                 <TooltipContent>上一首</TooltipContent>
               </Tooltip>
@@ -322,7 +322,7 @@ export const PlayerControls = memo(function PlayerControls({
 
             <Tooltip delayDuration={300}>
               <TooltipTrigger asChild>
-                <motion.div
+                <m.div
                   whileHover={prefersReducedMotion ? undefined : { scale: 1.05 }}
                   whileTap={prefersReducedMotion ? undefined : { scale: 0.92 }}
                 >
@@ -361,7 +361,7 @@ export const PlayerControls = memo(function PlayerControls({
                           className="text-white/15"
                         />
                         {ringMode === 'decoding' ? (
-                          <motion.circle
+                          <m.circle
                             cx={PLAY_RING_SIZE / 2}
                             cy={PLAY_RING_SIZE / 2}
                             r={PLAY_RING_RADIUS}
@@ -405,7 +405,7 @@ export const PlayerControls = memo(function PlayerControls({
                     )}
                     <AnimatePresence mode="wait" initial={false}>
                       {showAudioLoading ? (
-                        <motion.span
+                        <m.span
                           key="audio-load-wave"
                           initial={prefersReducedMotion ? { opacity: 1, scale: 1 } : { opacity: 0, scale: 0.85 }}
                           animate={{ opacity: 1, scale: 1 }}
@@ -414,9 +414,9 @@ export const PlayerControls = memo(function PlayerControls({
                           className="flex items-center justify-center"
                         >
                           <AudioLoadWave decoding={isDecoding} reducedMotion={Boolean(prefersReducedMotion)} />
-                        </motion.span>
+                        </m.span>
                       ) : (
-                        <motion.span
+                        <m.span
                           key={isPlaying ? 'pause-icon' : 'play-icon'}
                           initial={prefersReducedMotion ? { opacity: 1, scale: 1 } : { opacity: 0, scale: 0.85 }}
                           animate={{ opacity: 1, scale: 1 }}
@@ -429,18 +429,18 @@ export const PlayerControls = memo(function PlayerControls({
                           ) : (
                             <Play className="ml-0.5 size-7" fill="currentColor" />
                           )}
-                        </motion.span>
+                        </m.span>
                       )}
                     </AnimatePresence>
                   </Button>
-                </motion.div>
+                </m.div>
               </TooltipTrigger>
               <TooltipContent>{playButtonLabel}</TooltipContent>
             </Tooltip>
 
             <Tooltip delayDuration={300}>
               <TooltipTrigger asChild>
-                <motion.div whileTap={{ scale: 0.9 }}>
+                <m.div whileTap={{ scale: 0.9 }}>
                   <Button
                     variant="ghost"
                     size="icon"
@@ -451,7 +451,7 @@ export const PlayerControls = memo(function PlayerControls({
                   >
                     <SkipForward className="size-5" fill="currentColor" />
                   </Button>
-                </motion.div>
+                </m.div>
               </TooltipTrigger>
               <TooltipContent>下一首</TooltipContent>
             </Tooltip>
@@ -461,7 +461,7 @@ export const PlayerControls = memo(function PlayerControls({
           <div className="flex flex-1 items-center justify-end">
             <Tooltip delayDuration={300}>
               <TooltipTrigger asChild>
-                <motion.div whileTap={{ scale: 0.9 }}>
+                <m.div whileTap={{ scale: 0.9 }}>
                   <Button
                     variant="ghost"
                     size="icon"
@@ -476,7 +476,7 @@ export const PlayerControls = memo(function PlayerControls({
                       </span>
                     )}
                   </Button>
-                </motion.div>
+                </m.div>
               </TooltipTrigger>
               <TooltipContent>播放列表</TooltipContent>
             </Tooltip>

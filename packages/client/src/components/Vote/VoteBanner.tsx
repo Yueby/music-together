@@ -5,7 +5,7 @@ import { TIMING } from '@music-together/shared'
 import type { VoteState } from '@music-together/shared'
 import { Check, X } from 'lucide-react'
 import { useEffect, useState } from 'react'
-import { motion, AnimatePresence } from 'motion/react'
+import { m, AnimatePresence } from 'motion/react'
 
 interface VoteBannerProps {
   vote: VoteState
@@ -32,7 +32,7 @@ export function VoteBanner({ vote, onCastVote }: VoteBannerProps) {
 
   return (
     <AnimatePresence>
-      <motion.div
+      <m.div
         initial={{ opacity: 0, y: -8 }}
         animate={{ opacity: 1, y: 0 }}
         exit={{ opacity: 0, y: -8 }}
@@ -84,7 +84,7 @@ export function VoteBanner({ vote, onCastVote }: VoteBannerProps) {
             <span className="text-xs text-white/40">已投票</span>
           )}
         </div>
-      </motion.div>
+      </m.div>
     </AnimatePresence>
   )
 }

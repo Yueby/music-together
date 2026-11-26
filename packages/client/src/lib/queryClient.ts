@@ -1,5 +1,5 @@
 import type { MusicSource, Track } from '@music-together/shared'
-import { isCancelledError, QueryClient, type QueryKey } from '@tanstack/react-query'
+import { isCancelledError, QueryClient, type QueryKey } from '@tanstack/query-core'
 
 export const appQueryClient = new QueryClient({
   defaultOptions: {

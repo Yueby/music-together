@@ -2,9 +2,12 @@ import { useEffect, useState } from 'react'
 
 /** Whether a CSS media query currently matches (and stays in sync when it changes). */
 export function useMediaQuery(query: string): boolean {
-  const [matches, setMatches] = useState(() => typeof window !== 'undefined' && window.matchMedia(query).matches)
+  const [matches, setMatches] = useState(
+    () => typeof window !== 'undefined' && typeof window.matchMedia === 'function' && window.matchMedia(query).matches,
+  )
 
   useEffect(() => {
+    if (typeof window === 'undefined' || typeof window.matchMedia !== 'function') return
     const mql = window.matchMedia(query)
     const onChange = () => setMatches(mql.matches)
     onChange()

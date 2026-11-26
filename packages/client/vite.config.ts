@@ -1,7 +1,6 @@
 import { defineConfig } from 'vite'
 import react from '@vitejs/plugin-react'
 import tailwindcss from '@tailwindcss/vite'
-import wasm from 'vite-plugin-wasm'
 import { VitePWA } from 'vite-plugin-pwa'
 import path from 'path'
 import { readFileSync } from 'fs'
@@ -13,7 +12,6 @@ export default defineConfig({
   plugins: [
     react(),
     tailwindcss(),
-    wasm(),
     VitePWA({
       registerType: 'autoUpdate',
       includeAssets: ['logo.svg'],
@@ -39,7 +37,7 @@ export default defineConfig({
         cleanupOutdatedCaches: true,
         navigateFallback: null,
         maximumFileSizeToCacheInBytes: 5 * 1024 * 1024,
-        globPatterns: ['**/*.{js,css,svg,png,woff2,wasm}'],
+        globPatterns: ['**/*.{js,css,svg,png,woff2}'],
         runtimeCaching: [
           {
             urlPattern: ({ request, url }) =>
@@ -84,7 +82,6 @@ export default defineConfig({
           groups: [
             { name: 'vendor-react', test: /node_modules[\\/](react|react-dom|react-router)[\\/]/ },
             { name: 'vendor-socket', test: /node_modules[\\/]socket\.io-client[\\/]/ },
-            { name: 'vendor-motion', test: /node_modules[\\/](motion|framer-motion)[\\/]/ },
             {
               name: 'vendor-ui',
               test: /node_modules[\\/](radix-ui|@radix-ui|sonner|vaul|class-variance-authority)[\\/]/,

@@ -22,7 +22,7 @@ const fixture = vi.hoisted(() => ({
 }))
 vi.mock('react-router', () => ({ useParams: () => ({ roomId: 'ABC123' }), useNavigate: () => fixture.navigate }))
 vi.mock('motion/react', () => ({
-  motion: { div: ({ children }: { children: ReactNode }) => <div>{children}</div> },
+  m: { div: ({ children }: { children: ReactNode }) => <div>{children}</div> },
   AnimatePresence: ({ children }: { children: ReactNode }) => <>{children}</>,
 }))
 vi.mock('sonner', () => ({ toast: { error: vi.fn() } }))

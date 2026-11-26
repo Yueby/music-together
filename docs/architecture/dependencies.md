@@ -10,16 +10,15 @@
 | UI | radix-ui / shadcn/ui | ^1.8.1 / — | 无障碍 UI 原语与项目组件 |
 | 样式 | tailwindcss / @tailwindcss/vite | ^4.3.5 | 原子化 CSS 与 Vite 集成 |
 | 状态 | zustand | ^5.1.0 | 客户端状态管理 |
-| 请求缓存 | @tanstack/react-query | ^5.108.4 | 搜索、发现、歌手、歌单与歌词客户端缓存和并发去重 |
+| 请求缓存 | @tanstack/query-core | ^5.108.4 | 搜索、发现、歌手、歌单与歌词客户端缓存和并发去重（命令式 `fetchAppQuery`） |
 | 路由 | react-router | ^8.5.2 | 客户端路由（v8 ESM；仓库统一使用 Node >=24.15.0） |
 | 实时通信 | socket.io-client | ^4.8.4 | Socket.IO 客户端 |
 | 歌词 | @applemusic-like-lyrics/core / react / lyric | ^0.6.0 / ^0.6.0 / ^1.1.0 | AMLL 歌词解析、逐词动画与动态背景 |
-| 动画 | motion | ^14.14.0 | React 动画 |
+| 动画 | motion | ^14.14.0 | React 动画（`LazyMotion` + `m.*` 异步加载 `domMax`） |
 | 虚拟列表 | @tanstack/react-virtual | ^3.14.26 | 搜索和歌单大列表 |
 | 拖拽排序 | @dnd-kit/core / sortable / utilities | ^6.3.1 / ^10.0.0 / ^3.2.2 | 播放队列触摸/指针/键盘拖拽排序 |
-| 快捷键 | tinykeys | ^4.0.1 | 房间内全局播放与搜索快捷键 |
 | 图形 | @pixi/* | 7.x | Web 端歌词背景渲染与滤镜（`mapp` 打包时通过 `pixiStub` 别名剔除） |
-| 工具 | nanoid / sonner / lucide-react | 当前锁定版本 | ID、通知、图标 |
+| 工具 | sonner / lucide-react | 当前锁定版本 | 通知、图标 |
 
 ## Server 核心依赖
 
@@ -38,8 +37,7 @@
 | express-rate-limit | ^8.7.5 | 音乐 REST 与封面代理 HTTP 限流 |
 | lru-cache | ^11.5.3 | 搜索、曲目和资源缓存 |
 | p-limit | ^7.3.3 | 外部请求并发控制 |
-| qrcode | ^1.5.4 | 酷狗登录二维码编码 |
-| escape-html | ^1.0.3 | 聊天内容转义 |
+| qrcode | ^1.5.4 | 酷狗/QQ 登录二维码编码 |
 
 服务端的 TTML 逐词歌词解析使用 `@applemusic-like-lyrics/ttml`（与客户端歌词包内置版本一致，固定 1.0.1）并注入 `@xmldom/xmldom` 作为 DOMParser（Node 没有内置的，微应用的 Trusted Types 也不允许在客户端解析）。
 
@@ -51,7 +49,6 @@ QQ 音乐搜索使用腾讯 `zzc` 签名访问 `musics.fcg`，避免未签名 `m
 
 | 库 | 版本 | 用途 |
 | --- | --- | --- |
-| @casl/ability | ^7.1.0 | 前后端共享 RBAC 能力定义 |
 | zod | ^4.6.7 | 前后端共享 Schema |
 
 ## 微应用依赖

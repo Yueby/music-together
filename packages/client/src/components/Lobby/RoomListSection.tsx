@@ -1,5 +1,5 @@
 import { Music } from 'lucide-react'
-import { motion } from 'motion/react'
+import { m } from 'motion/react'
 import type { RoomListItem } from '@music-together/shared'
 import { ServerLoadBadge } from '@/components/ServerLoadBadge'
 import { RoomCard } from './RoomCard'
@@ -40,7 +40,7 @@ export function RoomListSection({ rooms, isLoading, onRoomClick }: RoomListSecti
           ))}
         </div>
       ) : rooms.length === 0 ? (
-        <motion.div
+        <m.div
           initial={{ opacity: 0 }}
           animate={{ opacity: 1 }}
           transition={{ delay: 0.25 }}
@@ -51,7 +51,7 @@ export function RoomListSection({ rooms, isLoading, onRoomClick }: RoomListSecti
             <p className="text-base font-medium text-foreground/60">还没有活跃的房间</p>
             <p className="mt-1 text-sm text-muted-foreground">创建一个房间，邀请朋友一起听歌</p>
           </div>
-        </motion.div>
+        </m.div>
       ) : (
         <div className="grid gap-3 sm:grid-cols-2 lg:grid-cols-3">
           {rooms.map((room, i) => (

@@ -174,7 +174,7 @@ src/
 ├── providers/                  # React Context Provider
 │   ├── SocketProvider.tsx      #   Web 连接/Cookie 引导；SocketStateProvider 为同一 Context 的纯状态出口
 │   ├── MappSocketProvider.tsx  #   外部微应用会话订阅与身份就绪连接态投影，不接管其生命周期
-│   └── AbilityProvider.tsx     #   CASL 权限上下文（基于 currentUser.role）
+│   └── AbilityProvider.tsx     #   RBAC 权限上下文（基于 currentUser.role）
 │
 └── lib/                        # 工具库
     ├── config.ts               #   配置常量（SERVER_URL）
@@ -299,7 +299,7 @@ src/
 ├── mappMetadata.ts    # 平台只读元数据 target/query 合同与大小预算
 ├── mediaContracts.ts  # 音频 CDN 后缀/MIME/32MiB 上限与封面白名单/尺寸上限（无运行时依赖，供 server 与 deploy/cf-worker 共用）
 ├── musicRef.ts        # 按 ID 查找：各平台歌曲/专辑/歌单/歌手的 ID 形状（`normalizeMusicId`，只放行合法 ID，纯 ID 或同平台同类型分享链接里的 ID）、分享链接解析（`parseMusicLink`，识别平台与类型；网易云/QQ/酷狗常见链接格式，不会信任仿冒域名）、`looksLikeMusicId`（比前者更严：短数字、普通词仍当作关键词）、`supportsIdLookup`（歌手页仅网易云）
-└── abilities.ts       # CASL 权限定义（Actions incl. set-mode, Subjects, defineAbilityFor）
+└── abilities.ts       # 静态 RBAC 权限定义（Actions incl. set-mode, Subjects, defineAbilityFor）
 ```
 
 ## packages/mapp/ — 微应用适配与打包

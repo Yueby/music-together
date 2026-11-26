@@ -12,7 +12,7 @@ import { Separator } from '@/components/ui/separator'
 import { cn } from '@/lib/utils'
 import type { AdmissionQueuedEvent } from '@music-together/shared'
 import { Clock, DoorOpen, PlusCircle } from 'lucide-react'
-import { AnimatePresence, motion, useReducedMotion } from 'motion/react'
+import { AnimatePresence, m, useReducedMotion } from 'motion/react'
 import { getEffectiveServerLoad } from './ServerLoadBadge'
 
 interface AdmissionQueueContentProps {
@@ -57,7 +57,7 @@ function QueueBody({ queued }: { queued: AdmissionQueuedEvent }) {
               <span className="whitespace-pre">第 </span>
               <span className="relative inline-flex overflow-hidden">
                 <AnimatePresence mode="popLayout" initial={false}>
-                  <motion.span
+                  <m.span
                     key={queued.position}
                     initial={prefersReducedMotion ? false : { opacity: 0, y: -10 }}
                     animate={{ opacity: 1, y: 0 }}
@@ -66,7 +66,7 @@ function QueueBody({ queued }: { queued: AdmissionQueuedEvent }) {
                     className="inline-block"
                   >
                     {queued.position}
-                  </motion.span>
+                  </m.span>
                 </AnimatePresence>
               </span>
               <span className="whitespace-pre"> 位</span>
@@ -112,7 +112,7 @@ function QueueBody({ queued }: { queued: AdmissionQueuedEvent }) {
         </div>
 
         <div className="h-1.5 w-full overflow-hidden rounded-full bg-secondary">
-          <motion.div
+          <m.div
             className={cn('h-full rounded-full', loadBarClass)}
             initial={false}
             animate={{ width: `${pct}%` }}
@@ -166,7 +166,7 @@ export function AdmissionQueueCard({ queued, onCancel, cancelLabel = '取消并�
 
   return (
     <div className="fixed inset-0 z-50 flex items-center justify-center bg-background px-4">
-      <motion.div
+      <m.div
         initial={prefersReducedMotion ? false : { opacity: 0, scale: 0.95 }}
         animate={{ opacity: 1, scale: 1 }}
         transition={prefersReducedMotion ? { duration: 0 } : { type: 'spring', stiffness: 300, damping: 25 }}
@@ -184,7 +184,7 @@ export function AdmissionQueueCard({ queued, onCancel, cancelLabel = '取消并�
         <Button variant="outline" size="lg" onClick={onCancel} className="min-h-11 w-full sm:min-h-0">
           {cancelLabel}
         </Button>
-      </motion.div>
+      </m.div>
     </div>
   )
 }

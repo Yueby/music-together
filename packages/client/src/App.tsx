@@ -3,14 +3,14 @@ import { ErrorBoundary } from 'react-error-boundary'
 import { TooltipProvider } from '@/components/ui/tooltip'
 import { Button } from '@/components/ui/button'
 import { ServerCapacitySync } from '@/hooks/useServerCapacity'
-import { appQueryClient } from '@/lib/queryClient'
 import { SocketProvider } from '@/providers/SocketProvider'
-import { QueryClientProvider } from '@tanstack/react-query'
 import HomePage from '@/pages/HomePage'
 import { BrowserRouter, Route, Routes, useLocation, useNavigate } from 'react-router'
 import { Toaster } from 'sonner'
-import { AnimatePresence } from 'motion/react'
+import { AnimatePresence, LazyMotion } from 'motion/react'
 import { AlertTriangle } from 'lucide-react'
+
+const loadMotionFeatures = () => import('@/lib/motionFeatures').then((mod) => mod.default)
 
 // Lazy-loaded routes (keep HomePage sync for fast first paint)
 const RoomPage = lazy(() => import('@/pages/RoomPage'))
@@ -85,7 +85,7 @@ export interface AppSurfaceProps {
 
 export function AppSurface({ onReset = () => window.location.reload() }: AppSurfaceProps) {
   return (
-    <QueryClientProvider client={appQueryClient}>
+    <LazyMotion features={loadMotionFeatures} strict>
       <TooltipProvider>
         <ServerCapacitySync />
         <ErrorBoundary FallbackComponent={ErrorFallback} onReset={onReset}>
@@ -93,7 +93,7 @@ export function AppSurface({ onReset = () => window.location.reload() }: AppSurf
         </ErrorBoundary>
         <Toaster position="top-center" richColors />
       </TooltipProvider>
-    </QueryClientProvider>
+    </LazyMotion>
   )
 }
 

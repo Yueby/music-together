@@ -30,7 +30,7 @@ vi.mock('@/stores/playerStore', () => ({
 }))
 
 vi.mock('motion/react', () => ({
-  motion: {
+  m: {
     div: ({
       children,
       className,

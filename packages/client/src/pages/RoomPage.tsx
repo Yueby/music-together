@@ -1,7 +1,7 @@
 import { lazy, Suspense, useState, useEffect, useCallback, useRef } from 'react'
 import { useParams, useNavigate } from 'react-router'
 import { EVENTS, ERROR_CODE } from '@music-together/shared'
-import { motion } from 'motion/react'
+import { m } from 'motion/react'
 import { toast } from 'sonner'
 import { Loader2, RefreshCw, WifiOff, X } from 'lucide-react'
 import { AdmissionQueueCard } from '@/components/AdmissionQueuePanel'
@@ -37,17 +37,17 @@ import { hostRuntime } from '@/lib/hostRuntime'
 import { useVersionCheck } from '@/hooks/useVersionCheck'
 
 const SearchDialog = lazy(() =>
-  import('@/components/Overlays/SearchDialog').then((m) => ({ default: m.SearchDialog })),
+  import('@/components/Overlays/SearchDialog').then((mod) => ({ default: mod.SearchDialog })),
 )
-const QueueDrawer = lazy(() => import('@/components/Overlays/QueueDrawer').then((m) => ({ default: m.QueueDrawer })))
+const QueueDrawer = lazy(() => import('@/components/Overlays/QueueDrawer').then((mod) => ({ default: mod.QueueDrawer })))
 const AccountDialog = lazy(() =>
-  import('@/components/Overlays/AccountDialog').then((m) => ({ default: m.AccountDialog })),
+  import('@/components/Overlays/AccountDialog').then((mod) => ({ default: mod.AccountDialog })),
 )
 const ArtistDialog = lazy(() =>
-  import('@/components/Overlays/ArtistDialog').then((m) => ({ default: m.ArtistDialog })),
+  import('@/components/Overlays/ArtistDialog').then((mod) => ({ default: mod.ArtistDialog })),
 )
 const SettingsDialog = lazy(() =>
-  import('@/components/Overlays/SettingsDialog').then((m) => ({ default: m.SettingsDialog })),
+  import('@/components/Overlays/SettingsDialog').then((mod) => ({ default: mod.SettingsDialog })),
 )
 
 /** Mounts a lazy overlay chunk only after its first open, keeping it mounted afterwards for smooth close transitions. */
@@ -433,10 +433,10 @@ export default function RoomPage() {
   if (checking) {
     return (
       <div className="fixed inset-0 z-50 flex items-center justify-center bg-background">
-        <motion.div initial={{ opacity: 0 }} animate={{ opacity: 1 }} className="flex flex-col items-center gap-4">
+        <m.div initial={{ opacity: 0 }} animate={{ opacity: 1 }} className="flex flex-col items-center gap-4">
           <Loader2 className="h-8 w-8 animate-spin text-muted-foreground" />
           <p className="text-sm text-muted-foreground">正在检查房间...</p>
-        </motion.div>
+        </m.div>
       </div>
     )
   }
@@ -459,7 +459,7 @@ export default function RoomPage() {
   // --- Interaction gate (audio unlock + optional password) ---
   if (!gateOpen) {
     return (
-      <motion.div
+      <m.div
         initial={{ opacity: 0 }}
         animate={{ opacity: 1 }}
         exit={{ opacity: 0 }}
@@ -471,7 +471,7 @@ export default function RoomPage() {
           hasPassword={roomInfo?.hasPassword || !!gatePasswordError}
           passwordError={gatePasswordError}
         />
-      </motion.div>
+      </m.div>
     )
   }
 
@@ -489,7 +489,7 @@ export default function RoomPage() {
         onPrev={prev}
         onOpenSearch={handleOpenSearch}
       />
-      <motion.div
+      <m.div
         initial={{ opacity: 0 }}
         animate={{ opacity: 1 }}
         exit={{ opacity: 0 }}
@@ -617,7 +617,7 @@ export default function RoomPage() {
           error={passwordError}
           isLoading={passwordLoading}
         />
-      </motion.div>
+      </m.div>
     </AbilityProvider>
   )
 }

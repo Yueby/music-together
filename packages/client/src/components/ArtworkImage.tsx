@@ -1,6 +1,6 @@
 import { useArtwork } from '@/hooks/useArtworkUrl'
 import { cn } from '@/lib/utils'
-import { motion, useReducedMotion } from 'motion/react'
+import { m, useReducedMotion } from 'motion/react'
 import { useState, type ReactNode } from 'react'
 
 interface ArtworkImageProps {
@@ -83,7 +83,7 @@ export function ArtworkImage({
                 className="absolute inset-0 bg-gradient-to-br from-white/[0.07] via-transparent to-white/[0.03]"
               />
             ) : (
-              <motion.div
+              <m.div
                 data-slot="artwork-shimmer"
                 className="absolute -inset-y-8 -left-1/2 w-[75%] -skew-x-12 bg-gradient-to-r from-transparent via-white/[0.14] to-transparent"
                 initial={{ x: '-60%' }}

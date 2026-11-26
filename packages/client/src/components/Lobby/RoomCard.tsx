@@ -1,6 +1,6 @@
 import { memo } from 'react'
 import { Lock, LockOpen, Music, Users } from 'lucide-react'
-import { motion, useReducedMotion } from 'motion/react'
+import { m, useReducedMotion } from 'motion/react'
 import type { RoomListItem } from '@music-together/shared'
 import { cn } from '@/lib/utils'
 
@@ -13,7 +13,7 @@ interface RoomCardProps {
 export const RoomCard = memo(function RoomCard({ room, index, onClick }: RoomCardProps) {
   const prefersReducedMotion = useReducedMotion()
   return (
-    <motion.button
+    <m.button
       initial={{ opacity: 0, y: 20 }}
       animate={{ opacity: 1, y: 0 }}
       transition={{ duration: 0.4, delay: index * 0.06, ease: [0.25, 0.46, 0.45, 0.94] }}
@@ -47,7 +47,7 @@ export const RoomCard = memo(function RoomCard({ room, index, onClick }: RoomCar
           {room.currentTrackTitle && (
             <div className="flex items-end gap-0.5">
               {[0, 1, 2].map((i) => (
-                <motion.div
+                <m.div
                   key={i}
                   className="w-0.5 rounded-full bg-primary/40"
                   animate={prefersReducedMotion ? { height: 8 } : { height: [4, 12, 6, 10, 4] }}
@@ -81,6 +81,6 @@ export const RoomCard = memo(function RoomCard({ room, index, onClick }: RoomCar
         </span>
         <span className="text-xs text-muted-foreground/50">{room.id}</span>
       </div>
-    </motion.button>
+    </m.button>
   )
 })
