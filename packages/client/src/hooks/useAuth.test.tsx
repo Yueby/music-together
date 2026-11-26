@@ -11,6 +11,7 @@ const fixture = vi.hoisted(() => {
   return {
     handlers,
     socket: {
+      connected: true,
       on: (event: string, fn: (data: unknown) => void) => {
         if (!handlers.has(event)) handlers.set(event, new Set())
         handlers.get(event)!.add(fn)
@@ -64,6 +65,17 @@ describe('useAuth status', () => {
     expect(fixture.socket.emit).toHaveBeenCalledWith(EVENTS.AUTH_GET_STATUS)
   })
 
+  it('refetches on reconnect and once the socket is back in the room', () => {
+    for (let reconnect = 0; reconnect < 2; reconnect++) {
+      fixture.socket.emit.mockClear()
+      receive('connect', undefined)
+      expect(fixture.socket.emit).toHaveBeenCalledExactlyOnceWith(EVENTS.AUTH_GET_STATUS)
+      receive(EVENTS.ROOM_STATE, { id: 'room' })
+      receive(EVENTS.ROOM_STATE, { id: 'room' })
+      expect(fixture.socket.emit.mock.calls).toEqual([[EVENTS.AUTH_GET_STATUS], [EVENTS.AUTH_GET_STATUS]])
+    }
+  })
+
   it('knows the status is loaded only once the personal status arrived', () => {
     expect(latest.statusLoaded).toBe(false)
     receive(EVENTS.AUTH_STATUS_UPDATE, [{ platform: 'netease', loggedIn: true }])
@@ -76,7 +88,7 @@ describe('useAuth status', () => {
   })
 
   it('stops listening when it goes away', () => {
-    expect(listeners()).toBe(4)
+    expect(listeners()).toBe(6)
     act(() => root.unmount())
     expect(listeners()).toBe(0)
     root = createRoot(container)

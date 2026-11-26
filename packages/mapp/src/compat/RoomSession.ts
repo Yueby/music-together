@@ -68,6 +68,7 @@ type Pending = {
   nickname: string
   roomId?: string
   ticket?: Ticket
+  queued?: boolean
 }
 type Confirmed = { roomId: string; nickname: string }
 
@@ -80,6 +81,7 @@ export interface MappRoomSession {
   /** Returns whether the request was sent, not whether the server accepted it. */
   createRoom(input: CreateInput): boolean
   joinRoom(input: JoinInput): boolean
+  cancelAdmission(): boolean
   leaveRoom(): void
   dispose(): void
 }
@@ -275,6 +277,14 @@ export function createMappRoomSession(options: MappRoomSessionOptions): MappRoom
     // just left says nothing about the create/join in flight, so only errors that can belong to it end it.
     if (pending && !IN_ROOM_ACTION_ERRORS.has(code)) failRequest()
   }
+  // UI listeners receive the same event directly from the shared socket.
+  const onAdmissionQueued: ServerToClientEvents[typeof EVENTS.ADMISSION_QUEUED] = (queue) => {
+    if (!ready() || !pending) return
+    const action = pending.kind === 'create' ? 'create' : 'join'
+    if (queue.action === action && (action === 'create' || queue.roomId === pending.roomId)) {
+      pending.queued = true
+    }
+  }
   const onAdmissionCancelled: ServerToClientEvents[typeof EVENTS.ADMISSION_CANCELLED] = ({ reason }) => {
     if (!pending) return
     if (reason === 'user' || reason === 'replaced') {
@@ -293,6 +303,7 @@ export function createMappRoomSession(options: MappRoomSessionOptions): MappRoom
   socket.on(EVENTS.ROOM_STATE, onState)
   socket.on(EVENTS.ROOM_REJOIN_TOKEN, onTicket)
   socket.on(EVENTS.ROOM_ERROR, onRoomError)
+  socket.on(EVENTS.ADMISSION_QUEUED, onAdmissionQueued)
   socket.on(EVENTS.ADMISSION_CANCELLED, onAdmissionCancelled)
 
   /** Starts a manual request, which supersedes any automatic re-entry. */
@@ -315,6 +326,10 @@ export function createMappRoomSession(options: MappRoomSessionOptions): MappRoom
   function finishRequest(sent: boolean): boolean {
     if (!sent) failRequest()
     return sent
+  }
+
+  function cancelAdmission(): boolean {
+    return ready() && pending?.queued === true && attempt(() => socket.emit(EVENTS.ADMISSION_CANCEL))
   }
 
   return {
@@ -346,8 +361,10 @@ export function createMappRoomSession(options: MappRoomSessionOptions): MappRoom
       if (!beginRequest({ kind: 'join', roomId, nickname }, 'joining')) return false
       return finishRequest(attempt(() => socket.emit(EVENTS.ROOM_JOIN, { roomId, nickname, password })))
     },
+    cancelAdmission,
     leaveRoom() {
       if (disposed) return
+      cancelAdmission()
       clearRoom()
       publish({
         roomId: null,
@@ -370,6 +387,7 @@ export function createMappRoomSession(options: MappRoomSessionOptions): MappRoom
       socket.off(EVENTS.ROOM_STATE, onState)
       socket.off(EVENTS.ROOM_REJOIN_TOKEN, onTicket)
       socket.off(EVENTS.ROOM_ERROR, onRoomError)
+      socket.off(EVENTS.ADMISSION_QUEUED, onAdmissionQueued)
       socket.off(EVENTS.ADMISSION_CANCELLED, onAdmissionCancelled)
       snapshot = Object.freeze({ ...IDLE, status: 'disposed' })
       socket.disconnect()

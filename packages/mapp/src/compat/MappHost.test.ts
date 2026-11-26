@@ -85,6 +85,7 @@ function fixture() {
     connect: vi.fn(),
     createRoom: vi.fn(() => true),
     joinRoom: vi.fn(() => true),
+    cancelAdmission: vi.fn(() => true),
     leaveRoom: vi.fn(),
     subscribe: vi.fn(() => vi.fn()),
     dispose: vi.fn(),

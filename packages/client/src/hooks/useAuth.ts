@@ -54,19 +54,35 @@ export function useAuth() {
       }
     }
 
+    let awaitingRoom = true
+    const requestStatus = () => socket.emit(EVENTS.AUTH_GET_STATUS)
+    const onConnect = () => {
+      awaitingRoom = true
+      requestStatus()
+    }
+    const onRoomState = () => {
+      if (!awaitingRoom) return
+      awaitingRoom = false
+      // A request sent on connect can arrive before the server maps the socket to its room.
+      requestStatus()
+    }
     socket.on(EVENTS.AUTH_STATUS_UPDATE, onStatusUpdate)
     socket.on(EVENTS.AUTH_MY_STATUS, onMyStatus)
     socket.on(EVENTS.AUTH_QR_GENERATED, onQrGenerated)
     socket.on(EVENTS.AUTH_QR_STATUS, onQrStatus)
+    socket.on('connect', onConnect)
+    socket.on(EVENTS.ROOM_STATE, onRoomState)
 
     // 挂载时拉取当前状态（覆盖延迟挂载场景）
-    socket.emit(EVENTS.AUTH_GET_STATUS)
+    if (socket.connected) requestStatus()
 
     return () => {
       socket.off(EVENTS.AUTH_STATUS_UPDATE, onStatusUpdate)
       socket.off(EVENTS.AUTH_MY_STATUS, onMyStatus)
       socket.off(EVENTS.AUTH_QR_GENERATED, onQrGenerated)
       socket.off(EVENTS.AUTH_QR_STATUS, onQrStatus)
+      socket.off('connect', onConnect)
+      socket.off(EVENTS.ROOM_STATE, onRoomState)
     }
   }, [socket])
 

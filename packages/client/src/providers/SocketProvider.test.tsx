@@ -220,25 +220,80 @@ describe('SocketProvider and SocketStateProvider', () => {
       expect(mockSocket.connect).toHaveBeenCalledOnce()
     })
 
-    it('does not connect if bootstrap fails', async () => {
+    it('retries failed bootstrap with capped exponential backoff until it connects', async () => {
+      vi.useFakeTimers()
       const mockSocket = createMockSocket()
       getSocketMock.mockReturnValue(mockSocket)
-
-      const fetchMock = vi.fn(async () => ({
-        ok: false,
-        headers: new Headers(),
-      }))
+      const fetchMock = vi.fn(async () => new Response(null, { status: 503 }))
       vi.stubGlobal('fetch', fetchMock)
+      await act(async () => root!.render(<SocketProvider><div /></SocketProvider>))
 
-      await act(async () => {
-        root!.render(
-          <SocketProvider>
-            <div />
-          </SocketProvider>,
-        )
-      })
+      expect(fetchMock).toHaveBeenCalledOnce()
+      for (const delay of [1_000, 2_000, 4_000, 8_000, 16_000, 30_000]) {
+        const calls = fetchMock.mock.calls.length
+        await vi.advanceTimersByTimeAsync(delay - 1)
+        expect(fetchMock).toHaveBeenCalledTimes(calls)
+        await vi.advanceTimersByTimeAsync(1)
+        expect(fetchMock).toHaveBeenCalledTimes(calls + 1)
+      }
 
       expect(mockSocket.connect).not.toHaveBeenCalled()
+      fetchMock.mockResolvedValueOnce(new Response())
+      await vi.advanceTimersByTimeAsync(30_000)
+      expect(mockSocket.connect).toHaveBeenCalledOnce()
+      await vi.advanceTimersByTimeAsync(60_000)
+      expect(fetchMock).toHaveBeenCalledTimes(8)
+    })
+
+    it.each(['online', 'visibilitychange'])('retries immediately on %s and clears the backoff timer', async (event) => {
+      vi.useFakeTimers()
+      const mockSocket = createMockSocket()
+      getSocketMock.mockReturnValue(mockSocket)
+      const fetchMock = vi.fn(async () => new Response())
+        .mockRejectedValueOnce(new Error('offline'))
+      vi.stubGlobal('fetch', fetchMock)
+      vi.spyOn(document, 'visibilityState', 'get').mockReturnValue('visible')
+      await act(async () => root!.render(<SocketProvider><div /></SocketProvider>))
+      const target = event === 'online' ? window : document
+      await act(async () => { target.dispatchEvent(new Event(event)) })
+      expect(fetchMock).toHaveBeenCalledTimes(2)
+      expect(mockSocket.connect).toHaveBeenCalledOnce()
+      await vi.advanceTimersByTimeAsync(1_000)
+      expect(fetchMock).toHaveBeenCalledTimes(2)
+    })
+
+    it('aborts in-flight bootstrap on unmount and ignores a late success', async () => {
+      const mockSocket = createMockSocket()
+      getSocketMock.mockReturnValue(mockSocket)
+      let complete!: (response: Response) => void
+      let signal: AbortSignal | null | undefined
+      const fetchMock = vi.fn((_url: string, options: RequestInit) => {
+        signal = options.signal
+        return new Promise<Response>((resolve) => { complete = resolve })
+      })
+      vi.stubGlobal('fetch', fetchMock)
+      await act(async () => root!.render(<SocketProvider><div /></SocketProvider>))
+      act(() => window.dispatchEvent(new Event('online')))
+      expect(fetchMock).toHaveBeenCalledOnce()
+      act(() => root!.unmount())
+      root = null
+      expect(signal?.aborted).toBe(true)
+      await act(async () => { complete(new Response()) })
+      expect(mockSocket.connect).not.toHaveBeenCalled()
+    })
+
+    it('clears a pending bootstrap retry and recovery listeners on unmount', async () => {
+      vi.useFakeTimers()
+      getSocketMock.mockReturnValue(createMockSocket())
+      const fetchMock = vi.fn(async () => new Response(null, { status: 503 }))
+      vi.stubGlobal('fetch', fetchMock)
+      await act(async () => root!.render(<SocketProvider><div /></SocketProvider>))
+      act(() => root!.unmount())
+      root = null
+      window.dispatchEvent(new Event('online'))
+      document.dispatchEvent(new Event('visibilitychange'))
+      await vi.advanceTimersByTimeAsync(30_000)
+      expect(fetchMock).toHaveBeenCalledOnce()
     })
   })
 })

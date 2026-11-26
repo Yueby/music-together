@@ -13,6 +13,17 @@ interface WebAudioPlayerOptions {
   onChange?: (snapshot: WebAudioPlayerSnapshot) => void
 }
 
+const MAX_DURATION_SECONDS = 1_800
+const MAX_PCM_BYTES = 256 * 1024 * 1024
+const BYTES_PER_SAMPLE = Float32Array.BYTES_PER_ELEMENT
+
+interface DecodeJob {
+  generation: number
+  bytes: Uint8Array
+  resolve: (loaded: boolean) => void
+  reject: (error: unknown) => void
+}
+
 /** A single decoded buffer; all positions and scheduled starts use the audio clock. */
 export class WebAudioPlayer {
   private context: AudioContext | null = null
@@ -27,6 +38,8 @@ export class WebAudioPlayer {
   private storedVolume = 0.12
   private storedRate = 1
   private generation = 0
+  private decoding = false
+  private pendingDecode: DecodeJob | undefined
   private readonly loop: boolean
   private readonly createContext: () => AudioContext
   private readonly onChange: (snapshot: WebAudioPlayerSnapshot) => void
@@ -86,20 +99,54 @@ export class WebAudioPlayer {
     this.notify()
   }
 
-  async load(bytes: Uint8Array): Promise<boolean> {
+  async load(bytes: Uint8Array, duration?: number): Promise<boolean> {
     this.assertOpen()
-    const generation = ++this.generation
+    this.cancelPendingOperations()
+    const generation = this.generation
     this.stopSource()
     this.buffer = null
     this.offset = 0
     this.status = 'empty'
-    const context = this.getContext()
     this.notify()
+    if (generation !== this.generation) return false
+    // decodeAudioData resamples to the context rate, so budget for stereo at that rate.
+    if (duration !== undefined && (
+      duration > MAX_DURATION_SECONDS || duration * this.getContext().sampleRate * 2 * BYTES_PER_SAMPLE > MAX_PCM_BYTES
+    )) throw new Error('AUDIO_BUFFER_TOO_LARGE')
+    return new Promise<boolean>((resolve, reject) => {
+      this.pendingDecode = { generation, bytes, resolve, reject }
+      void this.drainDecodes()
+    })
+  }
+
+  private async drainDecodes(): Promise<void> {
+    if (this.decoding) return
+    this.decoding = true
     try {
+      while (this.pendingDecode) {
+        const job = this.pendingDecode
+        this.pendingDecode = undefined
+        try {
+          job.resolve(await this.decode(job))
+        } catch (error) {
+          job.reject(error)
+        }
+      }
+    } finally {
+      this.decoding = false
+    }
+  }
+
+  private async decode({ bytes, generation }: DecodeJob): Promise<boolean> {
+    try {
+      const context = this.getContext()
       // decodeAudioData can detach its input; never transfer SDK-owned bytes.
       const buffer = await context.decodeAudioData(Uint8Array.from(bytes).buffer)
       if (generation !== this.generation) return false
       if (!Number.isFinite(buffer.duration) || buffer.duration <= 0) throw new Error('INVALID_AUDIO_DURATION')
+      if (buffer.duration > MAX_DURATION_SECONDS ||
+        buffer.length * buffer.numberOfChannels * BYTES_PER_SAMPLE > MAX_PCM_BYTES
+      ) throw new Error('AUDIO_BUFFER_TOO_LARGE')
       this.buffer = buffer
       this.status = 'ready'
       this.notify()
@@ -125,7 +172,10 @@ export class WebAudioPlayer {
 
   /** Invalidate pending async work while leaving an already playing source intact. */
   cancelPendingOperations(): void {
-    if (this.status !== 'closed') ++this.generation
+    if (this.status === 'closed') return
+    ++this.generation
+    this.pendingDecode?.resolve(false)
+    this.pendingDecode = undefined
   }
 
   /** Call directly from a user event: resume is invoked before the first await. */
@@ -166,7 +216,7 @@ export class WebAudioPlayer {
 
   pause(): void {
     this.assertOpen()
-    ++this.generation
+    this.cancelPendingOperations()
     this.offset = this.snapshot().position
     this.stopSource()
     this.status = this.buffer ? 'paused' : 'empty'
@@ -216,7 +266,7 @@ export class WebAudioPlayer {
   /** Release a track while retaining this app's unlocked context and controls. */
   unload(): void {
     if (this.status === 'closed') return
-    ++this.generation
+    this.cancelPendingOperations()
     this.stopSource()
     this.buffer = null
     this.offset = 0
@@ -227,7 +277,7 @@ export class WebAudioPlayer {
 
   async dispose(): Promise<void> {
     if (this.status === 'closed') return
-    ++this.generation
+    this.cancelPendingOperations()
     this.stopSource()
     this.gain?.disconnect()
     this.buffer = null

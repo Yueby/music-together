@@ -46,6 +46,7 @@ export interface MappAudioEngineOptions {
 type PreloadRoomTrackOptions = Omit<ReadRoomAudioOptions, 'sdk' | 'signal' | 'onProgress'>
 
 export type LoadRoomTrackOptions = PreloadRoomTrackOptions & {
+  duration?: number
   signal?: AbortSignal
   onLoadProgress?: (progress: AudioLoadProgress) => void
 }
@@ -124,8 +125,8 @@ export class MappAudioEngine {
         return false
       }
       this.assertAudio()
-      // Stop the previous track while fetching, without inventing a second playback kernel.
-      this.player.pause()
+      // Release the previous track's PCM while the replacement downloads.
+      this.player.unload()
       this.notify()
       if (!this.current(generation)) return false
       const reportProgress = (progress: AudioLoadProgress) => {
@@ -149,7 +150,7 @@ export class MappAudioEngine {
         totalBytes: result.bytes.byteLength,
       })
       if (!this.current(generation)) return false
-      const loaded = await this.decode(result.bytes, controller.signal)
+      const loaded = await this.decode(result.bytes, options.duration, controller.signal)
       if (!this.current(generation)) return false
       this.loading = false
       if (!loaded) {
@@ -400,10 +401,19 @@ export class MappAudioEngine {
   }
 
   /** Resolves false as soon as the signal aborts, even while decoding is still running. */
-  private async decode(bytes: Uint8Array, signal: AbortSignal): Promise<boolean> {
-    const aborted = new Promise<false>((resolve) => signal.addEventListener('abort', () => resolve(false), { once: true }))
-    const loaded = await Promise.race([this.player.load(bytes), aborted])
-    return loaded && !signal.aborted
+  private async decode(bytes: Uint8Array, duration: number | undefined, signal: AbortSignal): Promise<boolean> {
+    if (signal.aborted) return false
+    let onAbort!: () => void
+    const aborted = new Promise<false>((resolve) => {
+      onAbort = () => resolve(false)
+      signal.addEventListener('abort', onAbort, { once: true })
+    })
+    try {
+      const loaded = await Promise.race([this.player.load(bytes, duration), aborted])
+      return loaded && !signal.aborted
+    } finally {
+      signal.removeEventListener('abort', onAbort)
+    }
   }
 
   private notify(): void {

@@ -20,7 +20,7 @@ function deferred<T>() {
 async function flush() {
   for (let i = 0; i < 8; ++i) await Promise.resolve()
 }
-const track = (id = 'netease:1') => ({ id, streamUrl: 'https://unused.invalid/private' }) as Track
+const track = (id = 'netease:1') => ({ id, duration: 42, streamUrl: 'https://unused.invalid/private' }) as Track
 const callbacks = (): PlaybackSoundOptions => ({
   src: ['https://unused.invalid/source'],
   onload: vi.fn(),
@@ -228,7 +228,7 @@ describe('MappPlaybackSoundFactory shared engine handles', () => {
     expect(options.onloaderror).not.toHaveBeenCalled()
   })
 
-  it.each([undefined, 'bytes'] as const)('passes identifiers and only the selected mode (%s)', async (mode) => {
+  it.each([undefined, 'bytes'] as const)('passes identifiers, duration and the selected mode (%s)', async (mode) => {
     const f = environment(mode)
     const options = callbacks()
     Object.defineProperty(options, 'src', {
@@ -247,6 +247,7 @@ describe('MappPlaybackSoundFactory shared engine handles', () => {
     expect(f.engine.loadRoomTrack).toHaveBeenCalledExactlyOnceWith({
       roomId: 'AB12_-',
       trackId: 'netease:1',
+      duration: 42,
       mode: mode ?? 'stream',
       onLoadProgress: expect.any(Function),
     })

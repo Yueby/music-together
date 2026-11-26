@@ -1,5 +1,11 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
-import { EVENTS, type ClientToServerEvents, type RoomState, type ServerToClientEvents } from '@music-together/shared'
+import {
+  EVENTS,
+  type AdmissionQueuedEvent,
+  type ClientToServerEvents,
+  type RoomState,
+  type ServerToClientEvents,
+} from '@music-together/shared'
 import type { SdkRoomSocket } from '../../../client/src/lib/platform/SdkRoomSocket.ts'
 import { createMappRoomSocket } from './roomSocket.ts'
 import { createMappRoomSession, type MappRoomSession, type MappRoomSessionSnapshot } from './RoomSession.ts'
@@ -59,6 +65,14 @@ const options = {
   reviewedEndpointUrl: 'wss://music.example.test/socket.io/?EIO=4&transport=websocket',
 }
 const nickname = 'same-as-web-owner'
+const queuedJoin: AdmissionQueuedEvent = {
+  action: 'join',
+  roomId: 'room-a',
+  position: 2,
+  queueLength: 3,
+  reason: 'mapp_room',
+  capacity: {} as AdmissionQueuedEvent['capacity'],
+}
 function room(id = 'room-a'): RoomState {
   return {
     id,
@@ -157,10 +171,34 @@ describe('Mapp room session', () => {
     expect(session.createRoom({ nickname })).toBe(true)
   })
 
+  it('forwards queue updates and lets the user cancel the matching queued join', () => {
+    ready()
+    const onQueued = vi.fn()
+    session.socket.on(EVENTS.ADMISSION_QUEUED, onQueued)
+    expect(session.joinRoom({ roomId: 'room-a', nickname })).toBe(true)
+    fake.server(EVENTS.ADMISSION_QUEUED, { ...queuedJoin, roomId: 'other-room' })
+    expect(session.cancelAdmission()).toBe(false)
+
+    fake.server(EVENTS.ADMISSION_QUEUED, queuedJoin)
+    expect(onQueued).toHaveBeenLastCalledWith(queuedJoin)
+    expect(session.cancelAdmission()).toBe(true)
+    expect(fake.sent(EVENTS.ADMISSION_CANCEL)).toEqual([[EVENTS.ADMISSION_CANCEL]])
+    expect(session.snapshot.status).toBe('joining')
+    fake.server(EVENTS.ADMISSION_CANCELLED, { reason: 'user' })
+    expect(session.snapshot).toMatchObject({ status: 'ready', errorCode: null })
+    expect(session.cancelAdmission()).toBe(false)
+    expect(session.joinRoom({ roomId: 'room-a', nickname })).toBe(true)
+
+    session.socket.off(EVENTS.ADMISSION_QUEUED, onQueued)
+    session.dispose()
+    expect(fake.listeners.get(EVENTS.ADMISSION_QUEUED)?.size).toBe(0)
+  })
+
   it('clears a pending join with JOIN_FAILED when the queued room closes', () => {
     ready()
     expect(session.joinRoom({ roomId: 'room-a', nickname })).toBe(true)
     expect(session.snapshot.status).toBe('joining')
+    fake.server(EVENTS.ADMISSION_QUEUED, queuedJoin)
 
     fake.server(EVENTS.ADMISSION_CANCELLED, { reason: 'room_closed' })
     fake.server(EVENTS.ROOM_STATE, room())

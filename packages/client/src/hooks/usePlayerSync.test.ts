@@ -130,6 +130,8 @@ describe('scheduled playback with loading audio', () => {
     vi.stubGlobal('cancelAnimationFrame', vi.fn())
     audio.instances.length = 0
     audio.handlers.clear()
+    audio.socket.connected = true
+    audio.socket.emit.mockClear()
     audio.clock.calibrated = true
     usePlayerStore.getState().reset()
     usePlayerStore.getState().setAudioLatencyOffsetMs(null)
@@ -140,6 +142,7 @@ describe('scheduled playback with loading audio', () => {
     cleanup()
     vi.useRealTimers()
     vi.unstubAllGlobals()
+    vi.restoreAllMocks()
   })
 
   it.each([EVENTS.PLAYER_RESUME, EVENTS.PLAYER_SEEK])('%s waits for the execution time when audio loads early', (event) => {
@@ -342,9 +345,9 @@ describe('scheduled playback with loading audio', () => {
       expect(crossfadeSeek).toHaveBeenCalled()
     })
 
-    it('immediately crossfade-seeks WebAudio when outputLatency populates after playback starts', () => {
+    it('collects drift samples while WebAudio output latency jitters by 30ms', () => {
       const { howl } = setup(true)
-      let outputLatencyMs = 0
+      let outputLatencyMs = 10
       const crossfadeSeek = vi.fn()
       Object.assign(howl, {
         supportsPitchPreservingRate: false,
@@ -354,18 +357,42 @@ describe('scheduled playback with loading audio', () => {
       act(() => {
         setRoom()
         howl.finishLoad()
-        howl.seek.mockImplementation(() => 42 + (Date.now() - 100_000) / 1000)
-        vi.advanceTimersByTime(250)
+        howl.seek.mockImplementation(() => 42.045 + (Date.now() - 100_000) / 1000)
+        for (const latency of [10, 40, 10, 40, 10]) {
+          outputLatencyMs = latency
+          vi.advanceTimersByTime(250)
+        }
       })
       expect(crossfadeSeek).not.toHaveBeenCalled()
-      expect(usePlayerStore.getState().detectedAudioLatencyMs).toBe(0)
+      expect(usePlayerStore.getState().detectedAudioLatencyMs).toBe(10)
+      expect(usePlayerStore.getState().syncDrift).toBeCloseTo(0.035, 3)
+      expect(howl.rate).toHaveBeenLastCalledWith(0.995)
+    })
 
-      outputLatencyMs = 110
-      act(() => vi.advanceTimersByTime(250))
-      expect(usePlayerStore.getState().detectedAudioLatencyMs).toBe(110)
-      expect(crossfadeSeek).toHaveBeenCalledTimes(1)
-      expect(crossfadeSeek).toHaveBeenLastCalledWith(42.61)
-      expect(usePlayerStore.getState().syncDrift).toBe(0)
+    it('requests sync on visibility recovery only while connected in a room and rate limits wakeups', () => {
+      const { unmount } = setup()
+      const visibility = vi.spyOn(document, 'visibilityState', 'get').mockReturnValue('visible')
+      const changeVisibility = () => act(() => document.dispatchEvent(new Event('visibilitychange')))
+      changeVisibility()
+      setRoom()
+      audio.socket.connected = false
+      changeVisibility()
+      audio.socket.connected = true
+      visibility.mockReturnValue('hidden')
+      changeVisibility()
+      expect(audio.socket.emit).not.toHaveBeenCalled()
+
+      visibility.mockReturnValue('visible')
+      changeVisibility()
+      changeVisibility()
+      expect(audio.socket.emit).toHaveBeenCalledExactlyOnceWith(EVENTS.PLAYER_SYNC_REQUEST)
+      act(() => vi.advanceTimersByTime(2_000))
+      changeVisibility()
+      expect(audio.socket.emit).toHaveBeenCalledTimes(2)
+      unmount()
+      act(() => vi.advanceTimersByTime(2_000))
+      changeVisibility()
+      expect(audio.socket.emit).toHaveBeenCalledTimes(2)
     })
 
     it('corrects 10ms drift with proportional rate and settles inside the 8ms dead zone', () => {

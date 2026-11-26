@@ -17,6 +17,7 @@ function environment(loop = false) {
   }
   const context = Object.assign(new EventTarget(), {
     currentTime: 10,
+    sampleRate: 48_000,
     baseLatency: 0.015,
     outputLatency: 0.035,
     state: 'suspended' as AudioContextState,
@@ -366,7 +367,7 @@ describe('micro-app Web Audio player', () => {
     await player.dispose()
   })
 
-  it('ignores stale decode results after another load', async () => {
+  it('serializes native decodes and keeps only the latest pending track', async () => {
     const { player, context } = environment()
     let finish!: (buffer: AudioBuffer) => void
     context.decodeAudioData.mockImplementationOnce(
@@ -376,10 +377,36 @@ describe('micro-app Web Audio player', () => {
         }),
     )
     const first = player.load(new Uint8Array([1]))
-    await player.load(new Uint8Array([2]))
+    const skipped = player.load(new Uint8Array([2]))
+    const latest = player.load(new Uint8Array([3]))
+    expect(await skipped).toBe(false)
+    expect(context.decodeAudioData).toHaveBeenCalledOnce()
+    expect(player.snapshot().duration).toBe(0)
+
     finish({ duration: 99 } as AudioBuffer)
     expect(await first).toBe(false)
+    expect(await latest).toBe(true)
+    expect(context.decodeAudioData).toHaveBeenCalledTimes(2)
+    expect(new Uint8Array(context.decodeAudioData.mock.calls[1][0])).toEqual(new Uint8Array([3]))
     expect(player.snapshot().duration).toBe(8)
+    await player.dispose()
+  })
+
+  it('rejects an excessive PCM estimate before decoding and checks actual PCM after decoding', async () => {
+    const { player, context } = environment()
+    const bytes = new Uint8Array([1])
+    await expect(player.load(bytes, 1_000)).rejects.toThrow('AUDIO_BUFFER_TOO_LARGE')
+    expect(context.decodeAudioData).not.toHaveBeenCalled()
+
+    context.decodeAudioData.mockResolvedValueOnce({
+      duration: 450,
+      length: 450 * context.sampleRate,
+      numberOfChannels: 4,
+    } as AudioBuffer)
+    await expect(player.load(bytes, 450)).rejects.toThrow('AUDIO_BUFFER_TOO_LARGE')
+    expect(context.decodeAudioData).toHaveBeenCalledOnce()
+    expect(player.snapshot()).toMatchObject({ status: 'empty', duration: 0 })
+    expect(await player.load(bytes, 8)).toBe(true)
     await player.dispose()
   })
 
