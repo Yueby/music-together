@@ -42,6 +42,6 @@
 | 6. 代码规范     | [coding-standards.md](architecture/coding-standards.md)             | 语言模块、路径别名、状态更新、错误处理                                            |
 | 7. UI 设计规范  | [ui-design.md](architecture/ui-design.md)                           | 组件库、颜色系统、动画、歌词、响应式                                              |
 | 8. 开发指南     | [dev-guide.md](architecture/dev-guide.md)                           | 快速启动、构建、添加组件、注意事项                                                |
-| 9. 部署方案     | [deployment.md](architecture/deployment.md)                         | Docker、CORS、Watchtower、1Panel                                                  |
+| 9. 部署方案     | [deployment.md](architecture/deployment.md)                         | Docker、房间快照、动态容量、Cloudflare（Tunnel / Cache Rules / Worker 插件）、CORS、Watchtower、1Panel |
 | 10. 微应用概览  | [mini-app.md](architecture/mini-app.md)                             | 微应用定位、SDK 版本与官方能力核查、早期 sandbox 验证结论                         |
 | 11. 微应用兼容  | [mini-app-compatibility.md](architecture/mini-app-compatibility.md) | SDK Socket.IO 传输、可信身份、同房业务复用、启用与部署、连接恢复边界              |

@@ -461,6 +461,7 @@ export function useHowl(onTrackEnd: () => void) {
     }
 
     const targetTime = getSeekTime()
+    if (howl.rate() !== 1) howl.rate(1)
     howl.seek(targetTime)
     const soundId = soundIdRef.current !== undefined ? howl.play(soundIdRef.current) : howl.play()
     soundIdRef.current = soundId

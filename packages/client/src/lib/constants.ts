@@ -11,8 +11,8 @@ export const CURRENT_TIME_THROTTLE_MS = 100
 export const SYNC_REQUEST_INTERVAL_MS = 15_000
 export const DRIFT_SAMPLE_INTERVAL_MS = 250
 export const DRIFT_SAMPLE_COUNT = 5
-export const WEB_AUDIO_SEEK_THRESHOLD_MS = 120
-export const WEB_AUDIO_MAX_RATE_ADJUSTMENT = 0.003
+export const WEB_AUDIO_SEEK_THRESHOLD_MS = 50
+export const WEB_AUDIO_MAX_RATE_ADJUSTMENT = 0.005
 export const AUDIO_LATENCY_MIN_MS = -300
 export const AUDIO_LATENCY_MAX_MS = 500
 
@@ -22,13 +22,11 @@ export const AUDIO_LATENCY_MAX_MS = 500
 export const DRIFT_SEEK_THRESHOLD_MS = 500
 
 /** Dead zone (ms) — below this drift we restore uninterrupted 1.0x audio.
- * Keep this small: soft rate correction is continuous and non-seeking, so it
- * must remain active for ordinary clock-rate drift instead of letting errors
- * accumulate toward the hard-seek threshold. */
-export const DRIFT_DEAD_ZONE_MS = 15
+ * Keep this below 10ms so soft rate correction holds steady-state drift within ±10ms. */
+export const DRIFT_DEAD_ZONE_MS = 8
 
 /** Proportional gain for drift correction: rate = 1 - clamp(drift * Kp) */
-export const DRIFT_RATE_KP = 0.25
+export const DRIFT_RATE_KP = 0.5
 
 /** Maximum rate adjustment magnitude (±2% cap — increased from 1% to
  *  allow faster soft convergence on high-latency connections, reducing
@@ -36,8 +34,8 @@ export const DRIFT_RATE_KP = 0.25
 export const MAX_RATE_ADJUSTMENT = 0.02
 
 /** EMA smoothing factor for drift measurements (0–1, higher = more responsive).
- *  Lowered from 0.3 to 0.2 for more noise suppression on high-latency links. */
-export const DRIFT_SMOOTH_ALPHA = 0.2
+ *  Samples already pass through a 5-point median filter before smoothing. */
+export const DRIFT_SMOOTH_ALPHA = 0.3
 
 /** Extra margin (ms) added to the estimated one-way delay when computing
  *  the adaptive hard-seek threshold. Final threshold = max(

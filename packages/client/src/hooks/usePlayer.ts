@@ -38,7 +38,7 @@ export function usePlayer() {
   // loaded by reconnect recovery — the subsequent PLAYER_PLAY from
   // syncPlaybackToSocket should be skipped to avoid a double-load.
   const recoveredTrackRef = useRef<Track | null>(null)
-  const preparedRef = useRef<{ track: Track; revision: number; ready: boolean; started: boolean } | null>(null)
+  const preparedRef = useRef<{ track: Track; revision: number; ready: boolean; started: boolean; startedAt: number } | null>(null)
 
   const next = useCallback(() => {
     if (canSendRoomCommand(socket)) socket.emit(EVENTS.PLAYER_NEXT)
@@ -73,6 +73,9 @@ export function usePlayer() {
       preparedRef.current = null
       cancelScheduledPlay()
       setDesiredPlayback(false)
+      if (usePlayerStore.getState().audioLoadPhase === 'waiting') {
+        usePlayerStore.getState().setAudioLoadState({ phase: 'idle' })
+      }
     }
     socket.on('disconnect', onDisconnect)
     return () => {
@@ -118,7 +121,7 @@ export function usePlayer() {
           revision <= (loadingRef.current?.revision ?? -1) ||
           revision <= (preparedRef.current?.revision ?? -1)) return
 
-      const prepare = { track, revision, ready: false, started: false }
+      const prepare = { track, revision, ready: false, started: false, startedAt: Date.now() }
       preparedRef.current = prepare
       recoveredTrackRef.current = null
       cancelScheduledPlay()
@@ -130,6 +133,14 @@ export function usePlayer() {
       const onLoadSettled = (failed: boolean) => {
         if (preparedRef.current !== prepare || prepare.ready || !canSendRoomCommand(socket)) return
         prepare.ready = true
+        if (!failed && !prepare.started) {
+          usePlayerStore.getState().setAudioLoadState({
+            phase: 'waiting',
+            progress: null,
+            loadedBytes: null,
+            startedAt: prepare.startedAt,
+          })
+        }
         socket.emit(EVENTS.PLAYER_READY, failed ? { trackId: track.id, revision, failed } : { trackId: track.id, revision })
       }
       if (!reuseTrackLoad(track, onLoadSettled)) {
@@ -179,11 +190,17 @@ export function usePlayer() {
         const executionTime = serverTimeToExecute || serverTimestamp
         const getSeekTime = () => getCompensatedScheduledPosition(currentTime, executionTime, track.duration, howlRef.current)
         if (reuseRecovered && howlRef.current?.playing()) {
+          if (usePlayerStore.getState().audioLoadPhase === 'waiting') {
+            usePlayerStore.getState().setAudioLoadState({ phase: 'idle' })
+          }
           setScheduledPlayback(getSeekTime)
         } else {
           scheduleStart(getSeekTime, executionTime)
         }
       } else {
+        if (usePlayerStore.getState().audioLoadPhase === 'waiting') {
+          usePlayerStore.getState().setAudioLoadState({ phase: 'idle' })
+        }
         setDesiredPlayback(false, () => currentTime)
         const sound = howlRef.current
         if (sound?.playing()) sound.pause(soundIdRef.current)

@@ -21,10 +21,10 @@ export interface PlaybackSound {
   unload(): unknown
 }
 
-export type AudioLoadPhase = 'idle' | 'buffering' | 'downloading' | 'decoding'
+export type AudioLoadPhase = 'idle' | 'buffering' | 'downloading' | 'decoding' | 'waiting'
 
 export interface AudioLoadProgress {
-  phase: Exclude<AudioLoadPhase, 'idle'>
+  phase: Exclude<AudioLoadPhase, 'idle' | 'waiting'>
   /** Normalized download progress (0–1) when total byte length is known. */
   progress?: number
   loadedBytes?: number

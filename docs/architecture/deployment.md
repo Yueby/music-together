@@ -110,31 +110,94 @@ MAPP_ALLOW_SANDBOX  可选，true 时同时接受沙箱通道令牌；默认只�
 
 四项全部不设置即关闭；只设置一部分或值非法时服务会拒绝启动。使用 `MAPP_JWKS_FILE` 时把公钥文件只读挂载进容器（如 `-v ./platform-jwks.json:/run/keys/platform-jwks.json:ro`）；不设置则从论坛 `/mini-app-api/jwks` 获取公钥。日志和代理不要记录带 `mini_app_token` 的完整 query。详见 [微应用兼容层](mini-app-compatibility.md)。
 
+### Cloudflare 代理与控制台配置（使用 Cloudflare 时）
+
+若站点挂载在 Cloudflare 橙云代理（Proxied）或 Cloudflare Tunnel（`cloudflared`）之后，无论是否部署下方可选的 Cloudflare Worker 插件，建议在 Cloudflare 控制台核对以下基础配置：
+
+#### 1. 接入拓扑、WebSockets 与 `TRUST_PROXY`
+
+- **Cloudflare Tunnel / 橙云代理**：推荐将 Tunnel 直接指向容器本机端口 `http://127.0.0.1:3001`（减少一层反代开销）。
+- **WebSockets**：在 Cloudflare Dashboard → 目标域名 → **Network（网络）** 中确认 **WebSockets** 保持开启（默认开启；Socket.IO 实时同步依赖此项）。
+- **源站 `TRUST_PROXY` 对齐**：
+  - Cloudflare Tunnel 直连 `127.0.0.1:3001`（1 层代理）：保持默认 `TRUST_PROXY=1`；
+  - Cloudflare 橙云（或 Tunnel）→ Nginx / openresty / Caddy → 容器（2 层代理）：设为 `TRUST_PROXY=2`；
+  - 核验方法：观察容器启动后 `Identity bootstrap issued` 日志中的 `ip` 字段应为访客真实出口 IP，若显示 `127.0.0.1` 则说明代理层数少算了一层。
+
+#### 2. Caching → Cache Rules（PWA 入口防 4 小时旧缓存）
+
+服务端已为 `/sw.js`、`/registerSW.js`、`/manifest.webmanifest` 设置 `Cache-Control: no-cache`（带 ETag），但 Cloudflare 默认按文件扩展名缓存 `.js` / `.webmanifest` 并覆写 **Browser Cache TTL 为 4 小时（`max-age=14400`）**，会导致发版后 PWA 客户端最长数小时无法拉取最新 Service Worker。
+
+建议在 Cloudflare Dashboard → 目标域名 → **Caching（缓存）→ Cache Rules** 中新增一条规则（将 `music.example.com` 替换为实际站点域名）：
+
+- **规则名称**：`Music Together PWA no-cache`
+- **匹配方式**：选择**自定义筛选表达式 → 编辑表达式**，填入：
+  ```text
+  (http.host eq "music.example.com" and http.request.uri.path in {"/sw.js" "/registerSW.js" "/manifest.webmanifest"})
+  ```
+- **缓存资格（Cache eligibility）**：选择 **绕过缓存（Bypass cache）**
+- **浏览器 TTL（Browser TTL）**：点击添加设置 → 选择 **接受源服务器 TTL（Respect origin）**
+
+部署后在本地执行验证：
+
+```bash
+curl -fsSI https://music.example.com/sw.js
+curl -fsSI https://music.example.com/registerSW.js
+curl -fsSI https://music.example.com/manifest.webmanifest
+```
+
+三项路径均应返回 `Cache-Control: no-cache`、`cf-cache-status: DYNAMIC` 且保留 `etag`（不再出现 `max-age=14400`）。同时 `/assets/*` 仍由源站下发 `public, max-age=31536000, immutable`，不受该规则影响，可继续享受 Cloudflare 边缘缓存。
+
 ### Cloudflare Worker 边缘加速插件（可选，`deploy/cf-worker/`）
 
 在「域名开启 Cloudflare 橙云 + Cloudflare Tunnel (`cloudflared`) 指向低配单容器 VPS」的部署拓扑下，可按需部署 `deploy/cf-worker/` 将高带宽/高频读请求卸载到 Cloudflare 边缘节点。不部署该插件时，主程序 100% 保持单容器零配置运行，Web 与微应用前端代码零改动。
 
 #### 模块与路由边界
 
-插件包含三个可独立开关的模块（`ENABLE_MAPP_AUDIO` / `ENABLE_COVER_PROXY` / `ENABLE_PUBLIC_METADATA_CACHE`），通过精确的 **Workers Routes** 挂载（**严禁挂 `/*` 通配路由，严禁使用 Custom Domain**，以免拦截 WebSocket/SPA 或触发同域 `fetch` 循环）：
+插件包含三个可独立开关的模块（`ENABLE_MAPP_AUDIO` / `ENABLE_COVER_PROXY` / `ENABLE_PUBLIC_METADATA_CACHE`，设为 `"false"` 或 `"0"` 可单模块透传源站），通过精确的 **Workers Routes** 挂载（**严禁挂 `/*` 通配路由，严禁使用 Custom Domain**，以免拦截 WebSocket/SPA 或触发同域 `fetch` 循环）：
 
 1. **微应用音频边缘中转（`/api/mapp/audio*`）**：Worker 原样携带 `Origin`/`Authorization` 附加 `X-MT-Relay: resolve-v1` 与 `X-MT-Relay-Secret` 回源完成 Discourse JWT 与房间权限校验并获取签名 CDN URL（不占用 VPS `StreamSlots`），再由 Worker 直连白名单音频 CDN，通过 workerd 原生 `FixedLengthStream` 零拷贝流式转发给微应用（8 秒仅限响应头超时，拿到响应头即释放定时器）。任意校验/拉取失败时取消上游流并携带 `X-MT-Relay: fallback-v1` 回退 VPS 直推（跳过二次 `mediaStreamRateLimit` 扣减，保留 `StreamSlots` 并发控制）。
 2. **全站封面代理与边缘缓存（`/api/music/cover-proxy*`）**：Web 封面直接走 `caches.default` 与共享白名单图床抓取（含网易云 `600y600` 尺寸限制、最多 3 跳 `https` 白名单重定向、光栅图片校验与 3 MiB 上限），同一 Worker 实例中对同一封面的并发冷请求共用一次图床读取，异常回退 VPS。配置 `ALLOWED_MAPP_ORIGIN` 后，匹配来源且带 `Authorization` 的微应用封面请求可以使用边缘缓存与图床，仍受 2 MiB 上限及 `Cache-Control: private, no-store, no-transform` 约束。未配置时，带 `Authorization` 的封面请求透传源站。
-3. **公开只读元数据边缘缓存**：仅缓存同源 Web 无 `Authorization` 的 `GET` 请求，精确路径为 `/api/music/ttml`、`/api/music/lyric`、`/api/music/discover/radar`、`/api/music/artist`、`/api/music/artist/songs`、`/api/music/artist/albums`、`/api/music/playlist` 和 `/api/music/search`。微应用认证 `GET` 和个人元数据路由继续回源。Worker 回源前剥离 `Cookie`，共享并发可缓存响应前移除 `Set-Cookie`、限流和 CORS 响应头。只有符合缓存策略的 `200` 响应会写入边缘缓存。同一 Worker 实例中的同键冷请求共用一次可缓存的回源读取。边缘缓存保留两倍 TTL，第一段 TTL 内返回 `HIT`，下一段返回 `STALE`，客户端最多缓存 30 秒，边缘后台合并同键刷新；刷新失败时保留旧条目直到边缘缓存过期。
+3. **公开只读元数据边缘缓存**：仅缓存同源 Web 无 `Authorization` 的 `GET` 请求，精确路径为 `/api/music/ttml`、`/api/music/lyric`、`/api/music/discover/radar`、`/api/music/artist`、`/api/music/artist/songs`、`/api/music/artist/albums`、`/api/music/playlist` 和 `/api/music/search`。微应用认证 `GET` 和个人元数据路由（如 `/api/music/playlist/mine`）继续回源。Worker 回源前剥离 `Cookie`，共享并发可缓存响应前移除 `Set-Cookie`、限流和 CORS 响应头。只有符合缓存策略的 `200` 响应会写入边缘缓存。同一 Worker 实例中的同键冷请求共用一次可缓存的回源读取。边缘缓存保留两倍 TTL，第一段 TTL 内返回 `HIT`，下一段返回 `STALE`，客户端最多缓存 30 秒，边缘后台合并同键刷新；刷新失败时保留旧条目直到边缘缓存过期。
 
 配置 `ALLOWED_MAPP_ORIGIN` 后，符合各路由 CORS 校验的微应用 `OPTIONS` 预检由边缘返回 `204`，覆盖音频、封面和上述公开元数据路径。其他预检原样回源。边缘和源站均为通过的微应用预检返回 `Access-Control-Max-Age: 86400`，单容器部署也可使用浏览器的预检缓存。
+
+完整挂载的 8 条精确 Workers Routes（均保留末尾 `*` 以匹配查询参数，具体以 `deploy/cf-worker/wrangler.toml` 为准）：
+
+| 路由模式（将域名替换为站点主机名） | 归属模块 | 备注 |
+| --- | --- | --- |
+| `music.example.com/api/mapp/audio*` | 微应用音频中转 | 携带 `resolve-v1` 回源验权后直连 CDN |
+| `music.example.com/api/music/cover-proxy*` | 全站封面缓存 | Web 3 MiB / 微应用 2 MiB，异常回源 |
+| `music.example.com/api/music/ttml*` | 公开元数据缓存 | 有歌词最长 6h，`lines: null` 10m |
+| `music.example.com/api/music/lyric*` | 公开元数据缓存 | TTL 30m |
+| `music.example.com/api/music/discover/radar*` | 公开元数据缓存 | TTL 10m |
+| `music.example.com/api/music/artist*` | 公开元数据缓存 | 覆盖 `/artist`、`/artist/songs`、`/artist/albums`，TTL 5m |
+| `music.example.com/api/music/playlist*` | 公开元数据缓存 | 精确路径匹配 `/playlist`（TTL 5m），`/playlist/mine` 自动透传源站 |
+| `music.example.com/api/music/search*` | 公开元数据缓存 | TTL 3m |
 
 #### 部署步骤
 
 1. **配置 VPS 环境变量**：生成高熵共享密钥（`openssl rand -base64 32`）写入容器 `MAPP_RELAY_SECRET`；可按需配置 `MAPP_RELAY_SOURCES`（默认 `netease,tencent,kugou`，设 `none` 或移除某音源即可零停机秒退 VPS 直推）。
-2. **调整 `deploy/cf-worker/wrangler.toml`**：将 `[[routes]]` 域名替换为实际站点域名，确认 `[observability] enabled = false`（防止签名链接与密钥进入 CF 日志）。启用微应用时可填写与源站相同的 `ALLOWED_MAPP_ORIGIN`（如 `https://linux.do`），以启用边缘预检、微应用封面边缘缓存，以及 `resolve-v1` 回源失败时 `503 MEDIA_RELAY_FAILED` 的 CORS 响应头。
+2. **调整 `deploy/cf-worker/wrangler.toml`**：
+   - 将全部 8 条 `[[routes]]` 的 `pattern` 与 `zone_name` 替换为实际站点域名与 Zone；
+   - 保持安全基线不变：`workers_dev = false`、`preview_urls = false`、`[observability] enabled = false`（防止 `.workers.dev` 绕过路由以及签名链接/密钥进入 Cloudflare 日志）；
+   - 启用微应用时，在 `[vars]` 中设置与源站 `MAPP_ISSUER` 一致的 `ALLOWED_MAPP_ORIGIN`（如 `"https://linux.do"`），以启用边缘 `OPTIONS` 预检、微应用封面边缘缓存，以及 `resolve-v1` 回源失败时合成 `503 MEDIA_RELAY_FAILED` 的 CORS 响应头。
 3. **写入密钥并部署 Worker**：
    ```bash
    cd deploy/cf-worker
    npx wrangler secret put MAPP_RELAY_SECRET
    npx wrangler deploy
    ```
-4. **开启全部路由的 Fail open**：在 Cloudflare Dashboard → **Workers Routes** 中，为每一条挂载的路由选择 **Failure mode: Fail open (proceed)**（该项由 Cloudflare 控制台/API 管理，无法直接写在 `wrangler.toml` 中），确保 Worker 触及配额或异常时自动放行回源。
+4. **开启全部路由的 Fail open（Dashboard 必做项）**：在 Cloudflare Dashboard → 目标域名 → **Workers Routes** 中，为上述全部 8 条路由逐一将 **Failure mode** 设为 **Fail open (proceed)**（对应 API 字段 `request_limit_fail_open: true`；该项由 Cloudflare 控制台/API 管理，无法写入 `wrangler.toml`，**每次增删或重建路由后都需重新核对**），确保 Worker 触及免费额度或异常时自动放行回源。
+
+#### 上线验收与应急回退
+
+- **公开元数据边缘缓存核验**：连续请求两次 `curl -fsSI "https://music.example.com/api/music/discover/radar"`，预期第二次响应带 `X-MT-Edge-Cache: HIT`（或后台刷新窗口内 `STALE`），且不包含 `Set-Cookie`。
+- **私有路由隔离核验**：请求 `/api/music/playlist/mine` 不应出现 `X-MT-Edge-Cache: HIT`。
+- **容器边缘感知态核验**：查看容器启动日志应包含 `edgeRelayEnabled: true`、`edgeRelayActive: true`、`mappWeight: 1`；`GET https://music.example.com/api/health` 中 `load.mappRoomLimit` 与 `load.effectiveCap` 对齐。
+- **应急回退**：
+  - 关闭单个模块：修改 `wrangler.toml` 中对应 `ENABLE_*` 为 `"false"` 后重新 `npx wrangler deploy`；
+  - 关闭指定音源中转：修改 VPS `MAPP_RELAY_SOURCES`（或设为 `none`）并重启容器即可回退 VPS 直推；
+  - 彻底下线插件：在 Cloudflare Dashboard → **Workers Routes** 移除全部路由即可恢复单容器直连。
 
 #### 启用后的动态容量与音质行为
 

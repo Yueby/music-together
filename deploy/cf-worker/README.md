@@ -23,6 +23,7 @@ Metadata TTLs are 3 minutes for search, 5 minutes for artist pages and public pl
    ~~~
 
 5. In the Cloudflare Dashboard, enable **Fail open (proceed)** on every Worker route. The API setting is `request_limit_fail_open`. Set it after route creation and verify it after changing routes. It is managed in the Dashboard or API, outside `wrangler.toml`.
+6. Also configure a Cloudflare **Cache Rule** for the PWA entry files (`/sw.js`, `/registerSW.js`, `/manifest.webmanifest`) with **Bypass cache** + **Browser TTL: Respect origin** so Cloudflare's default 4-hour Browser Cache TTL does not override the origin's `Cache-Control: no-cache`. See [docs/architecture/deployment.md](../../docs/architecture/deployment.md) for the exact filter expression and full Cloudflare setup checklist.
 
 Use Worker routes and keep the trailing `*` for query strings. The Worker checks the pathname, so `/api/music/playlist/mine` continues to the VPS. Never mount `/*` or use a Custom Domain. Worker observability is disabled. Keep credentials and signed media URLs out of logs.
 
