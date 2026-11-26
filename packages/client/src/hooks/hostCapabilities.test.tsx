@@ -22,7 +22,7 @@ const fixture = vi.hoisted(() => ({
     clipboard: false,
     externalLinks: false,
   },
-  socket: { id: 'fixture-socket', on: vi.fn(), off: vi.fn(), emit: vi.fn() },
+  socket: { id: 'fixture-socket', connected: true, on: vi.fn(), off: vi.fn(), emit: vi.fn() },
   getCookies: vi.fn(() => [{ platform: 'netease', cookie: 'fixture-only-cookie' }]),
   saveCookie: vi.fn(),
   removeCookie: vi.fn(),
