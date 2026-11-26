@@ -49,6 +49,7 @@ vi.mock('@/lib/storage', () => ({
   },
 }))
 vi.mock('@/lib/metadataFetch', () => ({ metadataFetch: fixture.metadata }))
+vi.mock('@/stores/chatStore', () => ({ useChatStore: { getState: () => ({ reset: vi.fn() }) } }))
 vi.mock('react-router', () => ({ useNavigate: () => fixture.navigate }))
 vi.mock('sonner', () => ({
   toast: { error: vi.fn(), warning: vi.fn(), success: vi.fn(), info: vi.fn(), loading: vi.fn() },

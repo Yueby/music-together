@@ -3,6 +3,8 @@ import { SERVER_URL } from '@/lib/config'
 import { storage } from '@/lib/storage'
 import { createContext, useContext, useEffect, useMemo, useRef, useState, type ReactNode } from 'react'
 import { toast } from 'sonner'
+import { EVENTS, type ServerRestartingEvent } from '@music-together/shared'
+import { reportServerVersion } from '@/stores/versionStore'
 
 interface SocketContextValue {
   socket: TypedSocket
@@ -36,6 +38,7 @@ export function SocketStateProvider({
 const DISCONNECT_TOAST_ID = 'socket-disconnect'
 const OVERLOAD_TOAST_ID = 'server-overloaded'
 const OVERLOAD_RETRY_MS = 5_000
+const RESTART_TOAST_ID = 'server-restarting'
 
 export function SocketProvider({ children }: { children: ReactNode }) {
   const socketRef = useRef<TypedSocket>(getSocket())
@@ -47,11 +50,16 @@ export function SocketProvider({ children }: { children: ReactNode }) {
     let cancelled = false
     let reauthenticating = false
     let overloadRetryTimer: ReturnType<typeof setTimeout> | undefined
+    let restartRetryTimer: ReturnType<typeof setTimeout> | undefined
+    let restartRetryAfter: number | undefined
 
     const onConnect = () => {
       clearTimeout(overloadRetryTimer)
+      clearTimeout(restartRetryTimer)
+      restartRetryAfter = undefined
       overloadRetryTimer = undefined
       toast.dismiss(OVERLOAD_TOAST_ID)
+      toast.dismiss(RESTART_TOAST_ID)
       setIsConnected(true)
       toast.dismiss(DISCONNECT_TOAST_ID)
       if (hasDisconnectedRef.current) {
@@ -59,13 +67,25 @@ export function SocketProvider({ children }: { children: ReactNode }) {
       }
     }
 
-    const onDisconnect = () => {
+    const onDisconnect = (reason: string) => {
       setIsConnected(false)
       hasDisconnectedRef.current = true
+      if (reason === 'io server disconnect') {
+        clearTimeout(restartRetryTimer)
+        restartRetryTimer = setTimeout(() => {
+          if (!cancelled && !socket.connected && !socket.active) socket.connect()
+        }, restartRetryAfter ?? 500)
+      }
+      if (restartRetryAfter !== undefined) return
       toast.warning('连接已断开，正在重连…', {
         id: DISCONNECT_TOAST_ID,
         duration: Infinity,
       })
+    }
+
+    const onRestarting = ({ retryAfterMs }: ServerRestartingEvent) => {
+      restartRetryAfter = Math.max(0, Math.min(retryAfterMs, 3000))
+      toast.info('服务正在更新，即将自动重连…', { id: RESTART_TOAST_ID })
     }
 
     const bootstrapIdentity = async (showError = true): Promise<boolean> => {
@@ -130,15 +150,20 @@ export function SocketProvider({ children }: { children: ReactNode }) {
     socket.on('connect', onConnect)
     socket.on('disconnect', onDisconnect)
     socket.on('connect_error', onConnectError)
+    socket.on(EVENTS.SERVER_HELLO, reportServerVersion)
+    socket.on(EVENTS.SERVER_RESTARTING, onRestarting)
     ensureIdentityAndConnect()
 
     return () => {
       cancelled = true
       clearTimeout(overloadRetryTimer)
+      clearTimeout(restartRetryTimer)
       toast.dismiss(OVERLOAD_TOAST_ID)
       socket.off('connect', onConnect)
       socket.off('disconnect', onDisconnect)
       socket.off('connect_error', onConnectError)
+      socket.off(EVENTS.SERVER_HELLO, reportServerVersion)
+      socket.off(EVENTS.SERVER_RESTARTING, onRestarting)
     }
   }, [])
 

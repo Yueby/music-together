@@ -344,17 +344,18 @@ describe('Mapp room session', () => {
     expect(fake.sent(EVENTS.ROOM_JOIN)).toHaveLength(2)
   })
 
-  it('reports expired tickets and waits for a manual request without retrying', () => {
+  it('rejoins a confirmed room after the 60s ticket expires', () => {
     ready()
     join()
     vi.advanceTimersByTime(60_001)
     reconnect()
-    expect(session.snapshot).toMatchObject({ status: 'ready', roomId: null, errorCode: 'REJOIN_TOKEN_EXPIRED' })
+    expect(session.snapshot).toMatchObject({ status: 'joining', roomId: 'room-a', errorCode: null })
+    expect(fake.sent(EVENTS.ROOM_JOIN).at(-1)).toEqual([EVENTS.ROOM_JOIN, { roomId: 'room-a', nickname }])
     fake.identity()
     fake.fire('connect')
-    reconnect('socket-3')
-    expect(fake.sent(EVENTS.ROOM_JOIN)).toHaveLength(1)
-    expect(session.joinRoom({ roomId: 'room-b', nickname })).toBe(true)
+    expect(fake.sent(EVENTS.ROOM_JOIN)).toHaveLength(2)
+    fake.server(EVENTS.ROOM_STATE, room())
+    expect(session.snapshot).toMatchObject({ status: 'joined', roomId: 'room-a', errorCode: null })
   })
 
   it('counts ticket lifetime from receipt, so a phone clock far ahead of the server still rejoins', () => {
@@ -379,8 +380,8 @@ describe('Mapp room session', () => {
     fake.server(EVENTS.ROOM_STATE, room())
     vi.advanceTimersByTime(60_001)
     reconnect()
-    expect(session.snapshot).toMatchObject({ status: 'ready', roomId: null, errorCode: 'REJOIN_TOKEN_EXPIRED' })
-    expect(fake.sent(EVENTS.ROOM_JOIN)).toHaveLength(1)
+    expect(session.snapshot).toMatchObject({ status: 'joining', roomId: 'room-a', errorCode: null })
+    expect(fake.sent(EVENTS.ROOM_JOIN).at(-1)).toEqual([EVENTS.ROOM_JOIN, { roomId: 'room-a', nickname }])
   })
 
   it('does not drop a longer server TTL early when the clock is accurate', () => {
@@ -411,18 +412,35 @@ describe('Mapp room session', () => {
     fake.server(EVENTS.ROOM_REJOIN_TOKEN, { ...ticket('room-a', Date.now() + 60_000), ttlMs: 30_000 })
     vi.advanceTimersByTime(31_000)
     reconnect()
-    expect(fake.sent(EVENTS.ROOM_JOIN)).toHaveLength(1)
-    expect(session.snapshot.errorCode).toBe('REJOIN_TOKEN_EXPIRED')
+    expect(fake.sent(EVENTS.ROOM_JOIN).at(-1)).toEqual([EVENTS.ROOM_JOIN, { roomId: 'room-a', nickname }])
+    expect(session.snapshot.errorCode).toBeNull()
   })
 
-  it('does not restore a confirmed room with no ticket or an unrelated ticket', () => {
+  it('asks to restore a confirmed room without a matching ticket', () => {
     ready()
     session.joinRoom({ roomId: 'room-a', nickname })
     fake.server(EVENTS.ROOM_STATE, room())
     fake.server(EVENTS.ROOM_REJOIN_TOKEN, ticket('other-room'))
     reconnect()
-    expect(fake.sent(EVENTS.ROOM_JOIN)).toHaveLength(1)
-    expect(session.snapshot.errorCode).toBe('REJOIN_TOKEN_MISSING')
+    expect(fake.sent(EVENTS.ROOM_JOIN)).toHaveLength(2)
+    expect(fake.sent(EVENTS.ROOM_JOIN).at(-1)).toEqual([EVENTS.ROOM_JOIN, { roomId: 'room-a', nickname }])
+    expect(session.snapshot.errorCode).toBeNull()
+  })
+
+  it('keeps the confirmed room and retries when the server is restarting', () => {
+    ready()
+    join()
+    reconnect()
+    fake.server(EVENTS.ROOM_ERROR, { code: 'SERVER_RESTARTING', message: 'Restarting' })
+    expect(session.snapshot).toMatchObject({ status: 'joining', roomId: 'room-a', errorCode: null })
+    vi.advanceTimersByTime(999)
+    expect(fake.sent(EVENTS.ROOM_JOIN)).toHaveLength(2)
+    vi.advanceTimersByTime(501)
+    expect(fake.sent(EVENTS.ROOM_JOIN)).toHaveLength(3)
+    fake.server(EVENTS.ROOM_STATE, room())
+    vi.advanceTimersByTime(1500)
+    expect(fake.sent(EVENTS.ROOM_JOIN)).toHaveLength(3)
+    expect(session.snapshot).toMatchObject({ status: 'joined', roomId: 'room-a', errorCode: null })
   })
 
   it('clears recovery on identity change even when the nickname remains the same', () => {
@@ -510,8 +528,9 @@ describe('Mapp room session', () => {
     fake.server(EVENTS.ROOM_STATE, room('room-b'))
     fake.server(EVENTS.ROOM_REJOIN_TOKEN, ticket('room-a'))
     reconnect()
-    expect(fake.sent(EVENTS.ROOM_JOIN)).toHaveLength(2)
-    expect(session.snapshot.errorCode).toBe('REJOIN_TOKEN_MISSING')
+    expect(fake.sent(EVENTS.ROOM_JOIN)).toHaveLength(3)
+    expect(fake.sent(EVENTS.ROOM_JOIN).at(-1)).toEqual([EVENTS.ROOM_JOIN, { roomId: 'room-b', nickname }])
+    expect(session.snapshot.errorCode).toBeNull()
   })
 
   it('never exposes credentials, room state, error messages, or mutable snapshots', () => {

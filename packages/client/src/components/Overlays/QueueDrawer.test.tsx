@@ -16,6 +16,7 @@ const dndState = vi.hoisted(() => ({
 
 const socketMock = vi.hoisted(() => ({
   id: 'socket-1',
+  connected: true,
   emit: vi.fn(),
   on: vi.fn(),
   off: vi.fn(),

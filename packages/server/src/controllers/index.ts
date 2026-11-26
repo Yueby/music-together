@@ -1,4 +1,5 @@
 import { EVENTS } from '@music-together/shared'
+import { getServerVersion } from '../config.js'
 import { executeQueuedAdmission, registerRoomController } from './roomController.js'
 import { registerPlayerController } from './playerController.js'
 import { registerQueueController } from './queueController.js'
@@ -23,6 +24,7 @@ export function initializeSocket(io: TypedServer) {
 
   io.on('connection', (socket) => {
     logger.info(`Client connected: ${socket.id}`, { socketId: socket.id })
+    socket.emit(EVENTS.SERVER_HELLO, getServerVersion())
 
     // 新连接默认加入 lobby 频道（首页房间列表推送）
     socket.join('lobby')

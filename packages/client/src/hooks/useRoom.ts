@@ -4,7 +4,9 @@ import { storage } from '@/lib/storage'
 import { roomCommands } from '@/lib/RoomCommands'
 import { EVENTS, type RoomSettingsUpdate } from '@music-together/shared'
 import { useCallback } from 'react'
-import { useRoomStore } from '@/stores/roomStore'
+import { canSendRoomCommand, useRoomStore } from '@/stores/roomStore'
+import { stopActiveAudio } from '@/lib/audioPlaybackLifecycle'
+import { cancelScheduledPlay } from '@/lib/scheduledPlayback'
 
 import { useRoomState } from './room/useRoomState'
 import { useChatSync } from './room/useChatSync'
@@ -30,20 +32,22 @@ export function useRoom() {
   const leaveRoom = useCallback(() => {
     const roomId = useRoomStore.getState().room?.id
     if (roomId) storage.clearRejoinToken(roomId)
+    cancelScheduledPlay()
+    stopActiveAudio()
     roomCommands.leave(socket)
     resetAllRoomState()
   }, [socket])
 
   const updateSettings = useCallback(
     (settings: RoomSettingsUpdate) => {
-      socket.emit(EVENTS.ROOM_SETTINGS, settings)
+      if (canSendRoomCommand(socket)) socket.emit(EVENTS.ROOM_SETTINGS, settings)
     },
     [socket],
   )
 
   const setUserRole = useCallback(
     (userId: string, role: 'admin' | 'member') => {
-      socket.emit(EVENTS.ROOM_SET_ROLE, { userId, role })
+      if (canSendRoomCommand(socket)) socket.emit(EVENTS.ROOM_SET_ROLE, { userId, role })
     },
     [socket],
   )

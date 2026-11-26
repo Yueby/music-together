@@ -1,5 +1,6 @@
 import { nanoid } from 'nanoid'
 import { config } from '../config.js'
+import { roomRepo } from '../repositories/roomRepository.js'
 import { registerRoomCleanup } from './roomCleanupRegistry.js'
 
 interface RejoinTicket {
@@ -66,7 +67,14 @@ export function consumeRejoinTicket(token: string, roomId: string, userId: strin
   return true
 }
 
-export function revokeRejoinTickets(roomId: string, userId: string): void {
+export function revokeRejoinTickets(roomId: string, userId?: string): void {
+  const room = roomRepo.get(roomId)
+  if (userId === undefined) {
+    room?.returningMembers?.clear()
+    cleanupRoomRejoinTickets(roomId)
+    return
+  }
+  room?.returningMembers?.delete(userId)
   const key = roomUserKey(roomId, userId)
   const set = roomUserIndex.get(key)
   if (!set) return

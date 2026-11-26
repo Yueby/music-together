@@ -107,13 +107,12 @@ export function createMappHost(options: MappHostOptions): MappHost {
     if (disposed) return
     if (snapshot.userId === null) storageBackend.removeItem('mt-userId')
     else storageBackend.setItem('mt-userId', snapshot.userId)
-    // Media belongs to one confirmed identity+room; unload it whenever that boundary moves.
+    // An outage preserves the confirmed room. Failed re-entry or a changed
+    // identity clears it in the room session.
     const boundaryChanged =
-      !snapshot.connected ||
-      snapshot.userId === null ||
       snapshot.roomId === null ||
-      previous?.userId !== snapshot.userId ||
-      previous?.roomId !== snapshot.roomId
+      previous?.roomId !== snapshot.roomId ||
+      (previous?.userId != null && snapshot.userId != null && previous.userId !== snapshot.userId)
     previous = snapshot
     if (boundaryChanged) unloadCurrent()
     options.onSessionChange?.(snapshot)

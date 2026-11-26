@@ -11,6 +11,8 @@ export function getSocket(): TypedSocket {
     socket = io(SERVER_URL, {
       autoConnect: false,
       withCredentials: true,
+      reconnectionDelay: 500,
+      reconnectionDelayMax: 3000,
     }) as TypedSocket
   }
   return socket

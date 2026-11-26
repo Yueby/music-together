@@ -15,6 +15,8 @@ import type {
   RoomState,
   ScheduledPlayState,
   ServerCapacityStatus,
+  ServerHelloEvent,
+  ServerRestartingEvent,
   Track,
   User,
   UserRole,
@@ -45,6 +47,8 @@ export interface ServerToClientEvents {
   [EVENTS.ROOM_ROLE_CHANGED]: (data: { userId: string; role: UserRole }) => void
 
   // Server capacity & admission queue
+  [EVENTS.SERVER_HELLO]: (data: ServerHelloEvent) => void
+  [EVENTS.SERVER_RESTARTING]: (data: ServerRestartingEvent) => void
   [EVENTS.SERVER_CAPACITY_UPDATE]: (status: ServerCapacityStatus) => void
   [EVENTS.ADMISSION_QUEUED]: (data: AdmissionQueuedEvent) => void
   [EVENTS.ADMISSION_CANCELLED]: (data: AdmissionCancelledEvent) => void

@@ -38,6 +38,11 @@ export interface RoomData {
   temporaryAdminUserId: string | null
   audioQuality: AudioQuality
   users: User[]
+  /** Identities allowed to return after a disconnect or restore. */
+  returningMembers?: Map<string, { nickname: string; expiresAt: number; departedAt: number }>
+  emptySince?: number | null
+  /** Restored playback is activated only after an identity joins. */
+  awaitingFirstJoin?: boolean
   queue: Track[]
   currentTrack: Track | null
   playState: PlayState

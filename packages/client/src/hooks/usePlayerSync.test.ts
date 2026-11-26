@@ -60,6 +60,7 @@ const audio = vi.hoisted(() => {
     }),
     socket: {
       id: 'test-socket',
+      connected: true,
       on: vi.fn((event: string, handler: (data: { playState: ScheduledPlayState }) => void) => {
         handlers.set(event, handler)
       }),

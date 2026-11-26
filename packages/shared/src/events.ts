@@ -20,6 +20,8 @@ export const EVENTS = {
   ROOM_LIST_UPDATE: 'room:list_update',
 
   // Server capacity & admission queue
+  SERVER_HELLO: 'server:hello',
+  SERVER_RESTARTING: 'server:restarting',
   SERVER_CAPACITY_GET: 'server:capacity_get',
   SERVER_CAPACITY_UPDATE: 'server:capacity_update',
   ADMISSION_QUEUED: 'admission:queued',

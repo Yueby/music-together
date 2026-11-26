@@ -73,6 +73,7 @@ function environment(
 afterEach(() => {
   vi.restoreAllMocks()
   vi.unstubAllGlobals()
+  vi.useRealTimers()
 })
 
 describe('MappAudioEngine thin WebAudioPlayer adapter', () => {
@@ -473,14 +474,17 @@ describe('MappAudioEngine thin WebAudioPlayer adapter', () => {
   })
 
   it('sanitizes transfer and decode failures, and does not play the prior track after a failed load', async () => {
+    vi.useFakeTimers()
     const f = environment()
     await f.engine.loadRoomTrack(input('first'))
     f.context.decodeAudioData.mockRejectedValueOnce(new Error('https://private.invalid/?token=secret'))
     expect(await f.engine.loadRoomTrack(input('second'))).toBe(false)
     expect(f.engine.snapshot()).toMatchObject({ trackId: null, loading: false, errorCode: 'AUDIO_DECODE_FAILED' })
     await expect(f.engine.play()).rejects.toMatchObject({ code: 'AUDIO_NOT_LOADED' })
-    f.request.mockRejectedValueOnce({ code: 'SENSITIVE_DETAIL', message: 'secret' })
-    expect(await f.engine.loadRoomTrack(input())).toBe(false)
+    f.request.mockRejectedValue({ code: 'SENSITIVE_DETAIL', message: 'secret' })
+    const failedLoad = f.engine.loadRoomTrack(input())
+    await vi.advanceTimersByTimeAsync(4_000)
+    await expect(failedLoad).resolves.toBe(false)
     expect(f.engine.snapshot().errorCode).toBe('REQUEST_FAILED')
     await f.engine.dispose()
   })
@@ -698,16 +702,18 @@ describe('MappAudioEngine preloading the announced next track', () => {
   })
 
   it('falls back to a normal read when the preload failed or is for another track', async () => {
+    vi.useFakeTimers()
     const f = environment()
-    f.request.mockRejectedValueOnce(new Error('network down'))
+    f.request.mockRejectedValueOnce(new Error('network down')).mockRejectedValueOnce(new Error('network down'))
     f.engine.preloadRoomTrack(preload('next'))
-    await vi.waitFor(() => expect(f.request).toHaveBeenCalledOnce())
-    expect(await f.engine.loadRoomTrack(input('next'))).toBe(true)
+    await vi.advanceTimersByTimeAsync(4_000)
     expect(f.request).toHaveBeenCalledTimes(2)
+    expect(await f.engine.loadRoomTrack(input('next'))).toBe(true)
+    expect(f.request).toHaveBeenCalledTimes(3)
 
     f.engine.preloadRoomTrack(preload('other'))
     expect(await f.engine.loadRoomTrack(input('different'))).toBe(true)
-    expect(f.request).toHaveBeenCalledTimes(4)
+    expect(f.request).toHaveBeenCalledTimes(5)
     await f.engine.dispose()
   })
 

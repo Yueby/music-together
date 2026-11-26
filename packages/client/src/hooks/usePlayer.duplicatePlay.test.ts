@@ -61,6 +61,7 @@ const audio = vi.hoisted(() => {
     }),
     socket: {
       id: 'test-socket',
+      connected: true,
       // Every listener is kept, as on a real socket: `usePlayer` and `usePlayerSync` both hear PLAYER_PLAY.
       on: vi.fn((event: string, handler: (data: unknown) => void) => {
         handlers.set(event, [...(handlers.get(event) ?? []), handler])
@@ -136,6 +137,7 @@ describe('a PLAYER_PLAY announcement delivered twice', () => {
     audio.instances.length = 0
     audio.handlers.clear()
     audio.socket.emit.mockClear()
+    audio.socket.connected = true
     audio.fetchLyric.mockClear()
     audio.unload.mockClear()
     usePlayerStore.getState().reset()
@@ -160,6 +162,80 @@ describe('a PLAYER_PLAY announcement delivered twice', () => {
 
     expect(audio.instances).toHaveLength(1)
     expect(audio.instances[0].play).toHaveBeenCalled()
+  })
+
+  it('keeps the playing sound through re-entry with the same track and URL', () => {
+    setRoom()
+    renderHook(() => usePlayer())
+    deliverPlay()
+    act(() => {
+      audio.instances[0].finishLoad()
+      vi.advanceTimersByTime(1100)
+      audio.socket.connected = false
+      useRoomStore.getState().setConnectionStatus('reconnecting')
+    })
+    deliver('disconnect', undefined)
+    const sound = audio.instances[0]
+    expect(sound.playing()).toBe(true)
+    sound.seek.mockClear()
+
+    const playState = {
+      isPlaying: true,
+      currentTime: 2,
+      serverTimestamp: 102_000,
+      serverTimeToExecute: 102_000,
+      revision: 1,
+    }
+    act(() => {
+      audio.socket.connected = true
+      useRoomStore.setState({ connectionStatus: 'connected', room: { ...useRoomStore.getState().room!, playState } })
+    })
+    deliver(EVENTS.PLAYER_PLAY, { track, playState })
+    act(() => vi.advanceTimersByTime(1000))
+    expect(audio.instances).toHaveLength(1)
+    expect(audio.unload).not.toHaveBeenCalled()
+    expect(sound.pause).not.toHaveBeenCalled()
+    expect(sound.play).toHaveBeenCalledOnce()
+    expect(sound.seek.mock.calls.every((args) => args.length === 0)).toBe(true)
+  })
+
+  it('does not emit an auto-next or player commands while the room is reconnecting', () => {
+    setRoom()
+    const player = renderHook(() => usePlayer())
+    deliverPlay()
+    act(() => {
+      audio.instances[0].finishLoad()
+      vi.advanceTimersByTime(1100)
+      useRoomStore.getState().setConnectionStatus('reconnecting')
+      audio.socket.emit.mockClear()
+      audio.instances[0].finishPlayback()
+      player.result.current.next()
+      player.result.current.pause()
+    })
+    expect(usePlayerStore.getState().isPlaying).toBe(false)
+    expect(audio.socket.emit).not.toHaveBeenCalled()
+  })
+
+  it('loads the authoritative track when it advanced during the outage', () => {
+    setRoom()
+    renderHook(() => usePlayer())
+    deliverPlay()
+    act(() => {
+      audio.instances[0].finishLoad()
+      vi.advanceTimersByTime(1100)
+      useRoomStore.getState().setConnectionStatus('reconnecting')
+    })
+    deliver('disconnect', undefined)
+    const nextTrack = { ...track, id: 'next-track', streamUrl: 'https://audio.example.test/next.mp3' }
+    const playState = { isPlaying: true, currentTime: 1, serverTimestamp: 101_100, revision: 2 }
+    act(() => useRoomStore.setState({
+      room: { ...useRoomStore.getState().room!, currentTrack: nextTrack, playState },
+      connectionStatus: 'connected',
+    }))
+    deliver(EVENTS.PLAYER_PLAY, { track: nextTrack, playState: { ...playState, serverTimeToExecute: 102_000 } })
+    expect(audio.instances).toHaveLength(2)
+    expect(audio.unload).toHaveBeenCalledOnce()
+    expect(usePlayerStore.getState().currentTrack?.id).toBe(nextTrack.id)
   })
 
   it('acknowledges a prepared track once and reuses it when PLAY arrives before loading finishes', () => {

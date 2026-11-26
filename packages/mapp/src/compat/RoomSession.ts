@@ -42,8 +42,6 @@ export type MappRoomSessionErrorCode =
   | 'CREATE_FAILED'
   | 'JOIN_FAILED'
   | 'REJOIN_FAILED'
-  | 'REJOIN_TOKEN_MISSING'
-  | 'REJOIN_TOKEN_EXPIRED'
   | 'IDENTITY_CHANGED'
   | null
 
@@ -127,6 +125,7 @@ export function createMappRoomSession(options: MappRoomSessionOptions): MappRoom
   let snapshot = IDLE
   let disposed = false
   let overloadRetryTimer: ReturnType<typeof setTimeout> | undefined
+  let restoreRetryTimer: ReturnType<typeof setTimeout> | undefined
   const clearOverloadRetry = () => {
     clearTimeout(overloadRetryTimer)
     overloadRetryTimer = undefined
@@ -153,10 +152,12 @@ export function createMappRoomSession(options: MappRoomSessionOptions): MappRoom
   function restingStatus(): MappRoomSessionStatus {
     if (!socket.connected) return 'disconnected'
     if (!identityReady) return 'awaiting_identity'
-    return snapshot.roomId ? 'joined' : 'ready'
+    return confirmed ? 'joined' : 'ready'
   }
 
   function clearRoom(): void {
+    clearTimeout(restoreRetryTimer)
+    restoreRetryTimer = undefined
     pending = undefined
     confirmed = undefined
     recovery = undefined
@@ -182,7 +183,7 @@ export function createMappRoomSession(options: MappRoomSessionOptions): MappRoom
       publish({ connected: socket.connected, status: restingStatus() })
       return
     }
-    if (!needsRestore || pending || !socket.id || attemptedRestoreSocketId === socket.id) {
+    if (!needsRestore || !confirmed || pending || !socket.id || attemptedRestoreSocketId === socket.id) {
       publish({
         connected: true,
         status: pending ? (pending.kind === 'create' ? 'creating' : 'joining') : restingStatus(),
@@ -193,16 +194,12 @@ export function createMappRoomSession(options: MappRoomSessionOptions): MappRoom
     }
     attemptedRestoreSocketId = socket.id
     needsRestore = false
-    if (!recovery || recovery.ticket.localExpiresAt <= Date.now()) {
-      const errorCode = recovery ? 'REJOIN_TOKEN_EXPIRED' : 'REJOIN_TOKEN_MISSING'
-      clearRoom()
-      publish({ connected: true, roomId: null, status: 'ready', errorCode })
-      return
-    }
-    const { roomId, nickname, ticket } = recovery
+    const { roomId, nickname } = confirmed
+    const ticket = recovery?.ticket
+    const credentials = ticket && ticket.localExpiresAt > Date.now() ? { rejoinToken: ticket.token } : {}
     pending = { kind: 'rejoin', roomId, nickname }
     publish({ connected: true, status: 'joining', errorCode: null })
-    if (!attempt(() => socket.emit(EVENTS.ROOM_JOIN, { roomId, nickname, rejoinToken: ticket.token }))) failRequest()
+    if (!attempt(() => socket.emit(EVENTS.ROOM_JOIN, { roomId, nickname, ...credentials }))) failRequest()
   }
 
   const onIdentity: ServerToClientEvents[typeof EVENTS.IDENTITY_READY] = ({ userId }) => {
@@ -216,11 +213,12 @@ export function createMappRoomSession(options: MappRoomSessionOptions): MappRoom
     reconcile()
   }
   const onDisconnect = (): void => {
-    needsRestore = needsRestore || snapshot.roomId !== null || recovery !== undefined
+    clearTimeout(restoreRetryTimer)
+    restoreRetryTimer = undefined
+    needsRestore = confirmed !== undefined
     pending = undefined // Never replay a create, password, or unconfirmed join.
-    confirmed = undefined
     identityReady = false
-    publish({ connected: false, userId: null, roomId: null, status: 'disconnected', errorCode: null })
+    publish({ connected: false, userId: null, status: 'disconnected', errorCode: null })
   }
   const onConnectError = (err?: Error): void => {
     identityReady = false
@@ -237,6 +235,8 @@ export function createMappRoomSession(options: MappRoomSessionOptions): MappRoom
   }
   const onState: ServerToClientEvents[typeof EVENTS.ROOM_STATE] = (room) => {
     if (!ready() || !pending?.roomId || room.id !== pending.roomId) return
+    clearTimeout(restoreRetryTimer)
+    restoreRetryTimer = undefined
     confirmed = { roomId: room.id, nickname: pending.nickname }
     recovery =
       pending.ticket && pending.ticket.localExpiresAt > Date.now()
@@ -260,6 +260,17 @@ export function createMappRoomSession(options: MappRoomSessionOptions): MappRoom
     if (confirmed?.roomId === data.roomId) recovery = { ...confirmed, ticket }
   }
   const onRoomError: ServerToClientEvents[typeof EVENTS.ROOM_ERROR] = ({ code }) => {
+    if (code === ERROR_CODE.SERVER_RESTARTING && pending?.kind === 'rejoin') {
+      if (restoreRetryTimer !== undefined) return
+      restoreRetryTimer = setTimeout(() => {
+        restoreRetryTimer = undefined
+        pending = undefined
+        needsRestore = true
+        attemptedRestoreSocketId = undefined
+        reconcile()
+      }, 1000 + Math.floor(Math.random() * 500))
+      return
+    }
     // The server reuses ROOM_ERROR for in-room actions (queue, chat, voting, roles). A late one from the room we
     // just left says nothing about the create/join in flight, so only errors that can belong to it end it.
     if (pending && !IN_ROOM_ACTION_ERRORS.has(code)) failRequest()

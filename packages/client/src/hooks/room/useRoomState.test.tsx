@@ -2,14 +2,18 @@
 import { act } from 'react'
 import { createRoot } from 'react-dom/client'
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
-import { EVENTS, type RoomState } from '@music-together/shared'
+import { ERROR_CODE, EVENTS, type RoomState } from '@music-together/shared'
 import { authAutoResend } from '@/lib/authAutoResend'
+import { registerActivePlaybackStop } from '@/lib/audioPlaybackLifecycle'
+import { registerPendingPlayCancel } from '@/lib/scheduledPlayback'
+import { usePlayerStore } from '@/stores/playerStore'
 import { useRoomStore } from '@/stores/roomStore'
 import { useAuthSync } from './useAuthSync'
 import { useRoomState } from './useRoomState'
+import { OFFLINE_RESET_TIMEOUT_MS, useConnectionGuard } from './useConnectionGuard'
 
 const fixture = vi.hoisted(() => ({
-  socket: { id: 'fixture-socket', on: vi.fn(), off: vi.fn(), emit: vi.fn() },
+  socket: { id: 'fixture-socket', connected: false, on: vi.fn(), off: vi.fn(), emit: vi.fn() },
   cookies: [
     { platform: 'netease', cookie: 'fixture-netease' },
     { platform: 'tencent', cookie: 'fixture-tencent' },
@@ -25,11 +29,14 @@ vi.mock('@/lib/storage', () => ({
   storage: {
     getUserId: () => 'fixture-user',
     getVolume: () => 0.8,
+    getAudioLatencyOffsetMs: () => null,
     getAuthCookies: () => fixture.cookies,
     upsertAuthCookie: vi.fn(),
     setRejoinToken: vi.fn(),
+    clearRejoinToken: vi.fn(),
   },
 }))
+vi.mock('@/stores/chatStore', () => ({ useChatStore: { getState: () => ({ reset: vi.fn() }) } }))
 vi.mock('react-router', () => ({ useNavigate: () => fixture.navigate }))
 vi.mock('sonner', () => ({ toast: fixture.toast }))
 
@@ -54,6 +61,8 @@ describe('automatic cookie restore on ROOM_STATE', () => {
   let container: HTMLDivElement
   let root: ReturnType<typeof createRoot>
   let listeners: Map<string, Set<(...args: unknown[]) => void>>
+  let unregisterStop: () => void
+  const stopAudio = vi.fn()
 
   const cookieEmits = () => fixture.socket.emit.mock.calls.filter(([event]) => event === EVENTS.AUTH_SET_COOKIE)
   async function fire(event: string, ...args: unknown[]) {
@@ -75,11 +84,14 @@ describe('automatic cookie restore on ROOM_STATE', () => {
     )
     vi.stubGlobal('IS_REACT_ACT_ENVIRONMENT', true)
     useRoomStore.getState().reset()
+    usePlayerStore.getState().reset()
+    unregisterStop = registerActivePlaybackStop(stopAudio)
     container = document.createElement('div')
     root = createRoot(container)
     function Harness() {
       useAuthSync()
       useRoomState()
+      useConnectionGuard()
       return null
     }
     await act(async () => root.render(<Harness />))
@@ -87,6 +99,8 @@ describe('automatic cookie restore on ROOM_STATE', () => {
 
   afterEach(async () => {
     await act(async () => root.unmount())
+    unregisterStop()
+    vi.useRealTimers()
     vi.unstubAllGlobals()
   })
 
@@ -107,14 +121,60 @@ describe('automatic cookie restore on ROOM_STATE', () => {
     await fire(EVENTS.ROOM_STATE, room())
     expect(cookieEmits()).toHaveLength(2)
 
-    // The connection guard clears the room on disconnect; the rejoin ROOM_STATE then re-enters it.
     await fire('disconnect')
-    useRoomStore.getState().reset()
+    expect(useRoomStore.getState()).toMatchObject({ connectionStatus: 'reconnecting', room: { id: 'ABC123' } })
     await fire(EVENTS.ROOM_STATE, room())
+    expect(useRoomStore.getState().connectionStatus).toBe('connected')
     expect(cookieEmits()).toHaveLength(4)
 
     await fire(EVENTS.ROOM_STATE, room({ id: 'OTHER1' }))
     expect(cookieEmits()).toHaveLength(6)
+  })
+
+  it('keeps audio playing during the outage and stops it after 60 seconds without room confirmation', async () => {
+    vi.useFakeTimers()
+    await fire(EVENTS.ROOM_STATE, room())
+    usePlayerStore.getState().setIsPlaying(true)
+    const cancelPlay = vi.fn()
+    const unregister = registerPendingPlayCancel(cancelPlay)
+    try {
+      await fire('disconnect')
+      expect(cancelPlay).toHaveBeenCalledOnce()
+      act(() => vi.advanceTimersByTime(59_999))
+      expect(usePlayerStore.getState().isPlaying).toBe(true)
+      expect(stopAudio).not.toHaveBeenCalled()
+      act(() => vi.advanceTimersByTime(1))
+      expect(stopAudio).toHaveBeenCalledOnce()
+      expect(usePlayerStore.getState().isPlaying).toBe(false)
+      expect(useRoomStore.getState().room).toBeNull()
+    } finally {
+      unregister()
+    }
+  })
+
+  it('clears the offline reset timer when the same room confirms re-entry', async () => {
+    vi.useFakeTimers()
+    await fire(EVENTS.ROOM_STATE, room())
+    await fire('disconnect')
+    await fire(EVENTS.ROOM_STATE, room())
+    act(() => vi.advanceTimersByTime(OFFLINE_RESET_TIMEOUT_MS))
+    expect(stopAudio).not.toHaveBeenCalled()
+    expect(useRoomStore.getState()).toMatchObject({ connectionStatus: 'connected', room: { id: 'ABC123' } })
+  })
+
+  it.each([
+    [ERROR_CODE.ROOM_NOT_FOUND, '服务已更新，房间未能恢复'],
+    [ERROR_CODE.JOIN_FAILED, 'Could not restore room'],
+  ])('stops audio, resets the room, and returns home on %s during reconnect', async (code, message) => {
+    await fire(EVENTS.ROOM_STATE, room())
+    usePlayerStore.getState().setIsPlaying(true)
+    await fire('disconnect')
+    await fire(EVENTS.ROOM_ERROR, { code, message: 'Could not restore room' })
+    expect(stopAudio).toHaveBeenCalledOnce()
+    expect(usePlayerStore.getState().isPlaying).toBe(false)
+    expect(useRoomStore.getState().room).toBeNull()
+    expect(fixture.toast.error).toHaveBeenCalledWith(message)
+    expect(fixture.navigate).toHaveBeenCalledWith('/', { replace: true })
   })
 
   it('keeps the silent-restore bookkeeping intact across broadcasts so a later manual login still toasts', async () => {

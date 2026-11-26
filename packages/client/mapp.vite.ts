@@ -30,6 +30,7 @@ export function createMappClientConfig(roomUrl: string | undefined, version: str
       __MAPP_ROOM_ENDPOINT__: JSON.stringify(target.endpoint),
       __MAPP_ROOM_URL__: JSON.stringify(target.roomUrl),
       __APP_VERSION__: JSON.stringify(version),
+      __BUILD_ID__: JSON.stringify(process.env.BUILD_ID?.trim() || 'dev'),
       'process.env.NODE_ENV': JSON.stringify('production'),
       'import.meta.env.VITE_SERVER_URL': JSON.stringify(target.serverOrigin),
     },

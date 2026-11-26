@@ -5,6 +5,8 @@ import { renderToString } from 'react-dom/server'
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import { SocketProvider, SocketStateProvider, useSocketContext } from './SocketProvider'
 import type { TypedSocket } from '@/lib/socket'
+import { EVENTS, PROTOCOL_VERSION } from '@music-together/shared'
+import { useVersionStore } from '@/stores/versionStore'
 
 const getSocketMock = vi.hoisted(() => vi.fn())
 
@@ -18,6 +20,7 @@ vi.mock('sonner', () => ({
     success: vi.fn(),
     warning: vi.fn(),
     error: vi.fn(),
+    info: vi.fn(),
   },
 }))
 
@@ -70,6 +73,8 @@ describe('SocketProvider and SocketStateProvider', () => {
       container = null
     }
     vi.unstubAllGlobals()
+    vi.useRealTimers()
+    useVersionStore.setState({ hasUpdate: false, breakingUpdate: false })
   })
 
   describe('SocketStateProvider (pure provider)', () => {
@@ -116,7 +121,7 @@ describe('SocketProvider and SocketStateProvider', () => {
   })
 
   describe('SocketProvider (Web regression)', () => {
-    it('executes bootstrap POST with credentials include, connects on success, and unmounts 3 listeners', async () => {
+    it('executes bootstrap POST with credentials include, connects on success, and unregisters listeners', async () => {
       const mockSocket = createMockSocket()
       getSocketMock.mockReturnValue(mockSocket)
 
@@ -161,7 +166,6 @@ describe('SocketProvider and SocketStateProvider', () => {
       })
       expect(capturedContext!.isConnected).toBe(false)
 
-      // Unmount and verify 3 listeners off called
       await act(async () => {
         root!.unmount()
         root = null
@@ -173,6 +177,47 @@ describe('SocketProvider and SocketStateProvider', () => {
       expect(mockSocket.listenerCount('connect')).toBe(0)
       expect(mockSocket.listenerCount('disconnect')).toBe(0)
       expect(mockSocket.listenerCount('connect_error')).toBe(0)
+      expect(mockSocket.listenerCount(EVENTS.SERVER_HELLO)).toBe(0)
+      expect(mockSocket.listenerCount(EVENTS.SERVER_RESTARTING)).toBe(0)
+    })
+
+    it('checks the server build on every handshake, including reconnect', async () => {
+      const mockSocket = createMockSocket()
+      getSocketMock.mockReturnValue(mockSocket)
+      vi.stubGlobal('fetch', vi.fn(async () => ({ ok: true, headers: new Headers() })))
+      vi.stubGlobal('__APP_VERSION__', '1.0.1')
+      vi.stubGlobal('__BUILD_ID__', 'first-build')
+      await act(async () => root!.render(<SocketProvider><div /></SocketProvider>))
+      const hello = { version: '1.0.1', buildId: 'first-build', protocol: PROTOCOL_VERSION }
+      await act(async () => {
+        mockSocket.emitEvent('connect')
+        mockSocket.emitEvent(EVENTS.SERVER_HELLO, hello)
+      })
+      expect(useVersionStore.getState().hasUpdate).toBe(false)
+
+      await act(async () => {
+        mockSocket.emitEvent('disconnect', 'transport close')
+        mockSocket.emitEvent('connect')
+        mockSocket.emitEvent(EVENTS.SERVER_HELLO, { ...hello, buildId: 'second-build' })
+      })
+      expect(useVersionStore.getState()).toEqual({ hasUpdate: true, breakingUpdate: false })
+    })
+
+    it('reconnects after a server-initiated disconnect using the restart advisory', async () => {
+      vi.useFakeTimers()
+      const mockSocket = createMockSocket()
+      getSocketMock.mockReturnValue(mockSocket)
+      vi.stubGlobal('fetch', vi.fn(async () => ({ ok: true, headers: new Headers() })))
+      await act(async () => root!.render(<SocketProvider><div /></SocketProvider>))
+      mockSocket.connect.mockClear()
+      await act(async () => {
+        mockSocket.emitEvent(EVENTS.SERVER_RESTARTING, { retryAfterMs: 1000 })
+        mockSocket.emitEvent('disconnect', 'io server disconnect')
+      })
+      vi.advanceTimersByTime(999)
+      expect(mockSocket.connect).not.toHaveBeenCalled()
+      vi.advanceTimersByTime(1)
+      expect(mockSocket.connect).toHaveBeenCalledOnce()
     })
 
     it('does not connect if bootstrap fails', async () => {

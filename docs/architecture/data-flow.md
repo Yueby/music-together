@@ -50,6 +50,7 @@ graph TB
 | **Playlist** | `playlist:get_my`                                                                                                                   | `playlist:my_list`                                                                                                                                              |
 | **NTP**      | `ntp:ping`                                                                                                                          | `ntp:pong`                                                                                                                                                      |
 | **Capacity** | `server:capacity_get` | `server:capacity_update` |
+| **Server** | | `server:hello`, `server:restarting` |
 | **Admission** | `admission:cancel` | `admission:queued`, `admission:cancelled` |
 
 客户端发送 `server:capacity_get` 获取 `ServerCapacityStatus`，服务端也通过 `server:capacity_update` 广播容量变化。需要等候的创建或加入请求会收到 `admission:queued`，其中包含位次、队列人数、操作、原因和容量快照。准入后服务端继续发送标准房间事件。用户可发送 `admission:cancel` 退出队列，服务端通过 `admission:cancelled` 提供取消原因及可选提示。
@@ -61,6 +62,8 @@ graph TB
 建房请求受 `create_restricted` 阻塞时，队列保留原有对外原因，同时停止将该请求计入通用容量等候者。启用连接上限时，新的平台握手达到上限即在 JWT 验证前收到 HTTP 503。微应用收到 Socket.IO 的 `SERVER_OVERLOADED` 后在 5 至 8 秒内随机延时重连，保留已确认房间的恢复状态。
 
 平台接入另外定义服务端事件 `identity:ready({ userId })`：仅在显式启用的平台身份适配成功连接后发送，用于确认服务器映射的身份，不含 Cookie、JWT 或房间票据。默认网页 Cookie 路径与现有启动入口保持原样，不会自动启用平台身份。平台入口的事件白名单排除音乐凭据／个人歌单操作，具体房间权限仍由原控制器裁决。实现与启用边界见 [微应用兼容层](mini-app-compatibility.md)。
+
+每次 Socket.IO 连接都会收到 `server:hello`，数据与 `GET /api/version` 一致，包含 `version`、`buildId` 和 `protocol`。关停时先拒绝新的建房及入房请求（`room:error` 的代码为 `SERVER_RESTARTING`），保存快照后广播 `server:restarting { retryAfterMs: 1000 }`，再关闭连接。关停期间的断开只清理 Socket 映射，房间成员和聊天记录保持在保存时的状态。
 
 搜索和歌词另外提供仅在配置 `MAPP_*` 环境变量后才挂载的 `platformMetadata` 路由：复用原匿名 metadata controller；有显式平台认证标记时按受控 JWT 验证，普通 Web Cookie 请求继续原链。只读 target/query 合同位于 shared `mappMetadata.ts`，未开放歌单详情、账号、任意图片地址；TTML 只能按 `source` + `id` 由服务端取固定库，客户端不能指定地址。该路径与媒体读取、宿主装配的状态见 [微应用兼容层](mini-app-compatibility.md)。
 
@@ -207,6 +210,13 @@ interface ChatMessage {
 - 任意在线成员都可在曲目结束时发送 `player:next { auto: true, trackId, revision }`。服务端要求当前已提交状态为播放中且曲目和 revision 一致。时长已知时，预期播放位置必须落在曲末 5 秒内。手动切歌继续使用原有权限和限流
 - 提交播放、恢复、播放态定位或刷新链接后的播放时，服务端按剩余时长加 5 秒设置兜底定时器。触发时再次校验房间对象、曲目、revision、播放状态以及待准备和待执行动作，然后进入正常下一首流程。控制动作和房间清理取消旧定时器。该机制覆盖房主断线和客户端未上报结束的情况
 
+### 重连与重启恢复
+
+- 某身份的最后一个 Socket 意外断开后，房间记录该身份并允许其在 60 秒内免密码返回。主动离开、降级或房间密码变更会撤销相应的重入资格。重入仍兼容 `room:rejoin_token`，成功返回不会重复发送入房消息。
+- 加密快照保存房间设置（含密码）、持久角色、队列、播放时间线、在线身份、仍可重入的离线身份，以及最近 200 条聊天。当前和下一首可保留播放链接；音乐账号 Cookie、身份凭据、重入票据和 Socket 运行状态均留在内存。
+- 启动在接受连接前恢复房间。房间初始为空，原成员默认有 120 秒免密码返回，超时仍为空则删除房间。停机间隔默认不超过 120 秒时，播放时钟继续按墙钟推进；超过时暂停在快照保存时的位置。
+- 首位成员入房时才恢复曲末兜底定时器，已播完则立即切到下一首。当前播放链接过期时，等待对应音源的 `auth:set_cookie` 将 Cookie 加入房间账号池，最长等待 2 秒后再解析链接。配置见 [部署方案](deployment.md)。
+
 ## 播放模式
 
 房间支持 4 种播放模式（`PlayMode`），由 `room.playMode` 字段控制，默认 `loop-all`：
@@ -334,6 +344,7 @@ interface ChatMessage {
 | `/api/music/playlist/mine`  | GET  | 获取**自己的**歌单曲目（同上参数，另需 `roomId`）：服务端用验证过的身份（网页 Cookie 或平台令牌）加该房间账号池里自己的登录读取，可含私有曲目；非房间成员 403、未认证 401，响应 `private, no-store`                                                                                                                                                                                                                                                                                                            |
 | `/api/rooms/:roomId/check`  | GET  | 房间预检。存在时返回 `exists`、`hasPassword`、`name`、`userCount` 和 `capacity`（`ServerCapacityStatus`），用于分享链接直接访问时的前置校验。房间不存在时返回 404 与 `{ exists: false }`。 |
 | `/api/health`               | GET  | 健康检查，返回 `status`、`timestamp` 和 `load` 容量摘要。 |
+| `/api/version`              | GET  | 返回 `version`、`buildId` 和 `protocol`。 |
 | `/api/mapp/audio`           | GET  | 可选平台 JWT 房间音频响应，query 为 `roomId`、`trackId`；仅配置 `MAPP_*` 环境变量后挂载，默认关闭                                                                                                                                                                                                                                                                                                                                                                                                              |
 | `/api/music/cover-proxy`    | GET  | 带平台 Authorization 时验签后返回封面图片字节（query 仅 `url`，≤ 2MiB）；无 Authorization 的普通请求仍走 Web 封面代理                                                                                                                                                                                                                                                                                                                                                                                          |
 

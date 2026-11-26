@@ -1,11 +1,12 @@
 import { getServerTime, isCalibrated } from '@/lib/clockSync'
 import { PLAYER_PLAY_DEDUP_MS } from '@/lib/constants'
 import { lyricPlayerBridge } from '@/lib/lyricPlayerBridge'
+import { setHowlPosition } from '@/lib/howlPosition'
 import { getCompensatedScheduledPosition } from '@/lib/playbackSync'
 import { cancelScheduledPlay, registerPendingPlayCancel } from '@/lib/scheduledPlayback'
 import { useSocketContext } from '@/providers/SocketProvider'
 import { usePlayerStore } from '@/stores/playerStore'
-import { useRoomStore } from '@/stores/roomStore'
+import { canSendRoomCommand, useRoomStore } from '@/stores/roomStore'
 import type { ServerToClientEvents, Track } from '@music-together/shared'
 import { EVENTS } from '@music-together/shared'
 import { useCallback, useEffect, useRef } from 'react'
@@ -28,6 +29,7 @@ export function usePlayer() {
   const { socket } = useSocketContext()
   const loadingRef = useRef<{
     trackId: string
+    streamUrl: Track['streamUrl']
     revision: number
     ts: number
     serverTimestamp: number
@@ -38,10 +40,13 @@ export function usePlayer() {
   const recoveredTrackRef = useRef<Track | null>(null)
   const preparedRef = useRef<{ track: Track; revision: number; ready: boolean; started: boolean } | null>(null)
 
-  const next = useCallback(() => socket.emit(EVENTS.PLAYER_NEXT), [socket])
+  const next = useCallback(() => {
+    if (canSendRoomCommand(socket)) socket.emit(EVENTS.PLAYER_NEXT)
+  }, [socket])
 
   // The server arbitrates concurrent completion reports by track and revision.
   const autoNext = useCallback(() => {
+    if (!canSendRoomCommand(socket)) return
     const { room } = useRoomStore.getState()
     const trackId = usePlayerStore.getState().currentTrack?.id
     if (!room?.playState.isPlaying || !trackId || trackId !== room.currentTrack?.id) return
@@ -67,12 +72,13 @@ export function usePlayer() {
       recoveredTrackRef.current = null
       preparedRef.current = null
       cancelScheduledPlay()
+      setDesiredPlayback(false)
     }
     socket.on('disconnect', onDisconnect)
     return () => {
       socket.off('disconnect', onDisconnect)
     }
-  }, [socket])
+  }, [socket, setDesiredPlayback])
 
   // Listen for PLAYER_PLAY events (new track load)
   const playTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null)
@@ -122,7 +128,7 @@ export function usePlayer() {
         serverTimeToExecute: undefined,
       })
       const onLoadSettled = (failed: boolean) => {
-        if (preparedRef.current !== prepare || prepare.ready) return
+        if (preparedRef.current !== prepare || prepare.ready || !canSendRoomCommand(socket)) return
         prepare.ready = true
         socket.emit(EVENTS.PLAYER_READY, failed ? { trackId: track.id, revision, failed } : { trackId: track.id, revision })
       }
@@ -137,13 +143,15 @@ export function usePlayer() {
       if (playState.revision < Math.max(currentRevision, pendingRevisionRef.current, preparedRef.current?.revision ?? -1)) return
       const now = Date.now()
       if (loadingRef.current?.trackId === track.id &&
+          loadingRef.current.streamUrl === track.streamUrl &&
           loadingRef.current.revision === playState.revision &&
           loadingRef.current.serverTimestamp === playState.serverTimestamp &&
           (howlRef.current || now - loadingRef.current.ts < PLAYER_PLAY_DEDUP_MS)) return
 
       const prepare = preparedRef.current
       const reusePrepared = prepare && !prepare.started && sameSound(prepare.track, track)
-      const reuse = reusePrepared || sameSound(recoveredTrackRef.current, track)
+      const reuseRecovered = sameSound(recoveredTrackRef.current, track)
+      const reuse = reusePrepared || reuseRecovered
       recoveredTrackRef.current = null
       // Keep the ready callback alive if this announcement starts the prepared sound.
       if (reusePrepared) prepare.started = true
@@ -151,6 +159,7 @@ export function usePlayer() {
 
       loadingRef.current = {
         trackId: track.id,
+        streamUrl: track.streamUrl,
         revision: playState.revision,
         ts: now,
         serverTimestamp: playState.serverTimestamp,
@@ -168,13 +177,20 @@ export function usePlayer() {
       }
       if (isPlaying) {
         const executionTime = serverTimeToExecute || serverTimestamp
-        scheduleStart(
-          () => getCompensatedScheduledPosition(currentTime, executionTime, track.duration, howlRef.current),
-          executionTime,
-        )
+        const getSeekTime = () => getCompensatedScheduledPosition(currentTime, executionTime, track.duration, howlRef.current)
+        if (reuseRecovered && howlRef.current?.playing()) {
+          setScheduledPlayback(getSeekTime)
+        } else {
+          scheduleStart(getSeekTime, executionTime)
+        }
       } else {
         setDesiredPlayback(false, () => currentTime)
-        if (howlRef.current?.playing()) howlRef.current.pause(soundIdRef.current)
+        const sound = howlRef.current
+        if (sound?.playing()) sound.pause(soundIdRef.current)
+        if (reuseRecovered && sound?.state() === 'loaded') {
+          setHowlPosition(sound, currentTime, soundIdRef.current)
+          usePlayerStore.getState().setCurrentTime(currentTime)
+        }
       }
     }
 
@@ -196,7 +212,7 @@ export function usePlayer() {
       clearTimeout(playTimerRef.current ?? undefined)
       playTimerRef.current = null
     }
-  }, [socket, loadTrack, reuseTrackLoad, preloadTrack, fetchLyric, howlRef, soundIdRef, pendingRevisionRef, setDesiredPlayback, scheduleStart])
+  }, [socket, loadTrack, reuseTrackLoad, preloadTrack, fetchLyric, howlRef, soundIdRef, pendingRevisionRef, setDesiredPlayback, setScheduledPlayback, scheduleStart])
 
   // Recovery: auto-sync player state from room state when desync is detected
   // (e.g. after HMR resets stores, or PLAYER_PLAY arrived before this route's
@@ -205,20 +221,47 @@ export function usePlayer() {
   useEffect(() => {
     let recoveredKey: string | null = null
 
-    const recover = () => {
-      const { room } = useRoomStore.getState()
+    const recover = (rejoined = false) => {
+      const { room, connectionStatus } = useRoomStore.getState()
 
-      // When room becomes null (disconnect), reset recovery generation.
+      // When the room is left, reset the recovery generation.
       if (!room) {
+        recoveredKey = null
+        return
+      }
+      if (connectionStatus === 'reconnecting') {
         recoveredKey = null
         return
       }
 
       const playerTrack = usePlayerStore.getState().currentTrack
       const roomTrack = room.currentTrack
-      const recoveryKey = roomTrack ? `${roomTrack.id}:${room.playState.revision}` : `empty:${room.playState.revision}`
+      const recoveryKey = roomTrack
+        ? `${roomTrack.id}:${roomTrack.streamUrl ?? ''}:${room.playState.revision}`
+        : `empty:${room.playState.revision}`
       const prepare = preparedRef.current
       if (prepare && room.playState.revision <= prepare.revision) return
+
+      const sound = howlRef.current
+      if (rejoined && roomTrack && roomTrack.id === playerTrack?.id &&
+          roomTrack.streamUrl === playerTrack.streamUrl && sound && sound.state() !== 'unloaded') {
+        recoveredTrackRef.current = roomTrack
+        const ps = room.playState
+        const executionTime = room.serverTimeToExecute ?? ps.serverTimestamp
+        if (ps.isPlaying) {
+          const getSeekTime = () => getCompensatedScheduledPosition(ps.currentTime, executionTime, roomTrack.duration, sound)
+          if (sound.playing()) setScheduledPlayback(getSeekTime)
+          else scheduleStart(getSeekTime, executionTime)
+        } else {
+          setDesiredPlayback(false, () => ps.currentTime)
+          if (sound.playing()) sound.pause(soundIdRef.current)
+          if (sound.state() === 'loaded') {
+            setHowlPosition(sound, ps.currentTime, soundIdRef.current)
+            usePlayerStore.getState().setCurrentTime(ps.currentTime)
+          }
+        }
+        return
+      }
 
       // Server has cleared the track (queue empty / cleared) — reset client
       if (!roomTrack && playerTrack) {
@@ -242,6 +285,7 @@ export function usePlayer() {
         // second load for an event that is already being handled.
         if (
           loadingRef.current?.trackId === roomTrack.id &&
+            loadingRef.current.streamUrl === roomTrack.streamUrl &&
           loadingRef.current.revision === room.playState.revision
         ) {
           return
@@ -273,27 +317,30 @@ export function usePlayer() {
     const initialRecoveryTimer = setTimeout(recover, 0)
 
     // Subscribe for future changes (covers reconnect where ROOM_STATE arrives later)
-    const unsubscribe = useRoomStore.subscribe(recover)
+    const unsubscribe = useRoomStore.subscribe((state, previous) => {
+      recover(state.connectionStatus === 'connected' && previous.connectionStatus === 'reconnecting')
+    })
     return () => {
       clearTimeout(initialRecoveryTimer)
       unsubscribe()
     }
-  }, [loadTrack, fetchLyric, howlRef, scheduleStart, stopAndUnload])
+  }, [loadTrack, fetchLyric, howlRef, soundIdRef, setDesiredPlayback, setScheduledPlayback, scheduleStart, stopAndUnload])
 
   // -----------------------------------------------------------------------
   // Controls — emit to server only.  Server broadcasts ScheduledPlayState
   // to ALL clients (including us) via scheduled execution.
   // -----------------------------------------------------------------------
   const play = useCallback(() => {
-    socket.emit(EVENTS.PLAYER_PLAY)
+    if (canSendRoomCommand(socket)) socket.emit(EVENTS.PLAYER_PLAY)
   }, [socket])
 
   const pause = useCallback(() => {
-    socket.emit(EVENTS.PLAYER_PAUSE)
+    if (canSendRoomCommand(socket)) socket.emit(EVENTS.PLAYER_PAUSE)
   }, [socket])
 
   const seek = useCallback(
     (time: number) => {
+      if (!canSendRoomCommand(socket)) return
       // Optimistic local update for the progress bar UI
       usePlayerStore.getState().setCurrentTime(time)
       lyricPlayerBridge.seek(time)
@@ -302,7 +349,9 @@ export function usePlayer() {
     [socket],
   )
 
-  const prev = useCallback(() => socket.emit(EVENTS.PLAYER_PREV), [socket])
+  const prev = useCallback(() => {
+    if (canSendRoomCommand(socket)) socket.emit(EVENTS.PLAYER_PREV)
+  }, [socket])
 
   // MediaSession: hardware media keys + OS media notification bar.
   // Permission-aware: mirrors PlayerControls fallback-to-vote behaviour.

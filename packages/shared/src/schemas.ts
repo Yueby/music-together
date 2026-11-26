@@ -97,7 +97,7 @@ export const playerSetModeSchema = z.object({
 // Queue
 // ---------------------------------------------------------------------------
 
-const trackSchema = z.object({
+export const trackSchema = z.object({
   id: z.string().min(1).max(200),
   title: z.string().max(500),
   artist: z.array(z.string().max(200)).max(20),

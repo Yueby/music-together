@@ -17,6 +17,8 @@ export const ERROR_CODE = {
   ROOM_ENTRY_LIMITED: 'ROOM_ENTRY_LIMITED',
   /** Server capacity or admission queue is full; user cannot enter or queue right now. */
   SERVER_FULL: 'SERVER_FULL',
+  /** Server is shutting down for an update/restart; clients should retry shortly. */
+  SERVER_RESTARTING: 'SERVER_RESTARTING',
   NO_VOTE_NEEDED: 'NO_VOTE_NEEDED',
   VOTE_IN_PROGRESS: 'VOTE_IN_PROGRESS',
   ALREADY_VOTED: 'ALREADY_VOTED',
@@ -294,4 +296,16 @@ export interface AdmissionQueuedEvent {
 export interface AdmissionCancelledEvent {
   reason: 'user' | 'room_closed' | 'password_changed' | 'expired' | 'replaced'
   message?: string
+}
+
+/** Server → client handshake metadata used for non-disruptive version detection. */
+export interface ServerHelloEvent {
+  version: string
+  buildId: string
+  protocol: number
+}
+
+/** Server → clients advisory before graceful restart so clients prepare fast reconnect. */
+export interface ServerRestartingEvent {
+  retryAfterMs: number
 }

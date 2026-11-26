@@ -1,4 +1,5 @@
 import express from 'express'
+import { PROTOCOL_VERSION } from '@music-together/shared'
 import { mkdir, mkdtemp, rm, writeFile } from 'node:fs/promises'
 import type { Server } from 'node:http'
 import type { AddressInfo } from 'node:net'
@@ -6,9 +7,12 @@ import { tmpdir } from 'node:os'
 import path from 'node:path'
 import { afterAll, beforeAll, describe, expect, it } from 'vitest'
 import { mountFallbackRoutes } from './fallback.js'
+import { sendServerVersion } from './version.js'
+import { config } from '../config.js'
 
 describe('HTTP fallbacks with a client build', () => {
   const html = '<!doctype html><title>SPA fixture</title>'
+  const pwaFiles = ['sw.js', 'registerSW.js', 'manifest.webmanifest']
   let clientDist: string
   let server: Server
   let base: string
@@ -20,9 +24,11 @@ describe('HTTP fallbacks with a client build', () => {
     await Promise.all([
       writeFile(path.join(clientDist, 'index.html'), html),
       writeFile(path.join(assets, 'app-current.js'), 'export {}'),
+      ...pwaFiles.map((file) => writeFile(path.join(clientDist, file), file)),
     ])
     const app = express()
     app.get('/api/health', (_req, res) => res.json({ status: 'ok' }))
+    app.get('/api/version', sendServerVersion)
     mountFallbackRoutes(app, clientDist)
     server = await new Promise<Server>((resolve) => {
       const listener = app.listen(0, '127.0.0.1', () => resolve(listener))
@@ -63,5 +69,17 @@ describe('HTTP fallbacks with a client build', () => {
       expect(response.headers.get('cache-control')).toBe('no-cache, must-revalidate')
       expect(await response.text()).toBe(html)
     }
+  })
+
+  it('returns version, build ID and protocol from /api/version', async () => {
+    const response = await fetch(`${base}/api/version`)
+    expect(await response.json()).toEqual({ version: config.version, buildId: config.buildId, protocol: PROTOCOL_VERSION })
+  })
+
+  it.each(pwaFiles)('serves %s with revalidation', async (file) => {
+    const response = await fetch(`${base}/${file}`)
+    expect(response.status).toBe(200)
+    expect(response.headers.get('cache-control')).toBe('no-cache')
+    expect(await response.text()).toBe(file)
   })
 })

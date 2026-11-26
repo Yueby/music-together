@@ -20,7 +20,7 @@ export interface MappSocketProviderProps {
 }
 
 /** Failed automatic re-entry: the shared RoomPage must wait for a fresh user interaction. */
-const MANUAL_JOIN_ERRORS = new Set(['REJOIN_FAILED', 'REJOIN_TOKEN_MISSING', 'REJOIN_TOKEN_EXPIRED', 'IDENTITY_CHANGED'])
+const MANUAL_JOIN_ERRORS = new Set(['REJOIN_FAILED', 'IDENTITY_CHANGED'])
 
 export function MappSocketProvider({ session, children }: MappSocketProviderProps) {
   const subscribe = useCallback((listener: () => void) => session.subscribe(listener), [session])

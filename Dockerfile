@@ -15,6 +15,8 @@ RUN pnpm install --frozen-lockfile
 
 # ---- 阶段 2: 构建 ----
 FROM deps AS build
+ARG BUILD_ID=dev
+ENV BUILD_ID=$BUILD_ID
 COPY packages/shared/ packages/shared/
 COPY packages/server/ packages/server/
 COPY packages/client/ packages/client/
@@ -25,6 +27,8 @@ RUN pnpm --filter @music-together/client run build
 
 # ---- 阶段 3: 生产镜像 ----
 FROM node:26-alpine AS production
+ARG BUILD_ID=dev
+ENV BUILD_ID=$BUILD_ID
 RUN npm install --global pnpm@11.21.0
 WORKDIR /app
 
@@ -51,6 +55,8 @@ RUN sed -i 's|./src/index.ts|./dist/index.js|g' packages/shared/package.json \
 
 EXPOSE 3001
 ENV NODE_ENV=production
+ENV STATE_DIR=/app/data
+RUN mkdir -p /app/data && chown node:node /app/data
 USER node
 HEALTHCHECK --interval=30s --timeout=5s --start-period=15s --retries=3 \
   CMD wget -qO- http://127.0.0.1:${PORT:-3001}/api/health >/dev/null || exit 1

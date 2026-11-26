@@ -1,5 +1,6 @@
 import { timingSafeEqual } from 'node:crypto'
 import type { AudioQuality, QueueMode, RoomListItem, User, UserRole } from '@music-together/shared'
+import { TIMING } from '@music-together/shared'
 import { nanoid } from 'nanoid'
 import type { RoomData } from '../repositories/types.js'
 import { roomRepo } from '../repositories/roomRepository.js'
@@ -152,7 +153,8 @@ export function joinRoom(
   roomId: string,
   nickname: string,
   persistentUserId?: string,
-): { room: RoomData; user: User; hostChanged: boolean; roleChanged: boolean } | null {
+  hasValidRejoinTicket = false,
+): { room: RoomData; user: User; hostChanged: boolean; roleChanged: boolean; alreadyPresent: boolean; isReturning: boolean } | null {
   const room = roomRepo.get(roomId)
   if (!room) return null
 
@@ -160,6 +162,11 @@ export function joinRoom(
   cancelDeletionTimer(roomId)
 
   const userId = persistentUserId || socketId
+  const existing = room.users.find((u) => u.id === userId)
+  const alreadyPresent = roomRepo.getSocketMapping(socketId)?.roomId === roomId || existing !== undefined
+  const isReturning = alreadyPresent || hasReturningMember(room, userId) || hasValidRejoinTicket
+  room.emptySince = null
+  room.returningMembers?.delete(userId)
   const isCreator = userId === room.creatorId
 
   // Determine the permission role — purely based on identity, no grace logic
@@ -170,14 +177,13 @@ export function joinRoom(
   }
 
   // Rejoin — update existing user entry instead of creating duplicate
-  const existing = room.users.find((u) => u.id === userId)
   if (existing) {
     existing.nickname = nickname
     existing.role = resolveRole()
     roomRepo.setSocketMapping(socketId, roomId, userId)
     const roleChanged = reconcileRoomRoles(room)
     const hostChanged = electConductor(room, socketId)
-    return { room, user: existing, hostChanged, roleChanged }
+    return { room, user: existing, hostChanged, roleChanged, alreadyPresent, isReturning }
   }
 
   // New user entry
@@ -192,12 +198,13 @@ export function joinRoom(
   const hostChanged = electConductor(room, socketId)
 
   logger.info(`User ${nickname} joined room ${roomId} as ${role}`, { roomId })
-  return { room, user, hostChanged, roleChanged }
+  return { room, user, hostChanged, roleChanged, alreadyPresent, isReturning }
 }
 
 export function leaveRoom(
   socketId: string,
   io?: TypedServer,
+  explicit = false,
 ): {
   roomId: string
   user: User
@@ -215,6 +222,7 @@ export function leaveRoom(
 
   const user = room.users.find((u) => u.id === userId)
   if (!user) return null
+  if (explicit) revokeRejoinTickets(roomId, userId)
 
   // Race condition guard: if the user has another active socket in this room
   // (e.g. page refresh — new socket joined before old socket disconnected),
@@ -231,9 +239,18 @@ export function leaveRoom(
 
   room.users = room.users.filter((u) => u.id !== userId)
   roomRepo.deleteSocketMapping(socketId)
+  const now = Date.now()
+  if (!explicit) {
+    const returning = room.returningMembers ??= new Map()
+    for (const [id, entry] of returning) {
+      if (entry.expiresAt <= now) returning.delete(id)
+    }
+    returning.set(userId, { nickname: user.nickname, departedAt: now, expiresAt: now + TIMING.ROOM_GRACE_PERIOD_MS })
+  }
 
   // If room is empty, schedule deletion after grace period
   if (room.users.length === 0) {
+    room.emptySince = now
     reconcileRoomRoles(room)
     scheduleDeletion(roomId, io)
     return { roomId, user, room, hostChanged: false, roleChanged: false, staleSocketOnly: false }
@@ -268,8 +285,9 @@ export function updateSettings(
   }
 
   // password: string -> set password; null -> remove password; undefined -> no change
-  if (settings.password !== undefined) {
+  if (settings.password !== undefined && settings.password !== room.password) {
     room.password = settings.password
+    revokeRejoinTickets(roomId)
   }
 
   if (settings.audioQuality !== undefined) {
@@ -336,10 +354,14 @@ export interface JoinValidationResult {
   valid: boolean
   errorCode?: string
   errorMessage?: string
-  /** Whether this is a rejoin (user already in room or same socket mapping) — skip join notification */
-  isRejoin: boolean
+  hasValidRejoinTicket: boolean
   /** Whether password should be bypassed (rejoin, creator, or persistent admin) */
   skipPassword: boolean
+}
+
+function hasReturningMember(room: RoomData, userId: string): boolean {
+  const returning = room.returningMembers?.get(userId)
+  return returning !== undefined && returning.expiresAt > Date.now()
 }
 
 /**
@@ -359,7 +381,7 @@ export function validateJoinRequest(
       valid: false,
       errorCode: 'ROOM_NOT_FOUND',
       errorMessage: '房间不存在',
-      isRejoin: false,
+      hasValidRejoinTicket: false,
       skipPassword: false,
     }
   }
@@ -374,20 +396,17 @@ export function validateJoinRequest(
       ? consumeRejoinTicket(rejoinToken, roomId, effectiveUserId)
       : false
 
-  // Password bypass: same socket mapping, already in room, creator, or persistent admin
-  const skipPassword =
-    hasValidRejoinTicket || existingMapping?.roomId === roomId || alreadyInRoom || isCreator || isPersistentAdmin
-  // Notification skip: only when user is literally still in the room
-  const isRejoin = existingMapping?.roomId === roomId || alreadyInRoom
+  const skipPassword = existingMapping?.roomId === roomId || alreadyInRoom ||
+    hasReturningMember(room, effectiveUserId) || hasValidRejoinTicket || isCreator || isPersistentAdmin
 
   if (!skipPassword && room.password !== null) {
     if (!password || !safeCompare(password, room.password)) {
-      return { valid: false, errorCode: 'WRONG_PASSWORD', errorMessage: '密码错误', isRejoin, skipPassword }
+      return { valid: false, errorCode: 'WRONG_PASSWORD', errorMessage: '密码错误', hasValidRejoinTicket, skipPassword }
     }
   }
 
   // Auto-leave check: if the socket is mapped to a different room, the caller
   // should call leaveRoom before proceeding. We just flag the scenario here.
 
-  return { valid: true, isRejoin, skipPassword }
+  return { valid: true, hasValidRejoinTicket, skipPassword }
 }

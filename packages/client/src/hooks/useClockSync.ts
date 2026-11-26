@@ -47,17 +47,14 @@ export function useClockSync(): void {
 
     // --- Ping sender (includes last measured RTT for server-side scheduling) ---
     function sendPing() {
+      if (!socket.connected) return
       const id = recordPing()
       const rtt = getMedianRTT()
       socket.emit(EVENTS.NTP_PING, { clientPingId: id, lastRttMs: rtt > 0 ? rtt : undefined })
     }
 
     const onConnect = () => startCalibration()
-    const onDisconnect = () => {
-      clearPingInterval()
-      resetClockSync()
-      switchedRef.current = false
-    }
+    const onDisconnect = clearPingInterval
 
     socket.on(EVENTS.NTP_PONG, onPong)
     socket.on('connect', onConnect)

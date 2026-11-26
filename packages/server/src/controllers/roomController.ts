@@ -24,7 +24,8 @@ import { roomRepo } from '../repositories/roomRepository.js'
 import { admissionQueue, type QueuedAdmissionEntry } from '../services/admissionQueueService.js'
 import * as chatService from '../services/chatService.js'
 import * as playerService from '../services/playerService.js'
-import { issueRejoinTicket, revokeRejoinTickets } from '../services/rejoinTicketService.js'
+import { issueRejoinTicket } from '../services/rejoinTicketService.js'
+import { isShuttingDown } from '../services/roomLifecycleService.js'
 import * as roomService from '../services/roomService.js'
 import { canAdmitClient, getPublicServerCapacity, notifyCapacityChanged } from '../services/serverLoadService.js'
 import * as voteService from '../services/voteService.js'
@@ -66,6 +67,12 @@ function countRoomsCreatedBy(identityUserId: string | undefined): number {
 
 function resolveClientKind(socket: TypedSocket): ClientKind {
   return socket.data.clientKind ?? (socket.data.identityUserId?.startsWith('mapp_') ? 'mapp' : 'web')
+}
+
+function rejectEntryDuringShutdown(socket: TypedSocket): boolean {
+  if (!isShuttingDown()) return false
+  socket.emit(EVENTS.ROOM_ERROR, { code: ERROR_CODE.SERVER_RESTARTING, message: '服务器正在重启，请稍后重试' })
+  return true
 }
 
 function executeRoomCreate(
@@ -118,13 +125,15 @@ async function executeRoomJoin(
     handleLeave(io, socket, 'auto-leave before join', true)
   }
 
-  const result = roomService.joinRoom(socket.id, roomId, nickname.trim(), socket.data.identityUserId)
+  const result = roomService.joinRoom(
+    socket.id, roomId, nickname.trim(), socket.data.identityUserId, validation.hasValidRejoinTicket,
+  )
   if (!result) {
     socket.emit(EVENTS.ROOM_ERROR, { code: ERROR_CODE.JOIN_FAILED, message: '加入房间失败' })
     return
   }
 
-  const { room: updatedRoom, user, hostChanged, roleChanged } = result
+  const { room: updatedRoom, user, hostChanged, roleChanged, alreadyPresent, isReturning } = result
   const rejoin = issueRejoinTicket(roomId, user.id)
 
   socket.leave('lobby')
@@ -151,6 +160,12 @@ async function executeRoomJoin(
   })
   socket.emit(EVENTS.CHAT_HISTORY, chatService.getHistory(roomId))
 
+  if (!alreadyPresent) socket.to(roomId).emit(EVENTS.ROOM_USER_JOINED, user)
+  if (!isReturning) {
+    const joinMsg = chatService.createSystemMessage(roomId, `${user.nickname} 加入了房间`)
+    io.to(roomId).emit(EVENTS.CHAT_MESSAGE, joinMsg)
+  }
+
   // Sync playback state to the joining client (auto-resume, auto-play)
   playerService.syncPlaybackToSocket(io, socket, roomId, updatedRoom).catch((err) => {
     logger.error('syncPlaybackToSocket failed', err, { roomId })
@@ -158,14 +173,6 @@ async function executeRoomJoin(
 
   // Reconcile an active vote with the current online membership and host.
   await reconcileAndBroadcastVote(io, roomId, updatedRoom)
-
-  // Notify others (skip for rejoin — they already know the user is in the room)
-  if (!validation.isRejoin) {
-    socket.to(roomId).emit(EVENTS.ROOM_USER_JOINED, user)
-    // System message for user joined (server-authoritative)
-    const joinMsg = chatService.createSystemMessage(roomId, `${user.nickname} 加入了房间`)
-    io.to(roomId).emit(EVENTS.CHAT_MESSAGE, joinMsg)
-  }
 
   // 更新大厅房间列表（人数变了）& 刷新承载指标
   roomService.broadcastRoomList(io)
@@ -178,6 +185,7 @@ export async function executeQueuedAdmission(
   socket: TypedSocket,
   entry: QueuedAdmissionEntry,
 ): Promise<void> {
+  if (rejectEntryDuringShutdown(socket)) return
   if (entry.payload.action === 'create') {
     if (countRoomsCreatedBy(socket.data.identityUserId) >= LIMITS.ROOM_MAX_CREATED_PER_IDENTITY) {
       socket.emit(EVENTS.ADMISSION_CANCELLED, {
@@ -244,7 +252,9 @@ export function registerRoomController(io: TypedServer, socket: TypedSocket) {
 
   // ---- Create room (含可选密码) ----
   socket.on(EVENTS.ROOM_CREATE, async (raw) => {
+    if (rejectEntryDuringShutdown(socket)) return
     if (!(await checkRoomEntryRateLimit(socket))) return
+    if (rejectEntryDuringShutdown(socket)) return
     try {
       const parsed = roomCreateSchema.safeParse(raw)
       if (!parsed.success) {
@@ -303,7 +313,9 @@ export function registerRoomController(io: TypedServer, socket: TypedSocket) {
 
   // ---- Join room (含密码校验) ----
   socket.on(EVENTS.ROOM_JOIN, async (raw) => {
+    if (rejectEntryDuringShutdown(socket)) return
     if (!(await checkRoomEntryRateLimit(socket))) return
+    if (rejectEntryDuringShutdown(socket)) return
     try {
       const parsed = roomJoinSchema.safeParse(raw)
       if (!parsed.success) {
@@ -481,6 +493,10 @@ export function registerRoomController(io: TypedServer, socket: TypedSocket) {
   // ---- Disconnect ----
   socket.on('disconnect', (reason) => {
     try {
+      if (isShuttingDown()) {
+        roomRepo.deleteSocketMapping(socket.id)
+        return
+      }
       logger.info(`Client disconnected: ${socket.id}, reason: ${reason}`, { socketId: socket.id })
       admissionQueue.handleDisconnect(io, socket.id, socket.data.identityUserId)
       handleLeave(io, socket)
@@ -504,14 +520,12 @@ export function registerRoomController(io: TypedServer, socket: TypedSocket) {
  * Leave the current room (if any), notify other users, and update lobby.
  * Used by ROOM_LEAVE, disconnect, and auto-leave before create/join.
  */
-function handleLeave(io: TypedServer, socket: TypedSocket, reason?: string, revokeTicket = false): void {
-  const result = roomService.leaveRoom(socket.id, io)
+function handleLeave(io: TypedServer, socket: TypedSocket, reason?: string, explicit = false): void {
+  if (isShuttingDown()) return
+  const result = roomService.leaveRoom(socket.id, io, explicit)
   if (!result) return
 
   const { roomId, user, room, hostChanged, roleChanged, staleSocketOnly } = result
-  if (revokeTicket) {
-    revokeRejoinTickets(roomId, user.id)
-  }
   socket.leave(roomId)
   socket.join('lobby')
   if (room?.pendingPrepare) playerService.handleSocketLeftRoom(io, roomId, socket.id)

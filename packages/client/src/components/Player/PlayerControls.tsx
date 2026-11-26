@@ -6,7 +6,7 @@ import { cn } from '@/lib/utils'
 import { useAppAbility } from '@/providers/AbilityProvider'
 import { useSocketContext } from '@/providers/SocketProvider'
 import { usePlayerStore } from '@/stores/playerStore'
-import { useRoomStore } from '@/stores/roomStore'
+import { canSendRoomCommand, useRoomStore } from '@/stores/roomStore'
 import type { PlayMode, VoteAction } from '@music-together/shared'
 import { EVENTS, TIMING, effectivePlayMode } from '@music-together/shared'
 import { ArrowRightToLine, ListMusic, Pause, Play, Repeat, Repeat1, Shuffle, SkipBack, SkipForward } from 'lucide-react'
@@ -128,7 +128,8 @@ export const PlayerControls = memo(function PlayerControls({
   const wrapperRef = useRef<HTMLDivElement>(null)
   const innerRef = useRef<HTMLDivElement>(null)
 
-  const disabled = !currentTrack
+  const reconnecting = useRoomStore((state) => state.connectionStatus === 'reconnecting')
+  const disabled = !currentTrack || reconnecting
   const isAudioLoading = audioLoadPhase !== 'idle'
   const showAudioLoading = isAudioLoading && loadingRevealed
 
@@ -199,6 +200,7 @@ export const PlayerControls = memo(function PlayerControls({
   }
 
   const handlePlayModeToggle = () => {
+    if (!canSendRoomCommand(socket)) return
     const cycle = queueMode === 'consume' ? CONSUMING_PLAY_MODE_CYCLE : PLAY_MODE_CYCLE
     const nextMode = cycle[(cycle.indexOf(playMode) + 1) % cycle.length]
     if (canSetMode) {
@@ -263,7 +265,7 @@ export const PlayerControls = memo(function PlayerControls({
                     size="icon"
                     className="h-9 w-9 text-white/70 hover:bg-white/10"
                     onClick={handlePlayModeToggle}
-                    disabled={!canSetMode && !canVote}
+                    disabled={reconnecting || (!canSetMode && !canVote)}
                     aria-label={modeConfig.label}
                   >
                     <AnimatePresence mode="wait" initial={false}>

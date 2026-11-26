@@ -304,8 +304,6 @@ describe('MappHost thin composition', () => {
   })
 
   it.each([
-    { connected: false },
-    { userId: null },
     { roomId: null },
     { roomId: 'room-B' },
     { userId: 'new-server-id' },
@@ -328,6 +326,17 @@ describe('MappHost thin composition', () => {
       expect(f.session.leaveRoom).not.toHaveBeenCalled()
     },
   )
+
+  it('retains media through the outage and identity confirmation for the same room', () => {
+    const f = fixture()
+    const host = f.make()
+    f.joined()
+    const sound = host.playbackSoundFactory.create(track, soundOptions)
+    f.publish({ status: 'disconnected', connected: false, userId: null })
+    f.publish({ status: 'awaiting_identity', connected: true })
+    f.joined()
+    expect(sound.unload).not.toHaveBeenCalled()
+  })
 
   it('forwards the announced next track to the audio factory until the host is disposed', async () => {
     const f = fixture()

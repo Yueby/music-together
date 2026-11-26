@@ -1,5 +1,6 @@
 import { authCheckQrSchema, authSetCookieSchema, EVENTS, platformEventSchema, QR_STATUS } from '@music-together/shared'
 import * as authService from '../services/authService.js'
+import { notifyRestoredPlaybackCookie } from '../services/playerService.js'
 import { AUTH_PROVIDERS } from '../services/authProvider.js'
 import { roomRepo } from '../repositories/roomRepository.js'
 import { logger } from '../utils/logger.js'
@@ -140,6 +141,7 @@ export function registerAuthController(io: TypedServer, socket: TypedSocket) {
 
       // Fast path: cookie 已在房间池中，跳过验证
       if (mapping && roomId && authService.hasCookie(roomId, platform, cookie)) {
+        void notifyRestoredPlaybackCookie(io, roomId, platform)
         socket.emit(EVENTS.AUTH_SET_COOKIE_RESULT, {
           success: true,
           message: 'Cookie 已生效',
@@ -206,6 +208,7 @@ export function registerAuthController(io: TypedServer, socket: TypedSocket) {
       }
 
       if (liveMapping) {
+        void notifyRestoredPlaybackCookie(io, liveMapping.roomId, platform)
         broadcastAuthStatus(io, socket, liveMapping)
       }
     } catch (err) {
