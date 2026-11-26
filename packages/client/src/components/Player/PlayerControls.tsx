@@ -212,7 +212,15 @@ export const PlayerControls = memo(function PlayerControls({
 
   const modeConfig = PLAY_MODE_CONFIG[playMode]
   const ModeIcon = modeConfig.icon
-  const playButtonLabel = showAudioLoading ? (isPlaying ? '暂停 · 加载中' : '音频加载中') : isPlaying ? '暂停' : '播放'
+  const playButtonLabel = showAudioLoading
+    ? audioLoadPhase === 'waiting'
+      ? '等待房间同步'
+      : isPlaying
+        ? '暂停 · 加载中'
+        : '音频加载中'
+    : isPlaying
+      ? '暂停'
+      : '播放'
   const isDecoding = audioLoadPhase === 'decoding'
   const ringMode: 'decoding' | 'determinate' | 'indeterminate' = isDecoding
     ? 'decoding'

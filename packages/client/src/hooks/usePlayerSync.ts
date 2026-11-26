@@ -17,8 +17,10 @@ import { lyricPlayerBridge } from '@/lib/lyricPlayerBridge'
 import { setHowlPosition } from '@/lib/howlPosition'
 import {
   compensatePlaybackPosition,
+  getEffectiveAudioLatencyOffsetMs,
   getHardSeekThresholdMs,
   getCompensatedScheduledPosition,
+  getSoundOutputLatencyMs,
   medianDrift,
 } from '@/lib/playbackSync'
 import { cancelScheduledPlay } from '@/lib/scheduledPlayback'
@@ -44,12 +46,19 @@ export function usePlayerSync(
     let scheduledTimer: ReturnType<typeof setTimeout> | undefined
     let lastPlayKey: string | undefined
     let anchorKey: string | undefined
+    let lastEffectiveLatencyMs: number | undefined
     let samples: number[] = []
     let smoothedDrift: number | undefined
     let hardSeekCount = 0
     let rateCheckTimer: ReturnType<typeof setTimeout> | undefined
     let rateOverrideCount = 0
     let rateDisabled = false
+
+    const clearWaitingLoadState = () => {
+      if (usePlayerStore.getState().audioLoadPhase === 'waiting') {
+        usePlayerStore.getState().setAudioLoadState({ phase: 'idle' })
+      }
+    }
 
     const clearScheduled = () => {
       clearTimeout(scheduledTimer)
@@ -70,6 +79,7 @@ export function usePlayerSync(
 
     const scheduleAction = ({ playState }: { playState: ScheduledPlayState }) => {
       if (isStale(playState.revision)) return
+      if (!playState.isPlaying) clearWaitingLoadState()
       setDesiredPlayback(false)
       cancelScheduledPlay()
       clearScheduled()
@@ -91,7 +101,10 @@ export function usePlayerSync(
         if (isStale(revision)) return
         const target = isPlaying ? getSeekTime() : currentTime
         if (isPlaying) setScheduledPlayback(getSeekTime)
-        else setDesiredPlayback(false, () => currentTime)
+        else {
+          clearWaitingLoadState()
+          setDesiredPlayback(false, () => currentTime)
+        }
 
         const activeSound = howlRef.current
         if (activeSound && !hardwareStart && (!isPlaying || activeSound.state() === 'loaded')) {
@@ -121,6 +134,7 @@ export function usePlayerSync(
       setDesiredPlayback(false)
       cancelScheduledPlay()
       clearScheduled()
+      lastEffectiveLatencyMs = undefined
       rateOverrideCount = 0
       rateDisabled = false
       resetDrift()
@@ -152,7 +166,12 @@ export function usePlayerSync(
       if (anchorKey !== key) {
         resetDrift()
         anchorKey = key
+        lastEffectiveLatencyMs = undefined
       }
+      if (sound.getOutputLatencyMs) {
+        usePlayerStore.getState().setDetectedAudioLatencyMs(getSoundOutputLatencyMs(sound))
+      }
+      const effectiveLatencyMs = getEffectiveAudioLatencyOffsetMs(sound)
       const expected = compensatePlaybackPosition(
         currentTime + (now - serverTimestamp) / 1000,
         room.currentTrack.duration,
@@ -160,6 +179,22 @@ export function usePlayerSync(
       )
       const current = sound.seek()
       if (typeof current !== 'number' || !Number.isFinite(current)) return
+
+      const pitchSafeRate = sound.supportsPitchPreservingRate !== false
+      if (lastEffectiveLatencyMs !== undefined && Math.abs(effectiveLatencyMs - lastEffectiveLatencyMs) >= 20) {
+        lastEffectiveLatencyMs = effectiveLatencyMs
+        if (!pitchSafeRate && sound.crossfadeSeek && Math.abs(current - expected) > 0.02) {
+          if (room.currentTrack.duration > 0 && expected >= room.currentTrack.duration) return
+          if (sound.rate() !== 1) sound.rate(1)
+          sound.crossfadeSeek(expected)
+          resetDrift()
+          return
+        }
+        resetDrift()
+        return
+      }
+      lastEffectiveLatencyMs = effectiveLatencyMs
+
       samples = [...samples.slice(1 - DRIFT_SAMPLE_COUNT), current - expected]
       if (samples.length < DRIFT_SAMPLE_COUNT) return
 
@@ -169,7 +204,6 @@ export function usePlayerSync(
         : DRIFT_SMOOTH_ALPHA * median + (1 - DRIFT_SMOOTH_ALPHA) * smoothedDrift
       usePlayerStore.getState().setSyncDrift(smoothedDrift)
 
-      const pitchSafeRate = sound.supportsPitchPreservingRate !== false
       const seekThreshold = (pitchSafeRate
         ? getHardSeekThresholdMs(DRIFT_SEEK_THRESHOLD_MS, getMedianRTT(), DRIFT_SEEK_RTT_MARGIN_MS)
         : WEB_AUDIO_SEEK_THRESHOLD_MS) / 1000
@@ -191,7 +225,7 @@ export function usePlayerSync(
         ? 0
         : Math.max(-limit, Math.min(limit, smoothedDrift * DRIFT_RATE_KP))
       const rate = 1 - adjustment
-      if (Math.abs(sound.rate() - rate) > 0.0005) sound.rate(rate)
+      if (adjustment === 0 ? sound.rate() !== 1 : Math.abs(sound.rate() - rate) > 0.0005) sound.rate(rate)
       if (pitchSafeRate && adjustment !== 0) {
         clearTimeout(rateCheckTimer)
         rateCheckTimer = setTimeout(() => {
@@ -230,7 +264,9 @@ export function usePlayerSync(
     const onDisconnect = () => {
       lastPlayKey = undefined
       anchorKey = undefined
+      lastEffectiveLatencyMs = undefined
       clearScheduled()
+      clearWaitingLoadState()
       resetDrift()
       const sound = howlRef.current
       if (sound?.playing() && sound.rate() !== 1) sound.rate(1)

@@ -313,9 +313,9 @@ describe('scheduled playback with loading audio', () => {
       expect(howl.rate.mock.calls.some(([rate]) => rate !== undefined)).toBe(false)
     })
 
-    it('caps WebAudio rate at ±0.3% and crossfades sustained drift above 120ms', () => {
+    it('caps WebAudio rate at ±0.5% and crossfades sustained drift above 50ms', () => {
       const { howl } = setup(true)
-      let drift = 0.07
+      let drift = 0.03
       const crossfadeSeek = vi.fn()
       Object.assign(howl, { supportsPitchPreservingRate: false, crossfadeSeek })
       act(() => {
@@ -324,17 +324,59 @@ describe('scheduled playback with loading audio', () => {
         howl.seek.mockImplementation(() => 42 + (Date.now() - 100_000) / 1000 + drift)
         vi.advanceTimersByTime(1_250)
       })
-      expect(howl.rate).toHaveBeenLastCalledWith(0.997)
+      expect(howl.rate).toHaveBeenLastCalledWith(0.995)
       expect(crossfadeSeek).not.toHaveBeenCalled()
 
-      drift = -0.07
+      drift = -0.03
       act(() => vi.advanceTimersByTime(4_000))
-      expect(howl.rate.mock.calls.filter(([rate]) => rate !== undefined).at(-1)).toEqual([1.003])
+      expect(howl.rate.mock.calls.filter(([rate]) => rate !== undefined).at(-1)?.[0]).toBeCloseTo(1.005, 3)
       expect(crossfadeSeek).not.toHaveBeenCalled()
 
-      drift = 0.25
+      drift = -0.11
       act(() => vi.advanceTimersByTime(4_000))
       expect(crossfadeSeek).toHaveBeenCalled()
+    })
+
+    it('immediately crossfade-seeks WebAudio when outputLatency populates after playback starts', () => {
+      const { howl } = setup(true)
+      let outputLatencyMs = 0
+      const crossfadeSeek = vi.fn()
+      Object.assign(howl, {
+        supportsPitchPreservingRate: false,
+        getOutputLatencyMs: () => outputLatencyMs,
+        crossfadeSeek,
+      })
+      act(() => {
+        setRoom()
+        howl.finishLoad()
+        howl.seek.mockImplementation(() => 42 + (Date.now() - 100_000) / 1000)
+        vi.advanceTimersByTime(250)
+      })
+      expect(crossfadeSeek).not.toHaveBeenCalled()
+      expect(usePlayerStore.getState().detectedAudioLatencyMs).toBe(0)
+
+      outputLatencyMs = 110
+      act(() => vi.advanceTimersByTime(250))
+      expect(usePlayerStore.getState().detectedAudioLatencyMs).toBe(110)
+      expect(crossfadeSeek).toHaveBeenCalledTimes(1)
+      expect(crossfadeSeek).toHaveBeenLastCalledWith(42.61)
+      expect(usePlayerStore.getState().syncDrift).toBe(0)
+    })
+
+    it('corrects 10ms drift with proportional rate and settles inside the 8ms dead zone', () => {
+      const { howl } = setup(true)
+      let drift = -0.01
+      act(() => {
+        setRoom()
+        howl.finishLoad()
+        howl.seek.mockImplementation(() => 42 + (Date.now() - 100_000) / 1000 + drift)
+        vi.advanceTimersByTime(1_250)
+      })
+      expect(howl.rate.mock.calls.filter(([rate]) => rate !== undefined).at(-1)?.[0]).toBeCloseTo(1.005, 6)
+
+      drift = -0.005
+      act(() => vi.advanceTimersByTime(3_000))
+      expect(howl.rate.mock.calls.filter(([rate]) => rate !== undefined).at(-1)).toEqual([1])
     })
 
     it('refreshes the anchor from a newer same-track safety response', () => {

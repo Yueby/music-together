@@ -260,7 +260,7 @@ describe('a PLAYER_PLAY announcement delivered twice', () => {
     expect(audio.socket.emit).toHaveBeenCalledExactlyOnceWith(EVENTS.PLAYER_READY, { trackId: track.id, revision: 1 })
   })
 
-  it('promotes a loaded prefetch and acknowledges PREPARE immediately', () => {
+  it('promotes a loaded prefetch, acknowledges PREPARE immediately, and waits for room ready', () => {
     setRoom()
     renderHook(() => usePlayer())
     deliver(EVENTS.PLAYER_PRELOAD, { track })
@@ -270,9 +270,14 @@ describe('a PLAYER_PLAY announcement delivered twice', () => {
     expect(audio.socket.emit).toHaveBeenCalledExactlyOnceWith(EVENTS.PLAYER_READY, { trackId: track.id, revision: 1 })
     expect(audio.instances[0].volume).toHaveBeenCalledWith(usePlayerStore.getState().volume)
     expect(audio.instances[0].play).not.toHaveBeenCalled()
+    expect(usePlayerStore.getState().audioLoadPhase).toBe('waiting')
+
+    deliverPlay()
+    act(() => vi.advanceTimersByTime(1_000))
+    expect(usePlayerStore.getState().audioLoadPhase).toBe('idle')
   })
 
-  it('forwards HTML5 buffered progress after promoting an in-flight preload', () => {
+  it('forwards HTML5 buffered progress after promoting an in-flight preload and waits until playback starts', () => {
     setRoom()
     renderHook(() => usePlayer())
     deliver(EVENTS.PLAYER_PRELOAD, { track })
@@ -285,6 +290,38 @@ describe('a PLAYER_PLAY announcement delivered twice', () => {
     expect(usePlayerStore.getState()).toMatchObject({ audioLoadPhase: 'buffering', audioLoadProgress: 0.25 })
 
     act(() => audio.instances[0].finishLoad())
+    expect(usePlayerStore.getState()).toMatchObject({
+      audioLoadPhase: 'waiting',
+      audioLoadProgress: null,
+      audioLoadedBytes: null,
+    })
+
+    deliverPlay()
+    act(() => vi.advanceTimersByTime(1_000))
+    expect(usePlayerStore.getState().audioLoadPhase).toBe('idle')
+  })
+
+  it('clears the waiting state on pause or disconnect during ready-gate wait', () => {
+    setRoom()
+    renderHook(() => usePlayer())
+    deliverPrepare()
+    act(() => audio.instances[0].finishLoad())
+    expect(usePlayerStore.getState().audioLoadPhase).toBe('waiting')
+
+    deliver(EVENTS.PLAYER_PAUSE, {
+      playState: {
+        isPlaying: false,
+        currentTime: 0,
+        serverTimestamp: 100_500,
+        serverTimeToExecute: 100_500,
+        revision: 2,
+      },
+    })
+    expect(usePlayerStore.getState().audioLoadPhase).toBe('idle')
+
+    deliver(EVENTS.PLAYER_PREPARE, { track, revision: 3, deadlineAt: 104_000 })
+    expect(usePlayerStore.getState().audioLoadPhase).toBe('waiting')
+    deliver('disconnect', undefined)
     expect(usePlayerStore.getState().audioLoadPhase).toBe('idle')
   })
 

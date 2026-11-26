@@ -251,7 +251,16 @@ describe('PlayerControls audio loading indicator', () => {
     expect(ringEl()?.querySelectorAll('circle')[1]?.getAttribute('stroke-dashoffset')).toBe('0')
     expect(waveEl()?.getAttribute('data-wave-state')).toBe('decoding')
 
-    // 5. Return to idle cleans up ring immediately and finishes AnimatePresence cross-fade
+    // 5. Waiting for other room members reuses the indeterminate song loading animation
+    act(() => usePlayerStore.getState().setAudioLoadState({ phase: 'waiting', progress: null, loadedBytes: null }))
+    expect(ringEl()).not.toBeNull()
+    expect(ringEl()?.getAttribute('data-ring-mode')).toBe('indeterminate')
+    expect(ringEl()?.getAttribute('class')).toContain('animate-spin')
+    expect(waveEl()?.getAttribute('data-wave-state')).toBe('loading')
+    expect(sliderLoadingEl()).not.toBeNull()
+    expect(button('等待房间同步')?.getAttribute('aria-busy')).toBe('true')
+
+    // 6. Return to idle cleans up ring immediately and finishes AnimatePresence cross-fade
     act(() => usePlayerStore.getState().setAudioLoadState({ phase: 'idle' }))
     expect(ringEl()).toBeNull()
     expect(sliderBufferedEl()).toBeNull()
