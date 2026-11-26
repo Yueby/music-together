@@ -199,22 +199,20 @@ describe('PlayerControls audio loading indicator', () => {
     expect(button('播放')?.getAttribute('aria-busy')).toBe('false')
   })
 
-  it('transitions through buffering, downloading, decoding, and idle with text-free ring + 3-bar wave animations', async () => {
+  it('transitions through buffering, downloading, decoding, and idle with slider progress + 3-bar wave animations (no play-button ring)', async () => {
     vi.useFakeTimers()
     const onPlay = vi.fn()
     const onNext = vi.fn()
     usePlayerStore.setState({ currentTrack: sampleTrack, duration: sampleTrack.duration, isPlaying: false })
     show('keep', { onPlay, onNext })
 
-    // 1. Buffering revealed at 300ms — orbiting perimeter arc + 3-bar wave, zero text status prompts
+    // 1. Buffering revealed at 300ms — slider shimmer + 3-bar wave, no outer button ring or text status prompts
     act(() => usePlayerStore.getState().setAudioLoadState({ phase: 'buffering' }))
     await act(async () => {
       await vi.advanceTimersByTimeAsync(300)
     })
     expect(statusEl()).toBeNull()
-    expect(ringEl()).not.toBeNull()
-    expect(ringEl()?.getAttribute('data-ring-mode')).toBe('indeterminate')
-    expect(ringEl()?.getAttribute('class')).toContain('animate-spin')
+    expect(ringEl()).toBeNull()
     expect(sliderLoadingEl()).not.toBeNull()
     expect(sliderBufferedEl()).toBeNull()
 
@@ -236,46 +234,34 @@ describe('PlayerControls audio loading indicator', () => {
     act(() => button('下一首')!.click())
     expect(onNext).toHaveBeenCalledOnce()
 
-    // 2. Downloading with known percentage renders determinate SVG progress ring and buffered slider bar
+    // 2. Downloading with known percentage renders buffered slider bar without an outer progress ring
     act(() => usePlayerStore.getState().setAudioLoadState({ phase: 'downloading', progress: 0.62, loadedBytes: 2_100_000 }))
     expect(statusEl()).toBeNull()
-    expect(ringEl()).not.toBeNull()
-    expect(ringEl()?.getAttribute('data-ring-mode')).toBe('determinate')
-    expect(ringEl()?.getAttribute('class')).not.toContain('animate-spin')
-    const progressCircle = ringEl()?.querySelectorAll('circle')[1]
-    const dasharray = Number(progressCircle?.getAttribute('stroke-dasharray'))
-    const dashoffset = Number(progressCircle?.getAttribute('stroke-dashoffset'))
-    expect(dasharray).toBeGreaterThan(0)
-    expect(dashoffset).toBeCloseTo(dasharray * 0.38, 1)
+    expect(ringEl()).toBeNull()
     expect(sliderBufferedEl()?.style.width).toBe('62%')
     expect(sliderLoadingEl()).toBeNull()
 
-    // 3. Downloading with unknown total falls back to indeterminate orbiting ring + slider shimmer
+    // 3. Downloading with unknown total falls back to slider shimmer
     act(() => usePlayerStore.getState().setAudioLoadState({ phase: 'downloading', progress: null, loadedBytes: 512 * 1024 }))
     expect(statusEl()).toBeNull()
-    expect(ringEl()?.getAttribute('data-ring-mode')).toBe('indeterminate')
-    expect(ringEl()?.getAttribute('class')).toContain('animate-spin')
+    expect(ringEl()).toBeNull()
     expect(sliderBufferedEl()).toBeNull()
     expect(sliderLoadingEl()).not.toBeNull()
 
-    // 4. Decoding holds full 100% perimeter ring and calm decoding wave
+    // 4. Decoding switches wave to calm decoding state without an outer ring
     act(() => usePlayerStore.getState().setAudioLoadState({ phase: 'decoding', progress: 1 }))
     expect(statusEl()).toBeNull()
-    expect(ringEl()?.getAttribute('data-ring-mode')).toBe('decoding')
-    expect(ringEl()?.getAttribute('class')).not.toContain('animate-spin')
-    expect(ringEl()?.querySelectorAll('circle')[1]?.getAttribute('stroke-dashoffset')).toBe('0')
+    expect(ringEl()).toBeNull()
     expect(waveEl()?.getAttribute('data-wave-state')).toBe('decoding')
 
-    // 5. Waiting for other room members reuses the indeterminate song loading animation
+    // 5. Waiting for other room members reuses the loading wave + slider shimmer
     act(() => usePlayerStore.getState().setAudioLoadState({ phase: 'waiting', progress: null, loadedBytes: null }))
-    expect(ringEl()).not.toBeNull()
-    expect(ringEl()?.getAttribute('data-ring-mode')).toBe('indeterminate')
-    expect(ringEl()?.getAttribute('class')).toContain('animate-spin')
+    expect(ringEl()).toBeNull()
     expect(waveEl()?.getAttribute('data-wave-state')).toBe('loading')
     expect(sliderLoadingEl()).not.toBeNull()
     expect(button('等待房间同步')?.getAttribute('aria-busy')).toBe('true')
 
-    // 6. Return to idle cleans up ring immediately and finishes AnimatePresence cross-fade
+    // 6. Return to idle cleans up slider loading immediately and finishes AnimatePresence cross-fade
     act(() => usePlayerStore.getState().setAudioLoadState({ phase: 'idle' }))
     expect(ringEl()).toBeNull()
     expect(sliderBufferedEl()).toBeNull()
@@ -288,7 +274,7 @@ describe('PlayerControls audio loading indicator', () => {
     expect(statusEl()).toBeNull()
   })
 
-  it('respects prefers-reduced-motion by disabling orbiting ring spin and using calm static wave bars', async () => {
+  it('respects prefers-reduced-motion by using calm static wave bars without an outer ring', async () => {
     vi.useFakeTimers()
     mockMatchMedia(true)
     usePlayerStore.setState({ currentTrack: sampleTrack, duration: sampleTrack.duration })
@@ -299,7 +285,7 @@ describe('PlayerControls audio loading indicator', () => {
       await vi.advanceTimersByTimeAsync(350)
     })
 
-    expect(ringEl()?.getAttribute('class')).not.toContain('animate-spin')
+    expect(ringEl()).toBeNull()
     const bars = waveEl()?.querySelectorAll('[data-wave-bar]')
     expect(bars?.length).toBe(3)
     for (const bar of bars ?? []) {
