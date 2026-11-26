@@ -23,8 +23,7 @@
 
 ## 字体
 
-- **主字体**：Plus Jakarta Sans（通过 `<link>` 在 `index.html` 加载）
-- **回退**：system-ui, -apple-system, sans-serif
+- **字体栈**：系统无衬线字体栈（`system-ui, -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, 'PingFang SC', 'Hiragino Sans GB', 'Microsoft YaHei', sans-serif`），不加载外部 Google Fonts 以避免阻塞首屏渲染与国内网络超时
 
 ## 圆角
 

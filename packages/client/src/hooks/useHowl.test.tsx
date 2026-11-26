@@ -161,6 +161,7 @@ describe('useHowl track loading', () => {
 
   it('retries mid-stream errors after load using the latest playback position', () => {
     vi.spyOn(console, 'warn').mockImplementation(() => {})
+    const nowSpy = vi.spyOn(Date, 'now').mockReturnValue(1_700_000_000_000)
     bridge.allowLoadRetry = true
     try {
       act(() => playback.loadTrack(track, 0, true))
@@ -178,8 +179,9 @@ describe('useHowl track loading', () => {
       expect(bridge.create).toHaveBeenCalledTimes(2)
       expect(usePlayerStore.getState().currentTime).toBe(47)
 
+      nowSpy.mockReturnValue(1_700_000_000_250)
       act(() => retryOptions.onload?.())
-      expect(retrySound.seek).toHaveBeenCalledWith(47)
+      expect(retrySound.seek).toHaveBeenCalledWith(47.25)
     } finally {
       bridge.allowLoadRetry = false
     }

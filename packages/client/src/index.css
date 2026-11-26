@@ -5,8 +5,6 @@
    (toasts then render unstyled in the bottom-left corner). Shipping them in the stylesheet works everywhere. */
 @import 'sonner/dist/styles.css';
 
-/* Fonts are loaded via <link> in index.html */
-
 @theme inline {
   --radius-sm: calc(var(--radius) - 4px);
   --radius-md: calc(var(--radius) - 2px);
@@ -96,9 +94,14 @@
   body {
     @apply bg-background text-foreground antialiased;
     font-family:
-      'Plus Jakarta Sans',
       system-ui,
       -apple-system,
+      BlinkMacSystemFont,
+      'Segoe UI',
+      Roboto,
+      'PingFang SC',
+      'Hiragino Sans GB',
+      'Microsoft YaHei',
       sans-serif;
   }
 }

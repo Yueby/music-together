@@ -8,7 +8,7 @@
 | --- | --- | --- | --- |
 | UI | react / react-dom | ^19.3.1 | UI 基础 |
 | UI | radix-ui / shadcn/ui | ^1.8.1 / — | 无障碍 UI 原语与项目组件 |
-| 样式 | tailwindcss / @tailwindcss/vite | ^4.3.3 | 原子化 CSS 与 Vite 集成 |
+| 样式 | tailwindcss / @tailwindcss/vite | ^4.3.5 | 原子化 CSS 与 Vite 集成 |
 | 状态 | zustand | ^5.1.0 | 客户端状态管理 |
 | 请求缓存 | @tanstack/react-query | ^5.108.4 | 搜索、发现、歌手、歌单与歌词客户端缓存和并发去重 |
 | 路由 | react-router | ^8.5.2 | 客户端路由（v8 ESM；仓库统一使用 Node >=24.15.0） |
@@ -18,7 +18,7 @@
 | 虚拟列表 | @tanstack/react-virtual | ^3.14.26 | 搜索和歌单大列表 |
 | 拖拽排序 | @dnd-kit/core / sortable / utilities | ^6.3.1 / ^10.0.0 / ^3.2.2 | 播放队列触摸/指针/键盘拖拽排序 |
 | 快捷键 | tinykeys | ^4.0.1 | 房间内全局播放与搜索快捷键 |
-| 图形 | @pixi/* | 7.x | 歌词背景渲染与滤镜 |
+| 图形 | @pixi/* | 7.x | Web 端歌词背景渲染与滤镜（`mapp` 打包时通过 `pixiStub` 别名剔除） |
 | 工具 | nanoid / sonner / lucide-react | 当前锁定版本 | ID、通知、图标 |
 
 ## Server 核心依赖
@@ -34,8 +34,8 @@
 | @neteasecloudmusicapienhanced/api | ^4.41.1 | 网易云登录、用户、歌单及登录态播放 URL API |
 | dotenv | ^18.0.10 | 环境变量加载 |
 | zod | ^4.6.7 | 运行时输入验证 |
-| rate-limiter-flexible | ^11.2.3 | Socket/聊天限流 |
-| express-rate-limit | ^8.7.2 | 音乐 REST 与封面代理 HTTP 限流 |
+| rate-limiter-flexible | ^11.5.0 | Socket/聊天限流 |
+| express-rate-limit | ^8.7.5 | 音乐 REST 与封面代理 HTTP 限流 |
 | lru-cache | ^11.5.3 | 搜索、曲目和资源缓存 |
 | p-limit | ^7.3.3 | 外部请求并发控制 |
 | qrcode | ^1.5.4 | 酷狗登录二维码编码 |
@@ -66,14 +66,14 @@ QQ 音乐搜索使用腾讯 `zzc` 签名访问 `musics.fcg`，避免未签名 `m
 | TypeScript ~7.0.2 | all | `@typescript/native` 使用 `typescript` 别名，供原生编译器使用 |
 | Vite ^8.3.8 | client | 前端构建 |
 | vite-plugin-pwa ^2.0.0 | client | 仅 Web SPA 构建生成 Manifest 与 Service Worker（不预缓存 HTML、导航走 `NetworkFirst` 并跳过 `/api/*` 与 `/socket.io/*`，配合 `vite:preloadError` 自动刷新与 `/assets` 404，不影响 `mapp`） |
-| ESLint ^10.14.0 | client | 代码检查 |
-| Vitest ^5.0.5 | root | Node/jsdom 单元与组件测试 |
+| ESLint ^10.15.0 | client | 代码检查 |
+| Vitest ^5.1.1 | root | Node/jsdom 单元与组件测试 |
 | Testing Library | client | React 组件行为测试 |
-| jsdom ^30.1.3 | client | 浏览器 DOM 测试环境 |
+| jsdom ^31.0.1 | client | 浏览器 DOM 测试环境 |
 | tsx ^4.23.15 | server | 服务端开发热重载 |
 | shadcn ^4.23.0 | client | shadcn/ui 组件生成 CLI |
-| Prettier ^3.9.10 | root | 代码格式化 |
-| concurrently ^10.0.6 | root | 并行启动前后端 |
+| Prettier ^3.10.1 | root | 代码格式化 |
+| concurrently ^10.0.7 | root | 并行启动前后端 |
 
 核心依赖升级需核对 API 变化，并执行测试、类型检查、lint 和生产依赖安全审计；构建验证按需执行。
 

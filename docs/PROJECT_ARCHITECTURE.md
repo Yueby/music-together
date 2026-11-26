@@ -23,8 +23,8 @@
 
 ### 技术栈
 
-- **前端**: React 19 + Vite 7 + TypeScript 5.9 + Tailwind CSS v4 + shadcn/ui + Zustand
-- **后端**: Node.js + Express 4 + Socket.IO 4 + @meting/core
+- **前端**: React 19 + Vite 8 + TypeScript 6 + Tailwind CSS v4 + shadcn/ui + Zustand
+- **后端**: Node.js + Express 5 + Socket.IO 4 + @meting/core
 - **Monorepo**: pnpm workspaces（`client`、`server`、`shared`，以及独立的微应用验证包 `mapp`）
 
 ---

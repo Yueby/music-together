@@ -21,7 +21,9 @@ export function createMappClientConfig(roomUrl: string | undefined, version: str
     ['@/lib/hostRuntime', `${compat}hostModules/hostRuntime.ts`],
     ['@/lib/storageBackend', `${compat}storageBackend.ts`],
     ['@', clientSource],
-  ].map(([find, replacement]) => ({ find, replacement }))
+  ]
+    .map(([find, replacement]) => ({ find: find as string | RegExp, replacement }))
+    .concat({ find: /^@pixi\/.+$/, replacement: `${compat}pixiStub.ts` })
   return {
     base: './',
     plugins: [react(), tailwindcss(), wasm()],

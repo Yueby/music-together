@@ -2,7 +2,7 @@
 
 ## 环境要求
 
-- Node.js >= 24.15.0（同时满足 React Router 8、Vite 8 与 jsdom 30 的运行时要求）
+- Node.js >= 24.15.0（同时满足 React Router 8、Vite 8 与 jsdom 31 的运行时要求）
 - pnpm >= 11（仓库锁定 `pnpm@11.21.0`）
 
 ## 快速启动
@@ -49,8 +49,10 @@ pnpm test
 # 监听测试
 pnpm test:watch
 
-# 前端类型与代码检查
+# 类型与代码检查
 pnpm --filter @music-together/client typecheck
+pnpm --filter @music-together/server typecheck
+pnpm --filter @music-together/mapp typecheck
 pnpm --filter @music-together/client lint
 
 # 构建所有 workspace 包
