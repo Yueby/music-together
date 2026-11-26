@@ -46,8 +46,19 @@ export function UserPopover() {
   return (
     <Popover open={open} onOpenChange={handleOpenChange}>
       <PopoverTrigger asChild>
-        <Button variant="ghost" size="icon" className="h-9 w-9 rounded-full border border-border/60">
-          {initial ? <span className="text-sm font-semibold">{initial}</span> : <CircleUser className="h-5 w-5" />}
+        <Button
+          variant="ghost"
+          size="icon"
+          className="h-9 w-9 min-h-11 min-w-11 rounded-full border border-border/60 sm:min-h-0 sm:min-w-0"
+          aria-label={savedNickname ? `个人设置（${savedNickname}）` : '个人设置'}
+        >
+          {initial ? (
+            <span aria-hidden="true" className="text-sm font-semibold">
+              {initial}
+            </span>
+          ) : (
+            <CircleUser aria-hidden="true" className="h-5 w-5" />
+          )}
         </Button>
       </PopoverTrigger>
       <PopoverContent align="end" className="w-64">

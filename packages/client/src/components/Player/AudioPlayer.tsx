@@ -51,6 +51,33 @@ function getProxiedCoverUrl(coverUrl: string): string {
   return coverUrl
 }
 
+function FluidBackground({ album }: { album: string | HTMLImageElement }) {
+  const isPlaying = usePlayerStore((s) => s.isPlaying)
+  const hasLyrics = usePlayerStore((s) => Boolean(s.ttmlLines?.length || s.lyric))
+  const bgRenderer = useSettingsStore((s) => s.bgRenderer)
+  const bgStaticMode = useSettingsStore((s) => s.bgStaticMode)
+  const bgReactToLowFreq = useSettingsStore((s) => s.bgReactToLowFreq)
+  const bgFps = useSettingsStore((s) => s.bgFps)
+  const bgFlowSpeed = useSettingsStore((s) => s.bgFlowSpeed)
+  const bgRenderScale = useSettingsStore((s) => s.bgRenderScale)
+  const lowFreqVolume = usePlayerStore((s) => (bgReactToLowFreq ? s.lowFreqVolume : 1))
+
+  return (
+    <BackgroundRender
+      album={album}
+      renderer={usesMeshRenderer(bgRenderer, hostRuntime) ? MeshGradientRenderer : PixiRenderer}
+      playing={isPlaying}
+      hasLyric={hasLyrics}
+      lowFreqVolume={lowFreqVolume}
+      staticMode={bgStaticMode}
+      fps={bgFps}
+      flowSpeed={bgFlowSpeed}
+      renderScale={bgRenderScale}
+      style={FULL_SIZE_STYLE}
+    />
+  )
+}
+
 interface AudioPlayerProps {
   onPlay: () => void
   onPause: () => void
@@ -74,15 +101,6 @@ export function AudioPlayer({
 }: AudioPlayerProps) {
   const currentTrack = usePlayerStore((s) => s.currentTrack)
   const { activeVote, castVote, startVote } = useVote()
-  const isPlaying = usePlayerStore((s) => s.isPlaying)
-  const hasLyrics = usePlayerStore((s) => Boolean(s.ttmlLines?.length || s.lyric))
-  const lowFreqVolume = usePlayerStore((s) => s.lowFreqVolume)
-  const bgRenderer = useSettingsStore((s) => s.bgRenderer)
-  const bgStaticMode = useSettingsStore((s) => s.bgStaticMode)
-  const bgReactToLowFreq = useSettingsStore((s) => s.bgReactToLowFreq)
-  const bgFps = useSettingsStore((s) => s.bgFps)
-  const bgFlowSpeed = useSettingsStore((s) => s.bgFlowSpeed)
-  const bgRenderScale = useSettingsStore((s) => s.bgRenderScale)
   const { ref: playerRef, isPortrait } = useContainerPortrait()
 
 
@@ -130,18 +148,7 @@ export function AudioPlayer({
         <div className="pointer-events-none absolute inset-0 z-0 opacity-80 saturate-[1.3]">
           {/* Decorative only: if the renderer cannot start (e.g. a host forbidding WebGL setup), drop it quietly. */}
           <ErrorBoundary fallback={null} resetKeys={[proxiedCover]}>
-            <BackgroundRender
-              album={backgroundAlbum}
-              renderer={usesMeshRenderer(bgRenderer, hostRuntime) ? MeshGradientRenderer : PixiRenderer}
-              playing={isPlaying}
-              hasLyric={hasLyrics}
-              lowFreqVolume={bgReactToLowFreq ? lowFreqVolume : 1}
-              staticMode={bgStaticMode}
-              fps={bgFps}
-              flowSpeed={bgFlowSpeed}
-              renderScale={bgRenderScale}
-              style={FULL_SIZE_STYLE}
-            />
+            <FluidBackground album={backgroundAlbum} />
           </ErrorBoundary>
         </div>
       )}

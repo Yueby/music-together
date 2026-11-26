@@ -1,5 +1,5 @@
 import { dataUrlToBlob } from '@/lib/dataUrl'
-import { useEffect, useMemo } from 'react'
+import { useEffect, useState } from 'react'
 
 function createBlobUrl(dataUrl: string | undefined): string | undefined {
   const blob = dataUrl ? dataUrlToBlob(dataUrl) : null
@@ -17,10 +17,17 @@ function createBlobUrl(dataUrl: string | undefined): string | undefined {
  * be made, the original data URL is returned so a permissive host still shows the picture.
  */
 export function useDataImageUrl(dataUrl: string | undefined): string | undefined {
-  const blobUrl = useMemo(() => createBlobUrl(dataUrl), [dataUrl])
+  const [image, setImage] = useState<{ dataUrl: string | undefined; blobUrl: string }>()
+
   useEffect(() => {
-    if (!blobUrl) return
+    const blobUrl = createBlobUrl(dataUrl)
+    if (!blobUrl) {
+      setImage(undefined)
+      return
+    }
+    setImage({ dataUrl, blobUrl })
     return () => URL.revokeObjectURL(blobUrl)
-  }, [blobUrl])
-  return blobUrl ?? dataUrl
+  }, [dataUrl])
+
+  return image && image.dataUrl === dataUrl ? image.blobUrl : dataUrl
 }

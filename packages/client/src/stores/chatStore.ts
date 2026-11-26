@@ -14,7 +14,10 @@ interface ChatStore {
   reset: () => void
 }
 
-const getInitialChatOpen = () => typeof window !== 'undefined' && !window.matchMedia('(orientation: portrait)').matches
+const getInitialChatOpen = () =>
+  typeof window !== 'undefined' &&
+  typeof window.matchMedia === 'function' &&
+  !window.matchMedia('(orientation: portrait)').matches
 
 export const useChatStore = create<ChatStore>((set) => ({
   messages: [],

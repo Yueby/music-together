@@ -45,7 +45,7 @@ function VolumeControl({
         </TooltipTrigger>
         <TooltipContent>音量</TooltipContent>
         <PopoverContent side="top" align="center" className="flex w-44 items-center gap-2 rounded-xl px-3 py-2">
-          <Button variant="ghost" size="icon" className="h-7 w-7 shrink-0 text-white/70" onClick={toggleMute}>
+          <Button variant="ghost" size="icon" className="h-7 w-7 shrink-0 text-white/70" onClick={toggleMute} aria-label={volume === 0 ? '取消静音' : '静音'}>
             {volume === 0 ? <VolumeX className="size-4" /> : <Volume2 className="size-4" />}
           </Button>
           <Slider min={0} max={100} value={[volume * 100]} onValueChange={([v]) => setVolume(v / 100)} />

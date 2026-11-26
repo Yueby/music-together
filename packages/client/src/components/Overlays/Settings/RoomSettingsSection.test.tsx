@@ -91,3 +91,54 @@ describe('RoomSettingsSection queue mode', () => {
     expect(hints()).toHaveLength(labels.length)
   })
 })
+
+describe('RoomSettingsSection accessibility & touch targets', () => {
+  it('labels save/cancel room name buttons with mobile-friendly touch targets', () => {
+    show('owner', 'keep')
+    const editBtn = container.querySelector<HTMLButtonElement>('button[aria-label="编辑房间名"]')
+    expect(editBtn).not.toBeNull()
+    expect(editBtn?.className).toContain('min-h-11')
+    expect(editBtn?.className).toContain('min-w-11')
+
+    act(() => editBtn!.click())
+
+    const saveBtn = container.querySelector<HTMLButtonElement>('button[aria-label="保存房间名称"]')
+    const cancelBtn = container.querySelector<HTMLButtonElement>('button[aria-label="取消编辑"]')
+    expect(saveBtn).not.toBeNull()
+    expect(cancelBtn).not.toBeNull()
+    expect(saveBtn?.className).toContain('min-h-11')
+    expect(cancelBtn?.className).toContain('min-h-11')
+
+    act(() => cancelBtn!.click())
+    expect(container.querySelector('button[aria-label="保存房间名称"]')).toBeNull()
+  })
+
+  it('renders the copyable room password as a keyboard-accessible button', () => {
+    const room = {
+      id: 'ROOM01',
+      name: 'Room',
+      creatorId: 'me',
+      hostId: 'me',
+      hasPassword: true,
+      audioQuality: 320,
+      queue: [],
+      currentTrack: null,
+      users: [{ id: 'me', nickname: 'Me', role: 'owner' }],
+      playState: { isPlaying: false, currentTime: 0, serverTimestamp: 0, revision: 0 },
+      playMode: 'loop-all',
+      queueMode: 'keep',
+    } as unknown as RoomState
+    useRoomStore.setState({ room, currentUser: room.users[0], roomPassword: 'secret-pass' })
+    act(() =>
+      root.render(
+        <TooltipProvider>
+          <RoomSettingsSection onUpdateSettings={vi.fn()} />
+        </TooltipProvider>,
+      ),
+    )
+
+    const copyBtn = container.querySelector<HTMLButtonElement>('button[type="button"][aria-label="复制房间密码"]')
+    expect(copyBtn).not.toBeNull()
+    expect(copyBtn?.textContent).toContain('secret-pass')
+  })
+})

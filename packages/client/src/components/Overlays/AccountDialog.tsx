@@ -22,7 +22,7 @@ export function AccountDialog({ open, onOpenChange }: AccountDialogProps) {
   if (!hostRuntime.platformAccounts) return null
   return (
     <ResponsiveDialog open={open} onOpenChange={onOpenChange}>
-      <ResponsiveDialogContent className="flex h-[calc(var(--app-vh)*0.7)] flex-col gap-0 overflow-hidden p-0 md:max-w-[75vw] lg:max-w-[60vw]">
+      <ResponsiveDialogContent className="flex h-[calc(var(--app-dvh)*0.7)] flex-col gap-0 overflow-hidden p-0 md:max-w-[75vw] lg:max-w-[60vw]">
         <AccountDialogBody />
       </ResponsiveDialogContent>
     </ResponsiveDialog>

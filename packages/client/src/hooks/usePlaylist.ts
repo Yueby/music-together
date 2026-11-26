@@ -34,54 +34,6 @@ function buildPlaylistUrl(
   return `${SERVER_URL}/api/music/${path}?${params.toString()}`
 }
 
-/**
- * Extract a playlist ID from a URL or raw ID string.
- * Supports common URL formats for netease, tencent, and kugou.
- */
-export function parsePlaylistInput(input: string, source: MusicSource): string | null {
-  const trimmed = input.trim()
-  if (!trimmed) return null
-
-  // If it looks like a plain numeric/alphanumeric ID, return as-is
-  if (/^[\w-]+$/.test(trimmed)) return trimmed
-
-  try {
-    const url = new URL(trimmed)
-
-    switch (source) {
-      case 'netease': {
-        // https://music.163.com/playlist?id=12345
-        // https://music.163.com/#/playlist?id=12345
-        const idParam = url.searchParams.get('id')
-        if (idParam) return idParam
-        const hashMatch = url.hash.match(/[?&]id=(\d+)/)
-        if (hashMatch) return hashMatch[1]
-        const pathMatch = url.pathname.match(/\/playlist\/(\d+)/)
-        if (pathMatch) return pathMatch[1]
-        break
-      }
-      case 'tencent': {
-        // https://y.qq.com/n/ryqq/playlist/12345.html
-        const qqMatch = url.pathname.match(/\/playlist\/(\d+)/)
-        if (qqMatch) return qqMatch[1]
-        break
-      }
-      case 'kugou': {
-        // Various kugou URL formats
-        const kgMatch = url.pathname.match(/(\d+)/)
-        if (kgMatch) return kgMatch[1]
-        break
-      }
-    }
-  } catch {
-    // Not a URL, try to extract numbers
-    const numMatch = trimmed.match(/(\d{4,})/)
-    if (numMatch) return numMatch[1]
-  }
-
-  return null
-}
-
 /** One request for a list: what is being read, and (for the caller's own lists) the room whose account reads it. */
 interface PlaylistContext {
   source: MusicSource

@@ -6,7 +6,7 @@ import type { LyricLine } from '@applemusic-like-lyrics/core'
 import '@applemusic-like-lyrics/core/style.css'
 import { parseLrc } from '@applemusic-like-lyrics/lyric'
 import { LyricPlayer, type LyricPlayerRef } from '@applemusic-like-lyrics/react'
-import { useEffect, useMemo, useRef, useState } from 'react'
+import { useEffect, useMemo, useRef } from 'react'
 
 const FULL_SIZE_STYLE = { width: '100%', height: '100%' } as const
 
@@ -30,7 +30,6 @@ export function LyricDisplay() {
   const tlyric = usePlayerStore((s) => s.tlyric)
   const lyricLoading = usePlayerStore((s) => s.lyricLoading)
   const ttmlLines = usePlayerStore((s) => s.ttmlLines)
-  const currentTime = usePlayerStore((s) => s.currentTime)
   const isPlaying = usePlayerStore((s) => s.isPlaying)
 
   const alignAnchor = useSettingsStore((s) => s.lyricAlignAnchor)
@@ -54,17 +53,19 @@ export function LyricDisplay() {
   const amllLines = ttmlLines ?? lrcLines
   const hasLyrics = amllLines.length > 0
   const playerRef = useRef<LyricPlayerRef>(null)
-  const [player, setPlayer] = useState<LyricPlayerRef['lyricPlayer']>()
-
   useEffect(() => {
-    const frameId = requestAnimationFrame(() => setPlayer(playerRef.current?.lyricPlayer))
-    return () => cancelAnimationFrame(frameId)
-  }, [hasLyrics])
-
-  useEffect(() => {
-    if (!player) return
-    return lyricPlayerBridge.attach(player)
-  }, [player])
+    if (amllLines.length === 0) return
+    let detach: (() => void) | undefined
+    // AMLL rebuilds its lyric view when the lines or word masking change.
+    const frameId = requestAnimationFrame(() => {
+      const player = playerRef.current?.lyricPlayer
+      if (player) detach = lyricPlayerBridge.attach(player)
+    })
+    return () => {
+      cancelAnimationFrame(frameId)
+      detach?.()
+    }
+  }, [amllLines, maskObsceneWordsMode, maskObsceneWordChar])
 
   if (!hasLyrics) {
     return (
@@ -90,7 +91,6 @@ export function LyricDisplay() {
       <LyricPlayer
         ref={playerRef}
         lyricLines={amllLines}
-        currentTime={Math.round(currentTime * 1000)}
         playing={isPlaying}
         alignAnchor={alignAnchor}
         alignPosition={alignPosition}

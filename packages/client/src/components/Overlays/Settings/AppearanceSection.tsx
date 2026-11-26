@@ -3,10 +3,38 @@ import { Separator } from '@/components/ui/separator'
 import { Slider } from '@/components/ui/slider'
 import { Switch } from '@/components/ui/switch'
 import { useSettingsStore } from '@/stores/settingsStore'
+import { useShallow } from 'zustand/react/shallow'
 import { SettingRow } from './SettingRow'
 
 export function AppearanceSection() {
-  const s = useSettingsStore()
+  const s = useSettingsStore(
+    useShallow((state) => ({
+      bgRenderer: state.bgRenderer,
+      bgRendererDefault: state.bgRendererDefault,
+      setBgRenderer: state.setBgRenderer,
+      resetBgRenderer: state.resetBgRenderer,
+      bgStaticMode: state.bgStaticMode,
+      bgStaticModeDefault: state.bgStaticModeDefault,
+      setBgStaticMode: state.setBgStaticMode,
+      resetBgStaticMode: state.resetBgStaticMode,
+      bgReactToLowFreq: state.bgReactToLowFreq,
+      bgReactToLowFreqDefault: state.bgReactToLowFreqDefault,
+      setBgReactToLowFreq: state.setBgReactToLowFreq,
+      resetBgReactToLowFreq: state.resetBgReactToLowFreq,
+      bgFps: state.bgFps,
+      bgFpsDefault: state.bgFpsDefault,
+      setBgFps: state.setBgFps,
+      resetBgFps: state.resetBgFps,
+      bgFlowSpeed: state.bgFlowSpeed,
+      bgFlowSpeedDefault: state.bgFlowSpeedDefault,
+      setBgFlowSpeed: state.setBgFlowSpeed,
+      resetBgFlowSpeed: state.resetBgFlowSpeed,
+      bgRenderScale: state.bgRenderScale,
+      bgRenderScaleDefault: state.bgRenderScaleDefault,
+      setBgRenderScale: state.setBgRenderScale,
+      resetBgRenderScale: state.resetBgRenderScale,
+    })),
+  )
 
   return (
     <div className="space-y-6">

@@ -17,28 +17,3 @@ export function getSocket(): TypedSocket {
   }
   return socket
 }
-
-export function connectSocket(): TypedSocket {
-  const s = getSocket()
-  if (!s.connected) {
-    s.connect()
-  }
-  return s
-}
-
-export function disconnectSocket(): void {
-  if (socket) {
-    socket.disconnect()
-    socket = null
-  }
-}
-
-/** Returns a promise that resolves when the socket is connected */
-export function waitForConnect(): Promise<TypedSocket> {
-  const s = getSocket()
-  if (s.connected) return Promise.resolve(s)
-  return new Promise((resolve) => {
-    s.once('connect', () => resolve(s))
-    if (!s.connected) s.connect()
-  })
-}
