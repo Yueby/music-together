@@ -3,6 +3,7 @@ import { ArrowDown, MessageSquare, Send } from 'lucide-react'
 import { Button } from '@/components/ui/button'
 import { Input } from '@/components/ui/input'
 import { Tooltip, TooltipContent, TooltipTrigger } from '@/components/ui/tooltip'
+import { cn } from '@/lib/utils'
 import { ChatMessage } from './ChatMessage'
 import { useChatStore } from '@/stores/chatStore'
 import { useRoomStore } from '@/stores/roomStore'
@@ -11,7 +12,7 @@ import { useChat } from '@/hooks/useChat'
 /** Threshold (px) to consider the user "at the bottom" of the scroll container */
 const SCROLL_BOTTOM_THRESHOLD = 80
 
-export function ChatPanel() {
+export function ChatPanel({ className }: { className?: string } = {}) {
   const [input, setInput] = useState('')
   const [showNewMsgHint, setShowNewMsgHint] = useState(false)
   const messagesEndRef = useRef<HTMLDivElement>(null)
@@ -52,7 +53,7 @@ export function ChatPanel() {
   }
 
   return (
-    <div className="flex min-h-0 w-full flex-1 flex-col border-l border-border/50 bg-background/60 backdrop-blur-sm">
+    <div className={cn('flex min-h-0 w-full flex-1 flex-col bg-background/60 backdrop-blur-sm', className)}>
       {/* Header */}
       <div className="flex shrink-0 items-center gap-2 border-b border-border/50 px-4 py-3">
         <MessageSquare className="h-4 w-4 text-muted-foreground" />
@@ -95,7 +96,7 @@ export function ChatPanel() {
       </div>
 
       {/* Input */}
-      <div className="flex shrink-0 gap-2 border-t border-border/50 px-3 py-3">
+      <div className="flex shrink-0 gap-2 border-t border-border/50 px-3 pt-3 pb-[calc(0.75rem+env(safe-area-inset-bottom,0px))]">
         <Input
           placeholder="输入消息..."
           value={input}

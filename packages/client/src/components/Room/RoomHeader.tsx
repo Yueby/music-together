@@ -119,9 +119,12 @@ export function RoomHeader({ onOpenSearch, onOpenSettings, onOpenAccount, onOpen
                   onPointerEnter={roomPopover.hasHover ? roomPopover.handlePointerEnter : undefined}
                   onPointerLeave={roomPopover.hasHover ? roomPopover.handlePointerLeave : undefined}
                   onClick={roomPopover.handleTriggerClick}
-                  className="group -my-1 inline-flex min-h-10 min-w-0 max-w-full cursor-pointer items-center gap-1 rounded-lg px-2 py-1 text-left transition-colors hover:bg-accent/60 active:bg-accent focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring sm:my-0 sm:h-7 sm:min-h-0"
+                  className="group -my-1.5 inline-flex min-h-11 min-w-0 max-w-full cursor-pointer items-center gap-1 rounded-lg px-2 py-1 text-left transition-colors hover:bg-accent/60 active:bg-accent focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring sm:my-0 sm:h-7 sm:min-h-0"
                 >
-                  <span className="max-w-[128px] truncate text-sm font-semibold text-foreground sm:max-w-[220px]">
+                  <span
+                    data-testid="room-header-title"
+                    className="max-w-[172px] truncate text-sm font-semibold text-foreground sm:max-w-[260px] md:max-w-[320px]"
+                  >
                     {roomName}
                   </span>
                   <ChevronDown
@@ -214,7 +217,7 @@ export function RoomHeader({ onOpenSearch, onOpenSettings, onOpenAccount, onOpen
                 <Button
                   variant="ghost"
                   size="sm"
-                  className="h-7 gap-1 px-1.5 text-sm text-muted-foreground"
+                  className="-my-1.5 h-7 min-h-11 min-w-11 shrink-0 gap-1 px-2 text-sm text-muted-foreground sm:my-0 sm:min-h-0 sm:min-w-0 sm:px-1.5"
                   onClick={onOpenMembers}
                   aria-label="查看成员"
                 >
@@ -294,7 +297,7 @@ export function RoomHeader({ onOpenSearch, onOpenSettings, onOpenAccount, onOpen
         </Popover>
       </div>
 
-      <div className="flex items-center gap-0.5 sm:gap-1">
+      <div className="flex shrink-0 items-center gap-0.5 sm:gap-1">
         <Tooltip>
           <TooltipTrigger asChild>
             <Button

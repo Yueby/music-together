@@ -35,7 +35,7 @@ import {
 } from '@dnd-kit/sortable'
 import { CSS } from '@dnd-kit/utilities'
 import { useAppAbility } from '@/providers/AbilityProvider'
-import { ArrowUpToLine, ChevronDown, ChevronUp, GripVertical, ListX, Music, Play, Trash2, User, X } from 'lucide-react'
+import { ArrowUpToLine, ChevronDown, ChevronUp, EllipsisVertical, GripVertical, ListX, Music, Play, Trash2, User, X } from 'lucide-react'
 import { toast } from 'sonner'
 import { MarqueeText } from '@/components/ui/marquee-text'
 import type { MusicSource } from '@music-together/shared'
@@ -120,6 +120,8 @@ function SortableQueueRow({
     disabled: !isDragEnabled,
   })
 
+  const hasActions = (!isCurrent && (canPlay || canVote)) || canReorder || canRemove || canVote
+
   return (
     <div
       style={{
@@ -187,124 +189,158 @@ function SortableQueueRow({
           )}
         </div>
 
-        {/* Track info */}
+        {/* Track info + inline requester badge (flow layout prevents long titles from colliding with the badge) */}
         <div className="min-w-0 flex-1">
-          <MarqueeText className={cn('text-sm', isCurrent && 'font-medium text-primary')}>{track.title}</MarqueeText>
+          <div className="flex min-w-0 items-center gap-1.5">
+            <MarqueeText className={cn('min-w-0 flex-1 text-sm', isCurrent && 'font-medium text-primary')}>
+              {track.title}
+            </MarqueeText>
+            {track.requestedBy && (
+              <Badge
+                variant="outline"
+                data-testid="queue-requester-badge"
+                className="h-4 max-w-[84px] shrink-0 gap-0.5 border-primary/30 bg-primary/10 px-1.5 py-0 text-[10px] font-normal text-primary"
+              >
+                <User className="h-2.5 w-2.5 shrink-0" />
+                <span className="truncate">{track.requestedBy}</span>
+              </Badge>
+            )}
+          </div>
           <MarqueeText className="text-xs text-muted-foreground">
             <ArtistNames track={track} />
           </MarqueeText>
         </div>
 
-        {/* Requester badge — absolute top-right inside item */}
-        {track.requestedBy && (
-          <Badge
-            variant="outline"
-            className="absolute right-2 top-1.5 z-10 h-4 gap-0.5 border-primary/30 bg-primary/10 px-1.5 py-0 text-[10px] font-normal text-primary"
+        {/* Touch devices: explicit visible trigger so row actions are always discoverable without hover */}
+        {isTouch && hasActions && !isDragging && (
+          <Button
+            variant="ghost"
+            size="icon"
+            className="h-9 w-9 shrink-0 text-muted-foreground"
+            onClick={(e) => {
+              e.stopPropagation()
+              onToggleTouchToolbar(track.id)
+            }}
+            aria-label={`更多操作 ${track.title}`}
+            aria-expanded={isActiveToolbar}
           >
-            <User className="h-2.5 w-2.5" />
-            {track.requestedBy}
-          </Badge>
+            <EllipsisVertical className="h-4 w-4" />
+          </Button>
         )}
 
-        {/* Actions — visible on hover (desktop) or tap (mobile); suppressed while dragging */}
-        <div
-          className={cn(
-            'absolute right-1 top-1/2 z-20 flex -translate-y-1/2 items-center gap-0.5',
-            'rounded-md border border-border/50 bg-popover px-1 py-0.5 shadow-md backdrop-blur-md',
-            'opacity-0 pointer-events-none transition-opacity',
-            !isDragging && 'group-hover:opacity-100 group-hover:pointer-events-auto',
-            !isDragging && 'group-focus-within:opacity-100 group-focus-within:pointer-events-auto',
-            !isDragging && isTouch && isActiveToolbar && 'opacity-100 pointer-events-auto',
-            !isTouch && isHoverDismissed && 'opacity-0 pointer-events-none',
-          )}
-          onClick={(e) => e.stopPropagation()}
-        >
-          {/* Play button — hidden for currently playing track */}
-          {!isCurrent && (canPlay || canVote) && (
-            <Tooltip delayDuration={400}>
-              <TooltipTrigger asChild>
-                <Button
-                  variant="ghost"
-                  size="icon"
-                  className="h-6 w-6 min-h-9 min-w-9 sm:min-h-0 sm:min-w-0"
-                  onClick={() => onPlayTrack(track)}
-                  aria-label={canPlay ? `播放 ${track.title}` : `投票播放 ${track.title}`}
-                >
-                  <Play className="h-3 w-3" />
-                </Button>
-              </TooltipTrigger>
-              <TooltipContent side="bottom">{canPlay ? '播放' : '投票播放'}</TooltipContent>
-            </Tooltip>
-          )}
-
-          {canReorder && (
-            <>
+        {/* Actions — visible on hover/focus (desktop) or explicit toggle/tap (touch); suppressed while dragging */}
+        {hasActions && (
+          <div
+            className={cn(
+              'absolute right-1 top-1/2 z-20 flex -translate-y-1/2 items-center gap-0.5',
+              'rounded-md border border-border/50 bg-popover px-1 py-0.5 shadow-md backdrop-blur-md',
+              'opacity-0 pointer-events-none transition-opacity',
+              !isDragging && !isTouch && 'group-hover:opacity-100 group-hover:pointer-events-auto',
+              !isDragging && !isTouch && 'group-focus-within:opacity-100 group-focus-within:pointer-events-auto',
+              !isDragging && isTouch && isActiveToolbar && 'opacity-100 pointer-events-auto',
+              !isTouch && isHoverDismissed && 'opacity-0 pointer-events-none',
+            )}
+            onClick={(e) => e.stopPropagation()}
+          >
+            {/* Play button — hidden for currently playing track */}
+            {!isCurrent && (canPlay || canVote) && (
               <Tooltip delayDuration={400}>
                 <TooltipTrigger asChild>
                   <Button
                     variant="ghost"
                     size="icon"
                     className="h-6 w-6 min-h-9 min-w-9 sm:min-h-0 sm:min-w-0"
-                    disabled={index === 0}
-                    onClick={() => onMoveUp(index)}
-                    aria-label={`上移 ${track.title}`}
+                    onClick={() => onPlayTrack(track)}
+                    aria-label={canPlay ? `播放 ${track.title}` : `投票播放 ${track.title}`}
                   >
-                    <ChevronUp className="h-3 w-3" />
+                    <Play className="h-3 w-3" />
                   </Button>
                 </TooltipTrigger>
-                <TooltipContent side="bottom">上移</TooltipContent>
+                <TooltipContent side="bottom">{canPlay ? '播放' : '投票播放'}</TooltipContent>
               </Tooltip>
+            )}
 
+            {canReorder && (
+              <>
+                <Tooltip delayDuration={400}>
+                  <TooltipTrigger asChild>
+                    <Button
+                      variant="ghost"
+                      size="icon"
+                      className="h-6 w-6 min-h-9 min-w-9 sm:min-h-0 sm:min-w-0"
+                      disabled={index === 0}
+                      onClick={() => onMoveUp(index)}
+                      aria-label={`上移 ${track.title}`}
+                    >
+                      <ChevronUp className="h-3 w-3" />
+                    </Button>
+                  </TooltipTrigger>
+                  <TooltipContent side="bottom">上移</TooltipContent>
+                </Tooltip>
+
+                <Tooltip delayDuration={400}>
+                  <TooltipTrigger asChild>
+                    <Button
+                      variant="ghost"
+                      size="icon"
+                      className="h-6 w-6 min-h-9 min-w-9 sm:min-h-0 sm:min-w-0"
+                      disabled={index === queueLength - 1}
+                      onClick={() => onMoveDown(index)}
+                      aria-label={`下移 ${track.title}`}
+                    >
+                      <ChevronDown className="h-3 w-3" />
+                    </Button>
+                  </TooltipTrigger>
+                  <TooltipContent side="bottom">下移</TooltipContent>
+                </Tooltip>
+
+                <Tooltip delayDuration={400}>
+                  <TooltipTrigger asChild>
+                    <Button
+                      variant="ghost"
+                      size="icon"
+                      className="h-6 w-6 min-h-9 min-w-9 sm:min-h-0 sm:min-w-0"
+                      onClick={(e) => onInsertAfterCurrent(track, e)}
+                      aria-label={`置顶 ${track.title}`}
+                    >
+                      <ArrowUpToLine className="h-3 w-3" />
+                    </Button>
+                  </TooltipTrigger>
+                  <TooltipContent side="bottom">置顶到当前播放下方</TooltipContent>
+                </Tooltip>
+              </>
+            )}
+
+            {(canRemove || canVote) && (
               <Tooltip delayDuration={400}>
                 <TooltipTrigger asChild>
                   <Button
                     variant="ghost"
                     size="icon"
-                    className="h-6 w-6 min-h-9 min-w-9 sm:min-h-0 sm:min-w-0"
-                    disabled={index === queueLength - 1}
-                    onClick={() => onMoveDown(index)}
-                    aria-label={`下移 ${track.title}`}
+                    className="h-6 w-6 min-h-9 min-w-9 sm:min-h-0 sm:min-w-0 text-destructive hover:text-destructive"
+                    onClick={() => onRemoveTrack(track)}
+                    aria-label={canRemove ? `移除 ${track.title}` : `投票移除 ${track.title}`}
                   >
-                    <ChevronDown className="h-3 w-3" />
+                    <Trash2 className="h-3 w-3" />
                   </Button>
                 </TooltipTrigger>
-                <TooltipContent side="bottom">下移</TooltipContent>
+                <TooltipContent side="bottom">{canRemove ? '移除' : '投票移除'}</TooltipContent>
               </Tooltip>
+            )}
 
-              <Tooltip delayDuration={400}>
-                <TooltipTrigger asChild>
-                  <Button
-                    variant="ghost"
-                    size="icon"
-                    className="h-6 w-6 min-h-9 min-w-9 sm:min-h-0 sm:min-w-0"
-                    onClick={(e) => onInsertAfterCurrent(track, e)}
-                    aria-label={`置顶 ${track.title}`}
-                  >
-                    <ArrowUpToLine className="h-3 w-3" />
-                  </Button>
-                </TooltipTrigger>
-                <TooltipContent side="bottom">置顶到当前播放下方</TooltipContent>
-              </Tooltip>
-            </>
-          )}
-
-          {(canRemove || canVote) && (
-            <Tooltip delayDuration={400}>
-              <TooltipTrigger asChild>
-                <Button
-                  variant="ghost"
-                  size="icon"
-                  className="h-6 w-6 min-h-9 min-w-9 sm:min-h-0 sm:min-w-0 text-destructive hover:text-destructive"
-                  onClick={() => onRemoveTrack(track)}
-                  aria-label={canRemove ? `移除 ${track.title}` : `投票移除 ${track.title}`}
-                >
-                  <Trash2 className="h-3 w-3" />
-                </Button>
-              </TooltipTrigger>
-              <TooltipContent side="bottom">{canRemove ? '移除' : '投票移除'}</TooltipContent>
-            </Tooltip>
-          )}
-        </div>
+            {isTouch && isActiveToolbar && (
+              <Button
+                variant="ghost"
+                size="icon"
+                className="h-6 w-6 min-h-9 min-w-9 text-muted-foreground"
+                onClick={() => onToggleTouchToolbar(track.id)}
+                aria-label={`收起操作 ${track.title}`}
+              >
+                <X className="h-3 w-3" />
+              </Button>
+            )}
+          </div>
+        )}
       </div>
     </div>
   )
@@ -405,15 +441,34 @@ export function QueueDrawer({ open, onOpenChange, onRemoveFromQueue, onReorderQu
     [],
   )
 
+  // Reset confirmClear if drawer closes or queue empties
+  useEffect(() => {
+    if (!open || queue.length === 0) {
+      if (confirmTimerRef.current) {
+        clearTimeout(confirmTimerRef.current)
+        confirmTimerRef.current = null
+      }
+      setConfirmClear(false)
+    }
+  }, [open, queue.length])
+
+  const handleCancelClear = useCallback(() => {
+    if (confirmTimerRef.current) {
+      clearTimeout(confirmTimerRef.current)
+      confirmTimerRef.current = null
+    }
+    setConfirmClear(false)
+  }, [])
+
   const handleClear = useCallback(() => {
     if (!confirmClear) {
       setConfirmClear(true)
-      // Auto-dismiss after 3s
+      // Auto-dismiss after 4s
       if (confirmTimerRef.current) clearTimeout(confirmTimerRef.current)
       confirmTimerRef.current = setTimeout(() => {
         confirmTimerRef.current = null
         setConfirmClear(false)
-      }, 3000)
+      }, 4000)
       return
     }
     if (confirmTimerRef.current) {
@@ -514,20 +569,43 @@ export function QueueDrawer({ open, onOpenChange, onRemoveFromQueue, onReorderQu
             </DrawerTitle>
             <div className="flex items-center gap-1">
               {canRemove && queue.length > 0 && (
-                <Tooltip delayDuration={300}>
-                  <TooltipTrigger asChild>
+                confirmClear ? (
+                  <div className="flex items-center gap-1">
+                    <Button
+                      variant="destructive"
+                      size="sm"
+                      className="h-8 min-h-11 px-2.5 text-xs sm:h-7 sm:min-h-0"
+                      onClick={handleClear}
+                      aria-label="确认清空播放列表"
+                    >
+                      确认清空
+                    </Button>
                     <Button
                       variant="ghost"
-                      size="icon"
-                      className={cn('h-7 w-7', confirmClear && 'text-destructive hover:text-destructive')}
-                      onClick={handleClear}
-                      aria-label="清空播放列表"
+                      size="sm"
+                      className="h-8 min-h-11 px-2 text-xs sm:h-7 sm:min-h-0"
+                      onClick={handleCancelClear}
+                      aria-label="取消清空"
                     >
-                      <ListX className="h-4 w-4" />
+                      取消
                     </Button>
-                  </TooltipTrigger>
-                  <TooltipContent>{confirmClear ? '再次点击确认清空' : '清空播放列表'}</TooltipContent>
-                </Tooltip>
+                  </div>
+                ) : (
+                  <Tooltip delayDuration={300}>
+                    <TooltipTrigger asChild>
+                      <Button
+                        variant="ghost"
+                        size="icon"
+                        className="h-8 w-8 min-h-11 min-w-11 sm:h-7 sm:w-7 sm:min-h-0 sm:min-w-0"
+                        onClick={handleClear}
+                        aria-label="清空播放列表"
+                      >
+                        <ListX className="h-4 w-4" />
+                      </Button>
+                    </TooltipTrigger>
+                    <TooltipContent>清空播放列表</TooltipContent>
+                  </Tooltip>
+                )
               )}
               {!isMobile && (
                 <Button
@@ -544,7 +622,10 @@ export function QueueDrawer({ open, onOpenChange, onRemoveFromQueue, onReorderQu
           </div>
         </DrawerHeader>
 
-        <div ref={setScrollElement} className="min-h-0 flex-1 overflow-x-hidden overflow-y-auto px-2">
+        <div
+          ref={setScrollElement}
+          className="min-h-0 flex-1 overflow-x-hidden overflow-y-auto px-2 pb-[calc(0.5rem+env(safe-area-inset-bottom,0px))]"
+        >
           {queue.length === 0 ? (
             <div className="flex h-40 items-center justify-center text-muted-foreground">播放列表为空</div>
           ) : (

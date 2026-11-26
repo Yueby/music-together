@@ -9,6 +9,8 @@ interface SliderProps extends React.ComponentProps<typeof SliderPrimitive.Root> 
   bufferedValue?: number
   /** Show an indeterminate loading shimmer along the track when buffered progress is unknown. */
   loading?: boolean
+  /** Controls thumb visibility: `'always'` (default, touch-friendly for settings) or `'hover'` (sleek media scrubber). */
+  showThumb?: 'always' | 'hover'
 }
 
 function Slider({
@@ -19,6 +21,7 @@ function Slider({
   max = 100,
   bufferedValue,
   loading = false,
+  showThumb = 'always',
   ...props
 }: SliderProps) {
   const prefersReducedMotion = useReducedMotion()
@@ -95,8 +98,14 @@ function Slider({
       {Array.from({ length: _values.length }, (_, index) => (
         <SliderPrimitive.Thumb
           data-slot="slider-thumb"
+          data-show-thumb={showThumb}
           key={index}
-          className="border-white/50 ring-white/20 block size-4 shrink-0 rounded-full border bg-white shadow-sm opacity-0 transition-[color,box-shadow,opacity] hover:ring-4 focus-visible:ring-4 focus-visible:outline-hidden focus:opacity-100 group-hover/slider:opacity-100 disabled:pointer-events-none disabled:opacity-50"
+          className={cn(
+            'border-white/50 ring-white/20 block size-4 shrink-0 rounded-full border bg-white shadow-sm transition-[color,box-shadow,opacity] hover:ring-4 focus-visible:ring-4 focus-visible:outline-hidden disabled:pointer-events-none disabled:opacity-50',
+            showThumb === 'always'
+              ? 'opacity-100'
+              : 'opacity-0 focus:opacity-100 focus-visible:opacity-100 group-hover/slider:opacity-100 active:opacity-100',
+          )}
         />
       ))}
     </SliderPrimitive.Root>

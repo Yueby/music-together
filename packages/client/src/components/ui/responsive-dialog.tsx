@@ -74,7 +74,11 @@ function ResponsiveDialogContent({
   const isMobile = useIsResponsiveMobile()
 
   if (isMobile) {
-    return <DrawerContent className={className}>{children}</DrawerContent>
+    return (
+      <DrawerContent className={cn(className, 'mx-auto w-full')}>
+        {children}
+      </DrawerContent>
+    )
   }
 
   return (
@@ -91,7 +95,10 @@ function ResponsiveDialogContent({
 function ResponsiveDialogHeader({ className, ...props }: React.ComponentProps<'div'>) {
   const isMobile = useIsResponsiveMobile()
   return isMobile ? (
-    <DrawerHeader className={cn('text-left', className)} {...props} />
+    <DrawerHeader
+      className={cn('text-left', className, className?.includes('pr-14') && 'pr-4 sm:pr-6')}
+      {...props}
+    />
   ) : (
     <DialogHeader className={className} {...props} />
   )

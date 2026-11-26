@@ -34,10 +34,15 @@ export const TrackListItem = memo(function TrackListItem({
   return (
     <div
       style={style}
-      className={cn('group flex items-center gap-3 px-3 py-2.5 transition-colors hover:bg-muted/50', className)}
+      className={cn('group flex items-center gap-2.5 px-2.5 py-2.5 transition-colors hover:bg-muted/50 sm:gap-3 sm:px-3', className)}
     >
-      {/* Index */}
-      <span className="w-6 shrink-0 text-center text-xs tabular-nums text-muted-foreground">{index + 1}</span>
+      {/* Index — hidden on narrow mobile viewports to reclaim width for title & artist */}
+      <span
+        data-testid="track-index"
+        className="hidden w-6 shrink-0 text-center text-xs tabular-nums text-muted-foreground sm:inline-block"
+      >
+        {index + 1}
+      </span>
 
       {/* Cover thumbnail */}
       <ArtworkImage
@@ -66,8 +71,13 @@ export const TrackListItem = memo(function TrackListItem({
         </p>
       </div>
 
-      {/* Duration */}
-      <span className="shrink-0 text-xs tabular-nums text-muted-foreground">{formatDuration(track.duration)}</span>
+      {/* Duration — hidden on narrow mobile viewports to reclaim width for title & artist */}
+      <span
+        data-testid="track-duration"
+        className="hidden shrink-0 text-xs tabular-nums text-muted-foreground sm:inline"
+      >
+        {formatDuration(track.duration)}
+      </span>
 
       {/* Add / Top buttons */}
       <div className="flex shrink-0 items-center gap-1">

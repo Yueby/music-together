@@ -136,4 +136,17 @@ describe('RoomHeader room identity popover', () => {
     expect(document.body.querySelector('button[aria-label="复制房间号"]')).toBeNull()
     expect(document.body.querySelector('button[aria-label="复制房间链接"]')).toBeNull()
   })
+
+  it('gives the members button a 44px mobile touch target and widens room title max-width', () => {
+    renderHeader()
+
+    const membersBtn = container.querySelector<HTMLButtonElement>('button[aria-label="查看成员"]')
+    expect(membersBtn).not.toBeNull()
+    expect(membersBtn?.className).toContain('min-h-11')
+    expect(membersBtn?.className).toContain('min-w-11')
+
+    const title = container.querySelector('[data-testid="room-header-title"]')
+    expect(title?.className).toContain('max-w-[172px]')
+    expect(title?.className).toContain('sm:max-w-[260px]')
+  })
 })

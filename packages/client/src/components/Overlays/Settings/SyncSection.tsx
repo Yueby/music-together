@@ -130,7 +130,8 @@ export function SyncSection() {
                 setOffset(value)
               }}
               disabled={automatic}
-              className="min-h-8 w-full [&_[data-slot=slider-thumb]]:opacity-100"
+              showThumb="always"
+              className="min-h-8 w-full"
             />
             <div className="relative flex justify-between font-mono text-[11px] tabular-nums text-muted-foreground/70 select-none">
               <span>{formatSignedMs(AUDIO_LATENCY_MIN_MS)}</span>

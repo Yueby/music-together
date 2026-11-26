@@ -52,4 +52,23 @@ describe('TrackListItem thumbnail optimization', () => {
     expect(img).not.toBeNull()
     expect(img).toHaveAttribute('src', 'https://example.com/cover.jpg')
   })
+
+  it('hides index and duration below sm breakpoint to reclaim space on 375px screens', () => {
+    const { container } = renderComponent(
+      <TrackListItem
+        track={mockTrack}
+        index={0}
+        isAdded={false}
+        onAdd={vi.fn()}
+      />,
+    )
+    const indexEl = container.querySelector('[data-testid="track-index"]')
+    const durationEl = container.querySelector('[data-testid="track-duration"]')
+    expect(indexEl).not.toBeNull()
+    expect(durationEl).not.toBeNull()
+    expect(indexEl?.className).toContain('hidden')
+    expect(indexEl?.className).toContain('sm:inline-block')
+    expect(durationEl?.className).toContain('hidden')
+    expect(durationEl?.className).toContain('sm:inline')
+  })
 })

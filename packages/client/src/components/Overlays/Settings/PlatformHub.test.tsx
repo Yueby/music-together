@@ -100,6 +100,11 @@ function Hub({ session }: { session: AccountSession }) {
   return (
     <>
       <h2 data-testid="title">{pages.current?.title ?? '音乐账号'}</h2>
+      {pages.current && (
+        <button type="button" data-testid="back-btn" onClick={pages.back}>
+          返回
+        </button>
+      )}
       <PlatformHub session={session} pages={pages} />
     </>
   )
@@ -287,5 +292,29 @@ describe('PlatformHub', () => {
     expect(container.querySelector('[data-testid="detail"]')).not.toBeNull()
     render('tencent', true)
     expect(container.querySelector('[data-testid="detail"]')).toBeNull()
+  })
+
+  it('restores AccountHome scroll position when returning from a subview and resets on platform switch', () => {
+    render('netease', true)
+    const scroller = container.querySelector<HTMLDivElement>('[data-testid="account-home-scroll"]')!
+    expect(scroller).not.toBeNull()
+    scroller.scrollTop = 280
+    act(() => {
+      scroller.dispatchEvent(new Event('scroll'))
+    })
+
+    // Navigate into a playlist subview (AccountHome unmounts)
+    act(() => tile('每日歌单').click())
+    expect(container.querySelector('[data-testid="account-home-scroll"]')).toBeNull()
+
+    // Return to AccountHome — scroll position is restored
+    act(() => container.querySelector<HTMLButtonElement>('[data-testid="back-btn"]')!.click())
+    const restoredScroller = container.querySelector<HTMLDivElement>('[data-testid="account-home-scroll"]')!
+    expect(restoredScroller.scrollTop).toBe(280)
+
+    // Switch platform — scroll position resets to top
+    render('tencent', true)
+    const switchedScroller = container.querySelector<HTMLDivElement>('[data-testid="account-home-scroll"]')!
+    expect(switchedScroller.scrollTop).toBe(0)
   })
 })

@@ -11,7 +11,7 @@ import { usePlayerStore } from '@/stores/playerStore'
 import { useSettingsStore } from '@/stores/settingsStore'
 
 import { BackgroundRender, MeshGradientRenderer, PixiRenderer } from '@applemusic-like-lyrics/react'
-import { AnimatePresence, LayoutGroup, m } from 'motion/react'
+import { AnimatePresence, LayoutGroup, m, useReducedMotion } from 'motion/react'
 import { useCallback, useMemo, useState } from 'react'
 import { ErrorBoundary } from 'react-error-boundary'
 import { VoteBanner } from '../Vote/VoteBanner'
@@ -102,6 +102,7 @@ export function AudioPlayer({
   const currentTrack = usePlayerStore((s) => s.currentTrack)
   const { activeVote, castVote, startVote } = useVote()
   const { ref: playerRef, isPortrait } = useContainerPortrait()
+  const prefersReducedMotion = useReducedMotion()
 
 
   // 封面 URL 代理：解决 QQ 音乐 / 酷狗等 CDN 的 CORS 限制。
@@ -145,19 +146,44 @@ export function AudioPlayer({
     <div className="relative flex h-full flex-col overflow-hidden">
       {/* AMLL fluid dynamic background powered by pixi.js */}
       {backgroundAlbum && (
-        <div className="pointer-events-none absolute inset-0 z-0 opacity-80 saturate-[1.3]">
-          {/* Decorative only: if the renderer cannot start (e.g. a host forbidding WebGL setup), drop it quietly. */}
-          <ErrorBoundary fallback={null} resetKeys={[proxiedCover]}>
-            <FluidBackground album={backgroundAlbum} />
-          </ErrorBoundary>
+        <div className="pointer-events-none absolute inset-0 z-0">
+          <div className="h-full w-full opacity-80 saturate-[1.3]">
+            {/* Decorative only: if the renderer cannot start (e.g. a host forbidding WebGL setup), drop it quietly. */}
+            <ErrorBoundary fallback={null} resetKeys={[proxiedCover]}>
+              <FluidBackground album={backgroundAlbum} />
+            </ErrorBoundary>
+          </div>
+          {/* Atmospheric dark scrim: keeps vibrant artwork hues while guaranteeing legible foreground text/controls */}
+          <div
+            aria-hidden="true"
+            data-testid="player-bg-scrim"
+            className="absolute inset-0 bg-gradient-to-b from-black/35 via-black/45 to-black/65"
+          />
         </div>
       )}
 
-      {/* Content with padding */}
-      <div className="relative z-10 h-full p-5 md:p-[5%] lg:p-[5%]">
+      {/* Content with padding (includes safe-area clearance on mobile bottom edge) */}
+      <div className="relative z-10 flex h-full flex-col p-5 pb-[calc(1.25rem+env(safe-area-inset-bottom,0px))] md:p-[5%] lg:p-[5%]">
+        {/* Vote banner: dedicated in-flow top slot with AnimatePresence so exit plays and controls are never covered */}
+        <AnimatePresence initial={false}>
+          {activeVote && (
+            <m.div
+              key={activeVote.id}
+              data-testid="vote-banner-slot"
+              initial={prefersReducedMotion ? { opacity: 0 } : { opacity: 0, height: 0, marginBottom: 0 }}
+              animate={{ opacity: 1, height: 'auto', marginBottom: 12 }}
+              exit={prefersReducedMotion ? { opacity: 0 } : { opacity: 0, height: 0, marginBottom: 0 }}
+              transition={prefersReducedMotion ? { duration: 0.1 } : { duration: 0.2, ease: 'easeOut' }}
+              className="mx-auto w-full max-w-md shrink-0 overflow-hidden"
+            >
+              <VoteBanner vote={activeVote} onCastVote={castVote} />
+            </m.div>
+          )}
+        </AnimatePresence>
+
         <div
           ref={playerRef}
-          className={cn('flex h-full', isPortrait ? 'flex-col' : 'flex-row gap-[clamp(24px,3vw,48px)]')}
+          className={cn('flex min-h-0 flex-1', isPortrait ? 'flex-col' : 'flex-row gap-[clamp(24px,3vw,48px)]')}
         >
           {/* ----------------------------------------------------------------- */}
           {/* Mobile layout: dual-mode (cover view / lyric view)                */}
@@ -207,13 +233,6 @@ export function AudioPlayer({
                 <div className="relative z-10 w-full shrink-0 mx-auto" style={coverMaxStyleUnlessExpanded}>
                   <PlayerControls {...playerControlsProps} />
                 </div>
-
-                {/* Vote banner: absolute overlay at the bottom */}
-                {activeVote && (
-                  <div className="absolute bottom-0 left-1/2 z-20 w-full -translate-x-1/2 px-2 pb-2">
-                    <VoteBanner vote={activeVote} onCastVote={castVote} />
-                  </div>
-                )}
               </div>
             </LayoutGroup>
           ) : (
@@ -236,13 +255,6 @@ export function AudioPlayer({
                 <div className="w-full shrink-0 mx-auto" style={coverMaxStyle}>
                   <PlayerControls {...playerControlsProps} />
                 </div>
-                {activeVote && (
-                  <div className="absolute inset-x-0 bottom-0 z-20 flex justify-center px-2 pb-2">
-                    <div className="w-full">
-                      <VoteBanner vote={activeVote} onCastVote={castVote} />
-                    </div>
-                  </div>
-                )}
               </div>
               <div className="min-h-0 w-[60%] overflow-hidden" style={LYRIC_MASK_STYLE}>
                 <LyricDisplay />

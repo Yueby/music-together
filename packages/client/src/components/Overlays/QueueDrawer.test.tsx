@@ -95,8 +95,13 @@ vi.mock('@/components/ui/marquee-text', () => ({
   ),
 }))
 
-vi.mock('@/hooks/useIsMobile', () => ({ useIsMobile: () => false }))
-vi.mock('@/hooks/useHasHover', () => ({ useHasHover: () => true }))
+const deviceState = vi.hoisted(() => ({
+  isMobile: false,
+  hasHover: true,
+}))
+
+vi.mock('@/hooks/useIsMobile', () => ({ useIsMobile: () => deviceState.isMobile }))
+vi.mock('@/hooks/useHasHover', () => ({ useHasHover: () => deviceState.hasHover }))
 vi.mock('@/providers/SocketProvider', () => ({
   useSocketContext: () => ({ socket: socketMock, isConnected: true }),
 }))
@@ -177,6 +182,8 @@ describe('QueueDrawer', () => {
     dndState.onDragEnd = undefined
     dndState.onDragCancel = undefined
     dndState.rangeExtractor = undefined
+    deviceState.isMobile = false
+    deviceState.hasHover = true
     useRoomStore.getState().reset()
     usePlayerStore.getState().reset()
 
@@ -311,5 +318,56 @@ describe('QueueDrawer', () => {
       dndState.onDragCancel?.()
     })
     expect(document.body.querySelector('[data-testid="queue-drag-overlay"]')).toBeNull()
+  })
+
+  it('renders requester badge in flex flow beside title instead of absolute overlay', () => {
+    const track = { ...makeTrack('t1', 'Very Long Track Title That Must Not Collide'), requestedBy: 'Alice' }
+    setRoomState([track], 'owner')
+    renderDrawer()
+
+    const badge = container.querySelector('[data-testid="queue-requester-badge"]')
+    expect(badge).not.toBeNull()
+    expect(badge?.textContent).toContain('Alice')
+    expect(badge?.className).not.toContain('absolute')
+    expect(badge?.className).toContain('shrink-0')
+  })
+
+  it('shows inline clear confirmation buttons suitable for touch devices before clearing', () => {
+    setRoomState([makeTrack('t1', 'Song A'), makeTrack('t2', 'Song B')], 'owner')
+    renderDrawer()
+
+    const clearBtn = container.querySelector<HTMLButtonElement>('button[aria-label="清空播放列表"]')
+    expect(clearBtn).not.toBeNull()
+
+    act(() => clearBtn!.click())
+    expect(onClearQueue).not.toHaveBeenCalled()
+
+    const confirmBtn = container.querySelector<HTMLButtonElement>('button[aria-label="确认清空播放列表"]')
+    const cancelBtn = container.querySelector<HTMLButtonElement>('button[aria-label="取消清空"]')
+    expect(confirmBtn?.textContent).toContain('确认清空')
+    expect(cancelBtn?.textContent).toContain('取消')
+
+    act(() => cancelBtn!.click())
+    expect(onClearQueue).not.toHaveBeenCalled()
+    expect(container.querySelector('button[aria-label="确认清空播放列表"]')).toBeNull()
+
+    act(() => container.querySelector<HTMLButtonElement>('button[aria-label="清空播放列表"]')!.click())
+    act(() => container.querySelector<HTMLButtonElement>('button[aria-label="确认清空播放列表"]')!.click())
+    expect(onClearQueue).toHaveBeenCalledOnce()
+  })
+
+  it('provides an explicit visible action button on touch devices without requiring hover', () => {
+    deviceState.isMobile = true
+    deviceState.hasHover = false
+    setRoomState([makeTrack('t1', 'Song A'), makeTrack('t2', 'Song B')], 'owner')
+    renderDrawer()
+
+    const moreBtn = container.querySelector<HTMLButtonElement>('button[aria-label="更多操作 Song B"]')
+    expect(moreBtn).not.toBeNull()
+    expect(moreBtn?.getAttribute('aria-expanded')).toBe('false')
+
+    act(() => moreBtn!.click())
+    expect(moreBtn?.getAttribute('aria-expanded')).toBe('true')
+    expect(container.querySelector('button[aria-label="收起操作 Song B"]')).not.toBeNull()
   })
 })

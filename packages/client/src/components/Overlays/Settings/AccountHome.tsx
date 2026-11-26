@@ -4,6 +4,7 @@ import type { usePlaylist } from '@/hooks/usePlaylist'
 import { PLATFORM_LABELS } from '@/lib/platform'
 import type { Artist, Playlist } from '@music-together/shared'
 import { Disc3, ListMusic, Radar, User } from 'lucide-react'
+import { useCallback, useLayoutEffect, useRef, type MutableRefObject } from 'react'
 import { CoverSection, Note, Section } from './DiscoverSections'
 import { LoginBanner } from './LoginBanner'
 import { PlaylistSection } from './PlaylistSection'
@@ -17,6 +18,8 @@ interface AccountHomeProps {
   onOpenPlaylist: (playlist: Playlist, type: 'playlist' | 'album', personal: boolean) => void
   onOpenDaily: () => void
   onOpenArtist: (artist: Artist) => void
+  /** Persists and restores vertical scroll offset when navigating into a subview and returning. */
+  scrollTopRef?: MutableRefObject<number>
 }
 
 /**
@@ -31,12 +34,44 @@ export function AccountHome({
   onOpenPlaylist,
   onOpenDaily,
   onOpenArtist,
+  scrollTopRef,
 }: AccountHomeProps) {
   const { platform, myStatus, loggedIn, verifying, startQrLogin, setCookieOpen } = session
   const { supported, dailyTile } = discover
+  const containerRef = useRef<HTMLDivElement>(null)
+
+  useLayoutEffect(() => {
+    const el = containerRef.current
+    if (!el || !scrollTopRef) return
+    el.scrollTop = scrollTopRef.current
+  }, [scrollTopRef, platform])
+
+  const saveScroll = useCallback(() => {
+    if (containerRef.current && scrollTopRef) {
+      scrollTopRef.current = containerRef.current.scrollTop
+    }
+  }, [scrollTopRef])
+
+  const handleOpenPlaylist = useCallback(
+    (pl: Playlist, type: 'playlist' | 'album', personal: boolean) => {
+      saveScroll()
+      onOpenPlaylist(pl, type, personal)
+    },
+    [saveScroll, onOpenPlaylist],
+  )
+
+  const handleOpenDaily = useCallback(() => {
+    saveScroll()
+    onOpenDaily()
+  }, [saveScroll, onOpenDaily])
 
   return (
-    <div className="flex min-h-0 min-w-0 flex-1 flex-col gap-8 overflow-x-hidden overflow-y-auto pb-2 [scrollbar-gutter:stable]">
+    <div
+      ref={containerRef}
+      data-testid="account-home-scroll"
+      onScroll={saveScroll}
+      className="flex min-h-0 min-w-0 flex-1 flex-col gap-8 overflow-x-hidden overflow-y-auto pb-2 [scrollbar-gutter:stable]"
+    >
       {!loggedIn && !verifying ? (
         <LoginBanner
           platform={platform}
@@ -53,7 +88,7 @@ export function AccountHome({
         playlists={playlists.myPlaylists[platform]}
         loading={playlists.playlistsLoading[platform]}
         onFetchMyPlaylists={() => playlists.fetchMyPlaylists(platform)}
-        onSelectPlaylist={(pl) => onOpenPlaylist(pl, 'playlist', true)}
+        onSelectPlaylist={(pl) => handleOpenPlaylist(pl, 'playlist', true)}
       />
 
       {supported ? (
@@ -73,10 +108,10 @@ export function AccountHome({
             })}
             fallback={<ListMusic className="text-muted-foreground size-8" />}
             onSelect={(pl) => {
-              if (pl.id !== DAILY_ID) return onOpenPlaylist(pl, 'playlist', false)
+              if (pl.id !== DAILY_ID) return handleOpenPlaylist(pl, 'playlist', false)
               // A failed day is retried by opening it again.
               if (discover.daily.error) discover.reloadDaily()
-              else onOpenDaily()
+              else handleOpenDaily()
             }}
           />
           <CoverSection
@@ -94,7 +129,7 @@ export function AccountHome({
             })}
             fallback={<Radar className="text-muted-foreground size-8" />}
             // The radar lists' songs are personal: read them with the account when there is one.
-            onSelect={(pl) => onOpenPlaylist(pl, 'playlist', loggedIn)}
+            onSelect={(pl) => handleOpenPlaylist(pl, 'playlist', loggedIn)}
           />
           <CoverSection
             platform={platform}
@@ -127,7 +162,7 @@ export function AccountHome({
               cover: album.thumbnailCover ?? album.cover,
             })}
             fallback={<Disc3 className="text-muted-foreground size-8" />}
-            onSelect={(album) => onOpenPlaylist(album, 'album', false)}
+            onSelect={(album) => handleOpenPlaylist(album, 'album', false)}
           />
         </>
       ) : (

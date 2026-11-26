@@ -95,7 +95,7 @@ export function NowPlaying({ compact = false, onCoverClick }: NowPlayingProps) {
             initial={{ fontSize: 20 }}
             animate={{ fontSize: 22 }}
             transition={SPRING}
-            className="font-semibold leading-tight text-white/90"
+            className="font-semibold leading-tight text-white/95"
           >
             <MarqueeText>{currentTrack?.title ?? '暂无歌曲'}</MarqueeText>
           </m.div>
@@ -103,7 +103,7 @@ export function NowPlaying({ compact = false, onCoverClick }: NowPlayingProps) {
             initial={{ fontSize: 14 }}
             animate={{ fontSize: 16 }}
             transition={SPRING}
-            className="text-white/50"
+            className="text-white/75"
           >
             <MarqueeText>
               {currentTrack ? <ArtistNames track={currentTrack} className="hover:text-white hover:underline" /> : '...'}

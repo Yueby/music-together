@@ -348,5 +348,20 @@ describe('shared RoomPage host room commands', () => {
       expect(container.querySelectorAll('[data-testid="chat-panel"]')).toHaveLength(panels)
       expect(container.querySelectorAll('[data-testid="chat-drawer"] [data-testid="chat-panel"]')).toHaveLength(drawers)
     })
+
+    it('gives the desktop side chat slot enough outer width for padding + 320px card without clipping', async () => {
+      fixture.mobile = false
+      fixture.chatOpen = true
+      useRoomStore.setState({ room: joinedRoom })
+      await render()
+
+      const slot = container.querySelector('[data-testid="desktop-chat-slot"]')
+      expect(slot).not.toBeNull()
+      expect(slot?.className).toContain('w-[332px]')
+      expect(slot?.className).toContain('pl-3')
+      expect(slot?.firstElementChild?.className).toContain('w-[320px]')
+      expect(slot?.firstElementChild?.className).toContain('rounded-2xl')
+      expect(slot?.firstElementChild?.className).toContain('border')
+    })
   })
 })
