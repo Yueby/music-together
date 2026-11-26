@@ -112,13 +112,11 @@ src/
 │       ├── input.tsx
 │       ├── label.tsx
 │       ├── popover.tsx
-│       ├── resize-handle.tsx
-│       ├── scroll-area.tsx
+│       ├── scroll-area.tsx     #   原生 overflow-y-auto 容器（避免 Radix 运行时注入 <style> 触发沙箱 CSP 报错）
 │       ├── select.tsx
 │       ├── separator.tsx
 │       ├── marquee-text.tsx
 │       ├── responsive-dialog.tsx  #   响应式弹窗（桌面 Dialog / 手机 Drawer）；所有弹窗共用同一个标题栏：`DIALOG_BAR_CLASS`（h-14、下分割线、右侧给关闭按钮留位）与正文内边距 `DIALOG_BODY_CLASS`，弹窗内容本身用 `gap-0 p-0`，这样标题在每个弹窗里位置和高度一致
-│       ├── sheet.tsx
 │       ├── skeleton.tsx
 │       ├── slider.tsx
 │       ├── switch.tsx
@@ -308,7 +306,7 @@ src/
 
 mapp 只是把现有网页前端适配为论坛微应用并打包的外壳，后端与网页端共用同一个服务。`src/` 放启动入口（`bootstrapClient`、`clientMain`）、CSP 初始化与微应用样式，`scripts/` 放客户端 manifest 生成与 SDK 打包入口。单 IIFE 与 CSS 输出到 `dist/client-web/`，运行 ZIP 输出到 `dist/client-package/`。概览见 [mini-app.md](mini-app.md)。
 
-`src/compat/` 放置 SDK 房间连接绑定、RoomSession、RoomAudioSource、WebAudioPlayer（Web Audio 内核）、MappAudioEngine、MappPlaybackSoundFactory、MappRoomCommands、metadataFetch、coverLoader（封面经 SDK 读字节转 Blob URL）、roomCheck、MappHost、hostBinding/hostModules、内存 storageBackend，以及适配平台沙箱的 formSubmitFallback 与 trustedTypesFallback。网页端对应的封面入口是 `lib/artwork.ts` 与 `hooks/useArtworkUrl.ts`。平台 JWT 验签位于 `packages/server/src/services/platformAuth.ts`，由主站后端按环境变量启用。契约和发布门禁见 [mini-app-compatibility.md](mini-app-compatibility.md)。
+`src/compat/` 放置 SDK 房间连接绑定、RoomSession、RoomAudioSource、WebAudioPlayer（Web Audio 内核）、MappAudioEngine、MappPlaybackSoundFactory、MappRoomCommands、metadataFetch、coverLoader（封面经 SDK 读字节转 Blob URL）、roomCheck、MappHost、hostBinding/hostModules、内存 storageBackend、构建期 `@pixi/*` 空桩 `pixiStub`，以及适配平台沙箱的 formSubmitFallback 与 trustedTypesFallback。网页端对应的封面入口是 `lib/artwork.ts` 与 `hooks/useArtworkUrl.ts`。平台 JWT 验签位于 `packages/server/src/services/platformAuth.ts`，由主站后端按环境变量启用。契约和发布门禁见 [mini-app-compatibility.md](mini-app-compatibility.md)。
 
 ## 测试文件
 

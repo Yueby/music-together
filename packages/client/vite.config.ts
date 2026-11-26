@@ -74,17 +74,22 @@ export default defineConfig({
   },
   build: {
     target: 'esnext', // 原生支持 top-level await，避免 vite-plugin-top-level-await 与 manualChunks 冲突
+    modulePreload: {
+      // rolldown-runtime is only needed once lazy route/overlay chunks execute; preloading it triggers unused-preload warnings
+      resolveDependencies: (_filename, deps) => deps.filter((dep) => !dep.includes('rolldown-runtime')),
+    },
     rolldownOptions: {
       output: {
         codeSplitting: {
           groups: [
             { name: 'vendor-react', test: /node_modules[\\/](react|react-dom|react-router)[\\/]/ },
             { name: 'vendor-socket', test: /node_modules[\\/]socket\.io-client[\\/]/ },
-            { name: 'vendor-motion', test: /node_modules[\\/]motion[\\/]/ },
+            { name: 'vendor-motion', test: /node_modules[\\/](motion|framer-motion)[\\/]/ },
             {
               name: 'vendor-ui',
-              test: /node_modules[\\/](radix-ui|sonner|vaul|class-variance-authority)[\\/]/,
+              test: /node_modules[\\/](radix-ui|@radix-ui|sonner|vaul|class-variance-authority)[\\/]/,
             },
+            { name: 'vendor-amll', test: /node_modules[\\/]@applemusic-like-lyrics[\\/]/ },
             { name: 'vendor-pixi', test: /node_modules[\\/]@pixi[\\/]/ },
           ],
         },

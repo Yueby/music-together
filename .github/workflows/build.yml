@@ -31,6 +31,12 @@ jobs:
       - name: Typecheck client
         run: pnpm --filter @music-together/client typecheck
 
+      - name: Typecheck server
+        run: pnpm --filter @music-together/server typecheck
+
+      - name: Typecheck mapp
+        run: pnpm --filter @music-together/mapp typecheck
+
       - name: Lint client
         run: pnpm --filter @music-together/client lint
 

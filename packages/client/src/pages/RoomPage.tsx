@@ -1,4 +1,4 @@
-import { useState, useEffect, useCallback, useRef } from 'react'
+import { lazy, Suspense, useState, useEffect, useCallback, useRef } from 'react'
 import { useParams, useNavigate } from 'react-router'
 import { EVENTS, ERROR_CODE } from '@music-together/shared'
 import { motion } from 'motion/react'
@@ -9,11 +9,7 @@ import { InteractionGate } from '@/components/InteractionGate'
 import { AudioPlayer } from '@/components/Player/AudioPlayer'
 import { ChatPanel } from '@/components/Chat/ChatPanel'
 import { RoomHeader } from '@/components/Room/RoomHeader'
-import { SearchDialog } from '@/components/Overlays/SearchDialog'
-import { QueueDrawer } from '@/components/Overlays/QueueDrawer'
-import { AccountDialog } from '@/components/Overlays/AccountDialog'
-import { ArtistDialog } from '@/components/Overlays/ArtistDialog'
-import { SettingsDialog, type SettingsTab } from '@/components/Overlays/SettingsDialog'
+import type { SettingsTab } from '@/components/Overlays/SettingsDialog'
 import { PasswordDialog } from '@/components/Lobby/PasswordDialog'
 import { Drawer, DrawerContent, DrawerHeader, DrawerTitle } from '@/components/ui/drawer'
 import { Button } from '@/components/ui/button'
@@ -39,6 +35,27 @@ import { storage } from '@/lib/storage'
 import { roomCommands } from '@/lib/RoomCommands'
 import { hostRuntime } from '@/lib/hostRuntime'
 import { useVersionCheck } from '@/hooks/useVersionCheck'
+
+const SearchDialog = lazy(() =>
+  import('@/components/Overlays/SearchDialog').then((m) => ({ default: m.SearchDialog })),
+)
+const QueueDrawer = lazy(() => import('@/components/Overlays/QueueDrawer').then((m) => ({ default: m.QueueDrawer })))
+const AccountDialog = lazy(() =>
+  import('@/components/Overlays/AccountDialog').then((m) => ({ default: m.AccountDialog })),
+)
+const ArtistDialog = lazy(() =>
+  import('@/components/Overlays/ArtistDialog').then((m) => ({ default: m.ArtistDialog })),
+)
+const SettingsDialog = lazy(() =>
+  import('@/components/Overlays/SettingsDialog').then((m) => ({ default: m.SettingsDialog })),
+)
+
+/** Mounts a lazy overlay chunk only after its first open, keeping it mounted afterwards for smooth close transitions. */
+function useEverOpened(open: boolean): boolean {
+  const [everOpened, setEverOpened] = useState(open)
+  if (open && !everOpened) setEverOpened(true)
+  return everOpened
+}
 
 /** Invisible component that runs NTP clock-sync only while in a room. */
 function ClockSyncRunner() {
@@ -113,6 +130,12 @@ export default function RoomPage() {
   const [settingsOpen, setSettingsOpen] = useState(false)
   const [accountOpen, setAccountOpen] = useState(false)
   const [settingsInitialTab, setSettingsInitialTab] = useState<SettingsTab | undefined>(undefined)
+  const artistDialogOpen = useArtistPageStore((s) => s.target !== null)
+  const searchMounted = useEverOpened(searchOpen)
+  const queueMounted = useEverOpened(queueOpen)
+  const settingsMounted = useEverOpened(settingsOpen)
+  const accountMounted = useEverOpened(accountOpen)
+  const artistMounted = useEverOpened(artistDialogOpen)
 
   // Fallback password dialog state (edge case: password changed after pre-check)
   const [passwordNeeded, setPasswordNeeded] = useState(false)
@@ -550,31 +573,39 @@ export default function RoomPage() {
             </Drawer>
           )}
 
-          <SearchDialog
-            open={searchOpen}
-            onOpenChange={setSearchOpen}
-            onAddToQueue={addTrack}
-            onInsertAfterCurrent={insertAfterCurrent}
-          />
-          <QueueDrawer
-            open={queueOpen}
-            onOpenChange={setQueueOpen}
-            onRemoveFromQueue={removeTrack}
-            onReorderQueue={reorderTracks}
-            onClearQueue={clearQueue}
-          />
-          <SettingsDialog
-            open={settingsOpen}
-            onOpenChange={(open) => {
-              setSettingsOpen(open)
-              if (!open) setSettingsInitialTab(undefined)
-            }}
-            onUpdateSettings={updateSettings}
-            onSetUserRole={setUserRole}
-            initialTab={settingsInitialTab}
-          />
-          <AccountDialog open={accountOpen} onOpenChange={setAccountOpen} />
-          <ArtistDialog />
+          <Suspense fallback={null}>
+            {searchMounted && (
+              <SearchDialog
+                open={searchOpen}
+                onOpenChange={setSearchOpen}
+                onAddToQueue={addTrack}
+                onInsertAfterCurrent={insertAfterCurrent}
+              />
+            )}
+            {queueMounted && (
+              <QueueDrawer
+                open={queueOpen}
+                onOpenChange={setQueueOpen}
+                onRemoveFromQueue={removeTrack}
+                onReorderQueue={reorderTracks}
+                onClearQueue={clearQueue}
+              />
+            )}
+            {settingsMounted && (
+              <SettingsDialog
+                open={settingsOpen}
+                onOpenChange={(open) => {
+                  setSettingsOpen(open)
+                  if (!open) setSettingsInitialTab(undefined)
+                }}
+                onUpdateSettings={updateSettings}
+                onSetUserRole={setUserRole}
+                initialTab={settingsInitialTab}
+              />
+            )}
+            {accountMounted && <AccountDialog open={accountOpen} onOpenChange={setAccountOpen} />}
+            {artistMounted && <ArtistDialog />}
+          </Suspense>
         </div>
 
         {/* Fallback password dialog for edge cases (password changed after pre-check) */}
