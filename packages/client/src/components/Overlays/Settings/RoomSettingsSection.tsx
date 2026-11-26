@@ -131,17 +131,29 @@ export function RoomSettingsSection({ onUpdateSettings }: RoomSettingsSectionPro
                 value={nameInput}
                 onChange={(e) => setNameInput(e.target.value)}
                 maxLength={LIMITS.ROOM_NAME_MAX_LENGTH}
-                className="h-7 w-40 text-sm"
+                className="h-9 w-32 text-sm sm:h-7 sm:w-40"
                 onKeyDown={(e) => {
                   if (e.key === 'Enter') handleSaveName()
                   if (e.key === 'Escape') handleCancelEditName()
                 }}
                 autoFocus
               />
-              <Button variant="ghost" size="icon" className="h-7 w-7" onClick={handleSaveName}>
+              <Button
+                variant="ghost"
+                size="icon"
+                className="h-7 w-7 min-h-11 min-w-11 sm:min-h-0 sm:min-w-0"
+                onClick={handleSaveName}
+                aria-label="保存房间名称"
+              >
                 <Check className="h-3.5 w-3.5" />
               </Button>
-              <Button variant="ghost" size="icon" className="h-7 w-7" onClick={handleCancelEditName}>
+              <Button
+                variant="ghost"
+                size="icon"
+                className="h-7 w-7 min-h-11 min-w-11 sm:min-h-0 sm:min-w-0"
+                onClick={handleCancelEditName}
+                aria-label="取消编辑"
+              >
                 <X className="h-3.5 w-3.5" />
               </Button>
             </div>
@@ -152,7 +164,7 @@ export function RoomSettingsSection({ onUpdateSettings }: RoomSettingsSectionPro
                 <Button
                   variant="ghost"
                   size="icon"
-                  className="h-7 w-7"
+                  className="h-7 w-7 min-h-11 min-w-11 sm:min-h-0 sm:min-w-0"
                   onClick={handleStartEditName}
                   aria-label="编辑房间名"
                 >
@@ -172,7 +184,7 @@ export function RoomSettingsSection({ onUpdateSettings }: RoomSettingsSectionPro
                   <Button
                     variant="ghost"
                     size="icon"
-                    className="h-7 w-7"
+                    className="h-7 w-7 min-h-11 min-w-11 sm:min-h-0 sm:min-w-0"
                     onClick={copyRoomLink}
                     aria-label="复制房间链接"
                   >
@@ -261,14 +273,18 @@ export function RoomSettingsSection({ onUpdateSettings }: RoomSettingsSectionPro
                 clipboardAvailable ? (
                   <Tooltip>
                     <TooltipTrigger asChild>
-                      <code
-                        className="cursor-pointer rounded bg-muted px-2 py-0.5 text-xs transition-colors hover:bg-muted/80"
+                      <button
+                        type="button"
+                        aria-label="复制房间密码"
+                        className="group inline-flex min-h-11 min-w-11 cursor-pointer items-center justify-center rounded focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring sm:min-h-0 sm:min-w-0"
                         onClick={async () => {
                           if (await copyText(roomPassword)) toast.success('密码已复制')
                         }}
                       >
-                        {roomPassword}
-                      </code>
+                        <code className="rounded bg-muted px-2 py-0.5 text-xs transition-colors group-hover:bg-muted/80">
+                          {roomPassword}
+                        </code>
+                      </button>
                     </TooltipTrigger>
                     <TooltipContent>点击复制密码</TooltipContent>
                   </Tooltip>

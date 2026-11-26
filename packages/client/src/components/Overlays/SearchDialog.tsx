@@ -162,8 +162,8 @@ export function SearchDialog({ open, onOpenChange, onAddToQueue, onInsertAfterCu
     <ResponsiveDialog open={open} onOpenChange={onOpenChange}>
       <ResponsiveDialogContent
         className={cn(
-          'flex h-[calc(var(--app-vh)*0.7)] flex-col gap-0 overflow-hidden p-0 transition-[height] [transition-duration:300ms] motion-reduce:transition-none sm:max-h-[calc(var(--app-vh)*0.8)] sm:max-w-2xl',
-          expanded ? 'sm:h-[calc(var(--app-vh)*0.7)]' : 'sm:h-[25rem]',
+          'flex h-[calc(var(--app-dvh)*0.7)] flex-col gap-0 overflow-hidden p-0 transition-[height] [transition-duration:300ms] motion-reduce:transition-none sm:max-h-[calc(var(--app-dvh)*0.8)] sm:max-w-2xl',
+          expanded ? 'sm:h-[calc(var(--app-dvh)*0.7)]' : 'sm:h-[25rem]',
         )}
       >
         <DialogNavBar

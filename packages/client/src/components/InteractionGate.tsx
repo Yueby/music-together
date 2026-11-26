@@ -1,14 +1,14 @@
 import { m, useReducedMotion } from 'motion/react'
-import { Headphones, Lock, UserRound } from 'lucide-react'
+import { Headphones, Loader2, Lock, UserRound } from 'lucide-react'
 import { LIMITS } from '@music-together/shared'
 import { Button } from '@/components/ui/button'
 import { Input } from '@/components/ui/input'
 import { Label } from '@/components/ui/label'
-import { useState } from 'react'
+import { useRef, useState } from 'react'
 import { storage } from '@/lib/storage'
 
 interface InteractionGateProps {
-  onStart: (password?: string) => void
+  onStart: (password?: string) => void | Promise<void>
   roomName?: string
   hasPassword?: boolean
   passwordError?: string | null
@@ -17,6 +17,8 @@ interface InteractionGateProps {
 export function InteractionGate({ onStart, roomName, hasPassword, passwordError }: InteractionGateProps) {
   const prefersReducedMotion = useReducedMotion()
   const [password, setPassword] = useState('')
+  const [starting, setStarting] = useState(false)
+  const startingRef = useRef(false)
 
   const savedNickname = storage.getNickname()
   const needsNickname = !savedNickname
@@ -24,13 +26,22 @@ export function InteractionGate({ onStart, roomName, hasPassword, passwordError 
 
   const canStart = (!needsNickname || nickname.trim().length > 0) && (!hasPassword || password.trim().length > 0)
 
-  const handleSubmit = (e: React.FormEvent) => {
+  const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault()
-    if (!canStart) return
+    if (!canStart || startingRef.current) return
+    startingRef.current = true
+    setStarting(true)
     if (needsNickname) {
       storage.setNickname(nickname.trim())
     }
-    onStart(hasPassword ? password.trim() : undefined)
+    try {
+      await onStart(hasPassword ? password.trim() : undefined)
+    } catch {
+      // Caller surfaces errors (e.g. via passwordError or toast); avoid unhandled promise rejections.
+    } finally {
+      startingRef.current = false
+      setStarting(false)
+    }
   }
 
   return (
@@ -70,6 +81,7 @@ export function InteractionGate({ onStart, roomName, hasPassword, passwordError 
                 value={nickname}
                 onChange={(e) => setNickname(e.target.value)}
                 maxLength={LIMITS.NICKNAME_MAX_LENGTH}
+                disabled={starting}
                 autoFocus
               />
             </div>
@@ -87,6 +99,7 @@ export function InteractionGate({ onStart, roomName, hasPassword, passwordError 
                   placeholder="输入房间密码..."
                   value={password}
                   onChange={(e) => setPassword(e.target.value)}
+                  disabled={starting}
                   autoFocus={!needsNickname}
                   className={passwordError ? 'border-destructive' : ''}
                 />
@@ -103,8 +116,22 @@ export function InteractionGate({ onStart, roomName, hasPassword, passwordError 
             </div>
           )}
 
-          <Button type="submit" size="lg" className="w-full" disabled={!canStart} aria-label="开始收听">
-            开始收听
+          <Button
+            type="submit"
+            size="lg"
+            className="w-full"
+            disabled={!canStart || starting}
+            aria-busy={starting || undefined}
+            aria-label={starting ? '正在进入' : '开始收听'}
+          >
+            {starting ? (
+              <>
+                <Loader2 className="h-4 w-4 animate-spin" aria-hidden="true" />
+                正在进入...
+              </>
+            ) : (
+              '开始收听'
+            )}
           </Button>
         </form>
       </m.div>

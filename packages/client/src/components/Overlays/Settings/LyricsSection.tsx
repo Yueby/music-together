@@ -5,10 +5,74 @@ import { Separator } from '@/components/ui/separator'
 import { Slider } from '@/components/ui/slider'
 import { Switch } from '@/components/ui/switch'
 import { useSettingsStore } from '@/stores/settingsStore'
+import { useShallow } from 'zustand/react/shallow'
 import { SettingRow } from './SettingRow'
 
 export function LyricsSection() {
-  const s = useSettingsStore()
+  const s = useSettingsStore(
+    useShallow((state) => ({
+      ttmlEnabled: state.ttmlEnabled,
+      ttmlEnabledDefault: state.ttmlEnabledDefault,
+      setTtmlEnabled: state.setTtmlEnabled,
+      resetTtmlEnabled: state.resetTtmlEnabled,
+      lyricAlignAnchor: state.lyricAlignAnchor,
+      lyricAlignAnchorDefault: state.lyricAlignAnchorDefault,
+      setLyricAlignAnchor: state.setLyricAlignAnchor,
+      resetLyricAlignAnchor: state.resetLyricAlignAnchor,
+      lyricAlignPosition: state.lyricAlignPosition,
+      lyricAlignPositionDefault: state.lyricAlignPositionDefault,
+      setLyricAlignPosition: state.setLyricAlignPosition,
+      resetLyricAlignPosition: state.resetLyricAlignPosition,
+      lyricEnableSpring: state.lyricEnableSpring,
+      lyricEnableSpringDefault: state.lyricEnableSpringDefault,
+      setLyricEnableSpring: state.setLyricEnableSpring,
+      resetLyricEnableSpring: state.resetLyricEnableSpring,
+      lyricEnableBlur: state.lyricEnableBlur,
+      lyricEnableBlurDefault: state.lyricEnableBlurDefault,
+      setLyricEnableBlur: state.setLyricEnableBlur,
+      resetLyricEnableBlur: state.resetLyricEnableBlur,
+      lyricEnableScale: state.lyricEnableScale,
+      lyricEnableScaleDefault: state.lyricEnableScaleDefault,
+      setLyricEnableScale: state.setLyricEnableScale,
+      resetLyricEnableScale: state.resetLyricEnableScale,
+      lyricWordFadeWidth: state.lyricWordFadeWidth,
+      lyricWordFadeWidthDefault: state.lyricWordFadeWidthDefault,
+      setLyricWordFadeWidth: state.setLyricWordFadeWidth,
+      resetLyricWordFadeWidth: state.resetLyricWordFadeWidth,
+      lyricHidePassedLines: state.lyricHidePassedLines,
+      lyricHidePassedLinesDefault: state.lyricHidePassedLinesDefault,
+      setLyricHidePassedLines: state.setLyricHidePassedLines,
+      resetLyricHidePassedLines: state.resetLyricHidePassedLines,
+      lyricShowBottomLine: state.lyricShowBottomLine,
+      lyricShowBottomLineDefault: state.lyricShowBottomLineDefault,
+      setLyricShowBottomLine: state.setLyricShowBottomLine,
+      resetLyricShowBottomLine: state.resetLyricShowBottomLine,
+      lyricMaskObsceneWordsMode: state.lyricMaskObsceneWordsMode,
+      lyricMaskObsceneWordsModeDefault: state.lyricMaskObsceneWordsModeDefault,
+      setLyricMaskObsceneWordsMode: state.setLyricMaskObsceneWordsMode,
+      resetLyricMaskObsceneWordsMode: state.resetLyricMaskObsceneWordsMode,
+      lyricMaskObsceneWordChar: state.lyricMaskObsceneWordChar,
+      lyricMaskObsceneWordCharDefault: state.lyricMaskObsceneWordCharDefault,
+      setLyricMaskObsceneWordChar: state.setLyricMaskObsceneWordChar,
+      resetLyricMaskObsceneWordChar: state.resetLyricMaskObsceneWordChar,
+      lyricFontWeight: state.lyricFontWeight,
+      lyricFontWeightDefault: state.lyricFontWeightDefault,
+      setLyricFontWeight: state.setLyricFontWeight,
+      resetLyricFontWeight: state.resetLyricFontWeight,
+      lyricFontSize: state.lyricFontSize,
+      lyricFontSizeDefault: state.lyricFontSizeDefault,
+      setLyricFontSize: state.setLyricFontSize,
+      resetLyricFontSize: state.resetLyricFontSize,
+      lyricTranslationFontSize: state.lyricTranslationFontSize,
+      lyricTranslationFontSizeDefault: state.lyricTranslationFontSizeDefault,
+      setLyricTranslationFontSize: state.setLyricTranslationFontSize,
+      resetLyricTranslationFontSize: state.resetLyricTranslationFontSize,
+      lyricRomanFontSize: state.lyricRomanFontSize,
+      lyricRomanFontSizeDefault: state.lyricRomanFontSizeDefault,
+      setLyricRomanFontSize: state.setLyricRomanFontSize,
+      resetLyricRomanFontSize: state.resetLyricRomanFontSize,
+    })),
+  )
 
   return (
     <div className="space-y-6">
