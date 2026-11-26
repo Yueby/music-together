@@ -21,15 +21,15 @@ export async function resolveStreamUrl(
   urlId: string,
   bitrate: AudioQuality,
   cookie?: string,
+  isValid?: () => boolean,
 ): Promise<string | null> {
-  const url = await provider.getStreamUrl(source, urlId, bitrate, cookie)
-  if (url && !isStreamUrlExpired(source, url)) return url
-
-  for (const fallback of BITRATE_FALLBACKS[bitrate]) {
-    const fallbackUrl = await provider.getStreamUrl(source, urlId, fallback, cookie)
-    if (fallbackUrl && !isStreamUrlExpired(source, fallbackUrl)) {
-      logger.info(`Bitrate fallback: ${bitrate} -> ${fallback} for ${source}/${urlId}`)
-      return fallbackUrl
+  for (const quality of [bitrate, ...BITRATE_FALLBACKS[bitrate]]) {
+    if (isValid && !isValid()) return null
+    const url = await provider.getStreamUrl(source, urlId, quality, cookie)
+    if (isValid && !isValid()) return null
+    if (url && !isStreamUrlExpired(source, url)) {
+      if (quality !== bitrate) logger.info(`Bitrate fallback: ${bitrate} -> ${quality} for ${source}/${urlId}`)
+      return url
     }
   }
 

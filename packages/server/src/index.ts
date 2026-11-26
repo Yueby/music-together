@@ -144,9 +144,10 @@ startServerLoadMonitor(io)
 httpServer.on('error', (err: NodeJS.ErrnoException) => {
   if (err.code === 'EADDRINUSE') {
     logger.error(`Port ${config.port} already in use`)
-    process.exit(1)
+  } else {
+    logger.error('HTTP server failed', err)
   }
-  throw err
+  process.exit(1)
 })
 
 httpServer.listen(config.port, () => {

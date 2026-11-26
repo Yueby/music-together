@@ -483,6 +483,13 @@ class MusicProvider {
   // Public API — Stream URL, Lyric, Cover (unchanged from original)
   // ---------------------------------------------------------------------------
 
+  invalidateStreamUrl(source: MusicSource, urlId: string): void {
+    const prefix = `${source}:${urlId}:`
+    for (const key of [...this.streamUrlCache.keys()]) {
+      if (key.startsWith(prefix)) this.streamUrlCache.delete(key)
+    }
+  }
+
   /**
    * Get stream URL for a track. Optionally inject a cookie for VIP access.
    * Authenticated NetEase playback uses the normal SDK endpoint; other platforms
@@ -507,7 +514,10 @@ class MusicProvider {
 
     try {
       let meting: MetingInstance
-      if (cookie) {
+      if (source === 'netease') {
+        meting = new Meting(source)
+        meting.format(false)
+      } else if (cookie) {
         // Fresh instance with cookie — don't pollute the shared one
         meting = new Meting(source)
         meting.format(true)
@@ -527,23 +537,29 @@ class MusicProvider {
       } catch {
         return null
       }
-      let url = (data.url as string) || null
-      // 强制 HTTPS，避免 HTTPS 页面加载 HTTP 音频触发 Mixed Content 警告
-      if (url?.startsWith('http://')) {
-        url = url.replace(/^http:\/\//, 'https://')
+      if (source === 'netease') {
+        if (data?.code !== 200 || !Array.isArray(data.data)) return null
+        const song = data.data.find((item) => item && String(item.id) === urlId)
+          ?? (data.data.length === 1 ? data.data[0] : null)
+        if (song?.code !== 200 || song.freeTrialInfo != null) return null
+        data = song
       }
 
+      // 强制 HTTPS，避免 HTTPS 页面加载 HTTP 音频触发 Mixed Content 警告
+      const url = typeof data?.url === 'string' ? data.url.replace(/^http:\/\//, 'https://') : null
+      if (!url?.startsWith('https://') || !URL.canParse(url)) return null
+
       const now = Date.now()
-      if (url && isStreamUrlExpired(source, url, now)) return null
+      if (isStreamUrlExpired(source, url, now)) return null
 
       // Only cache non-cookie & successful results (null = transient failure, retry next time)
-      if (!cookie && url) {
+      if (!cookie) {
         this.streamUrlCache.set(`${source}:${urlId}:${bitrate}`, url, { ttl: getStreamUrlCacheTtl(source, url, now) })
       }
 
       return url
-    } catch (err) {
-      logger.error(`Get URL failed for ${source}:`, err)
+    } catch {
+      logger.error(`Get URL failed for ${source}`)
       return null
     }
   }

@@ -142,9 +142,14 @@ describe('NetEase verified public key initialization', () => {
     expect(mocks.songUrl).toHaveBeenCalledTimes(3)
   })
 
-  it('retries after initialization failure and never logs the error or Cookie', async () => {
+  it('waits 60 seconds before retrying registration and never logs the error or Cookie', async () => {
     mocks.register.mockRejectedValueOnce(new Error(`${COOKIE} ${URL}`))
     await expect(getUrl('110', 320, COOKIE)).resolves.toBeNull()
+    vi.mocked(Date.now).mockReturnValue(NOW + 59_999)
+    await expect(getUrl('110', 128, COOKIE)).resolves.toBeNull()
+    expect(mocks.register).toHaveBeenCalledTimes(1)
+    expect(mocks.songUrl).not.toHaveBeenCalled()
+    vi.mocked(Date.now).mockReturnValue(NOW + 60_000)
     await expect(getUrl('110', 320, COOKIE)).resolves.toBe(URL)
     expect(mocks.register).toHaveBeenCalledTimes(2)
     expect(mocks.warn).toHaveBeenCalledExactlyOnceWith('netease_playback_failed')
@@ -155,6 +160,7 @@ describe('NetEase verified public key initialization', () => {
     await expect(getUrl('110', 320, COOKIE)).resolves.toBeNull()
     expect(mocks.songUrl).not.toHaveBeenCalled()
     expect(mocks.unlink).toHaveBeenCalledTimes(1)
+    vi.mocked(Date.now).mockReturnValue(NOW + 60_000)
     await expect(getUrl('110', 320, COOKIE)).resolves.toBe(URL)
     expect(mocks.register).toHaveBeenCalledTimes(2)
   })
@@ -178,7 +184,10 @@ describe('NetEase verified public key initialization', () => {
     await expect(getUrl('110', 320, COOKIE)).resolves.toBeNull()
     expect(mocks.songUrl).toHaveBeenCalledTimes(1)
     mocks.register.mockResolvedValue({ status: 200, body: { ...key(), nextUpdateTime: NOW + 7_200_000 } })
-    await expect(getUrl('110', 320, COOKIE)).resolves.toBe(URL)
+    vi.mocked(Date.now).mockReturnValue(NOW + 3_600_001)
+    const freshUrl = URL.replace('20260720090000', '20260720100000')
+    mocks.songUrl.mockResolvedValueOnce(result({ ...song(), url: freshUrl }))
+    await expect(getUrl('110', 320, COOKIE)).resolves.toBe(freshUrl)
     expect(mocks.register).toHaveBeenCalledTimes(3)
   })
 

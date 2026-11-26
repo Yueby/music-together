@@ -73,14 +73,22 @@ describe('Kugou QR login', () => {
     })
   })
 
-  it('does not call a login finished when the credentials are missing', async () => {
-    answers({ '/v2/get_userinfo_qrcode': { data: { status: 4 } } })
-    await expect(checkQrStatus('k')).resolves.toEqual({ status: 803, message: '登录成功' })
+  it.each([{}, { token: '  ', userid: 99 }, { token: 'tok', userid: 'invalid' }])(
+    'expires a completed QR login with incomplete credentials (%j)',
+    async (data) => {
+      answers({ '/v2/get_userinfo_qrcode': { data: { status: 4, ...data } } })
+      await expect(checkQrStatus('k')).resolves.toEqual({ status: 800, message: '未获取到有效登录凭据，请重新扫码' })
+    },
+  )
+
+  it('keeps polling when the upstream response has no QR status', async () => {
+    answers({ '/v2/get_userinfo_qrcode': {} })
+    await expect(checkQrStatus('k')).resolves.toMatchObject({ status: 801 })
   })
 
-  it('reports a failed check as an expired code, not as a crash', async () => {
+  it('keeps polling after a failed request', async () => {
     fetchMock.mockRejectedValue(new Error('offline'))
-    await expect(checkQrStatus('k')).resolves.toEqual({ status: 800, message: '检查状态失败' })
+    await expect(checkQrStatus('k')).resolves.toMatchObject({ status: 801 })
   })
 })
 
@@ -196,7 +204,7 @@ describe('Kugou request timeout', () => {
     const timedOut = new DOMException('The operation was aborted due to timeout', 'TimeoutError')
     fetchMock.mockRejectedValue(timedOut)
     await expect(generateQrCode()).resolves.toBeNull()
-    await expect(checkQrStatus('k')).resolves.toMatchObject({ status: 800 })
+    await expect(checkQrStatus('k')).resolves.toMatchObject({ status: 801 })
     await expect(getUserInfo('token=t;userid=1')).resolves.toEqual({ ok: false, reason: 'error' })
   })
 })

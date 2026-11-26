@@ -3,7 +3,7 @@ import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 const log = vi.hoisted(() => ({ info: vi.fn(), warn: vi.fn(), error: vi.fn(), debug: vi.fn() }))
 vi.mock('../utils/logger.js', () => ({ logger: log }))
 
-import { checkQrStatus, getPlaylistTracks, getUserPlaylists } from './tencentAuthService.js'
+import { checkQrStatus, generateQrCode, getPlaylistTracks, getUserPlaylists } from './tencentAuthService.js'
 
 const fetchMock = vi.fn()
 beforeEach(() => {
@@ -57,20 +57,38 @@ describe('QQ Music QR status', () => {
 
   it('reports an answer it cannot read as a failed check', async () => {
     fetchMock.mockResolvedValue(answer('<html>blocked</html>'))
-    await expect(checkQrStatus('sig-html')).resolves.toMatchObject({ status: 800 })
+    await expect(checkQrStatus('sig-html')).resolves.toMatchObject({ status: 801 })
     expect(log.warn).toHaveBeenCalledWith('QQ QR: unexpected ptqrlogin response format', { length: 20 })
   })
 
-  it('reports a failed request as a failed check, not as a crash', async () => {
-    fetchMock.mockRejectedValue(new Error('offline'))
-    await expect(checkQrStatus('sig-offline')).resolves.toMatchObject({ status: 800 })
+  it('keeps polling after a failed request without logging the raw error', async () => {
+    fetchMock.mockRejectedValue(new Error('offline SECRET-SESSION'))
+    await expect(checkQrStatus('sig-offline')).resolves.toMatchObject({ status: 801 })
+    expect(log.warn).toHaveBeenCalledExactlyOnceWith('QQ QR check failed')
   })
 
-  it('answers "signed in" without a cookie when the one-time link is incomplete', async () => {
+  it('asks for a new code when the one-time link is incomplete', async () => {
     fetchMock.mockResolvedValue(
       answer(callback('0', 'https://ssl.ptlogin2.graph.qq.com/check_sig?pttype=1&uin=o012345')),
     )
-    await expect(checkQrStatus('sig-incomplete')).resolves.toEqual({ status: 803, message: '登录成功' })
+    await expect(checkQrStatus('sig-incomplete')).resolves.toEqual({
+      status: 800, message: '未获取到有效登录凭据，请重新扫码',
+    })
+  })
+
+  it('does not report a login when check_sig returns no usable session credentials', async () => {
+    const link = 'https://ssl.ptlogin2.graph.qq.com/check_sig?uin=o012345&ptsigx=PTSIGX'
+    fetchMock.mockResolvedValueOnce(answer(callback('0', link))).mockResolvedValueOnce(answer(''))
+    await expect(checkQrStatus('sig-no-session')).resolves.toMatchObject({ status: 800 })
+    expect(fetchMock).toHaveBeenCalledTimes(2)
+  })
+
+  it('does not log raw Set-Cookie headers when generating a code fails', async () => {
+    const response = answer('')
+    response.headers.append('Set-Cookie', 'session=SECRET-HEADER')
+    fetchMock.mockResolvedValue(response)
+    await expect(generateQrCode()).resolves.toBeNull()
+    expect(log.error).toHaveBeenCalledExactlyOnceWith('QQ QR: qrsig not found in response headers', { setCookieCount: 1 })
   })
 
   it('never writes the one-time login link or the sign-in response to the log', async () => {
@@ -93,9 +111,10 @@ describe('QQ Music request timeouts', () => {
 
   it('bounds every step of the sign-in (poll, check_sig, OAuth code) with an abort signal', async () => {
     const link = 'https://ssl.ptlogin2.graph.qq.com/check_sig?pttype=1&uin=o012345&ptsigx=PTSIGX'
-    // The poll says "signed in"; the later steps get an empty answer, which ends the flow on its fallback cookie.
+    const session = new Response('', { headers: { 'Set-Cookie': 'p_skey=fixture-session' } })
     fetchMock
       .mockResolvedValueOnce(answer(callback('0', link)))
+      .mockResolvedValueOnce(session)
       .mockImplementation(async () => new Response('', { status: 200 }))
     await expect(checkQrStatus('sig-timeouts')).resolves.toMatchObject({ status: 803 })
 
@@ -114,11 +133,11 @@ describe('QQ Music request timeouts', () => {
     for (const signal of signalsOfAllRequests()) expect(signal).toBeInstanceOf(AbortSignal)
   })
 
-  it('answers a failed check when a step times out, instead of hanging', async () => {
+  it('keeps polling when a sign-in step times out', async () => {
     const link = 'https://ssl.ptlogin2.graph.qq.com/check_sig?pttype=1&uin=o012345&ptsigx=PTSIGX'
     fetchMock
       .mockResolvedValueOnce(answer(callback('0', link)))
       .mockRejectedValue(new DOMException('timeout', 'TimeoutError'))
-    await expect(checkQrStatus('sig-hang')).resolves.toMatchObject({ status: 800 })
+    await expect(checkQrStatus('sig-hang')).resolves.toMatchObject({ status: 801 })
   })
 })

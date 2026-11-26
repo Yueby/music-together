@@ -1,9 +1,11 @@
 import ncmApi from '@neteasecloudmusicapienhanced/api'
+import { QR_STATUS } from '@music-together/shared'
 import type { Playlist } from '@music-together/shared'
 import type { GetUserInfoResult } from './authProvider.js'
 import { httpsCoverUrl } from '../utils/httpsCoverUrl.js'
 import { logger } from '../utils/logger.js'
 import { withTimeoutOrNull } from '../utils/withTimeout.js'
+import { getCookieValue } from '../utils/cookieUtils.js'
 
 const NETEASE_TIMEOUT_MS = 15_000
 
@@ -35,21 +37,21 @@ export async function generateQrCode(): Promise<{ key: string; qrimg: string } |
     const keyRes = await withTimeout(ncmApi.login_qr_key({ timestamp: Date.now() }))
     const key = keyRes?.body?.data?.unikey
     if (!key) {
-      logger.error('Netease QR: failed to get unikey', keyRes?.body)
+      logger.error('Netease QR: failed to get unikey')
       return null
     }
 
     const qrRes = await withTimeout(ncmApi.login_qr_create({ key, qrimg: true, timestamp: Date.now() }))
     const qrimg = qrRes?.body?.data?.qrimg
     if (!qrimg) {
-      logger.error('Netease QR: failed to generate QR image', qrRes?.body)
+      logger.error('Netease QR: failed to generate QR image')
       return null
     }
 
     logger.info('Netease QR code generated')
     return { key, qrimg }
-  } catch (err) {
-    logger.error('Netease QR generation failed', err)
+  } catch {
+    logger.error('Netease QR generation failed')
     return null
   }
 }
@@ -68,10 +70,14 @@ export async function checkQrStatus(key: string): Promise<{
     if (res === null) {
       // No answer in time says nothing about the code: keep it alive so the client polls again, never "expired".
       logger.warn('Netease QR check timed out')
-      return { status: 801, message: '等待扫码' }
+      return { status: QR_STATUS.WAITING_SCAN, message: '等待扫码' }
     }
-    const code = res?.body?.code ?? 800
+    const code = res?.body?.code
+    if (code == null) return { status: QR_STATUS.WAITING_SCAN, message: '暂时无法检查登录状态，请稍候' }
     const cookie = res?.body?.cookie
+    if (code === QR_STATUS.SUCCESS && (typeof cookie !== 'string' || !getCookieValue(cookie, 'MUSIC_U'))) {
+      return { status: QR_STATUS.EXPIRED, message: '未获取到有效登录凭据，请重新扫码' }
+    }
 
     const messages: Record<number, string> = {
       800: '二维码已过期，请重新获取',
@@ -83,11 +89,11 @@ export async function checkQrStatus(key: string): Promise<{
     return {
       status: code,
       message: messages[code] ?? `未知状态 (${code})`,
-      cookie: code === 803 ? cookie : undefined,
+      cookie: code === QR_STATUS.SUCCESS ? cookie : undefined,
     }
-  } catch (err) {
-    logger.error('Netease QR check failed', err)
-    return { status: 800, message: '检查状态失败' }
+  } catch {
+    logger.warn('Netease QR check failed')
+    return { status: QR_STATUS.WAITING_SCAN, message: '暂时无法检查登录状态，请稍候' }
   }
 }
 

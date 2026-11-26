@@ -50,11 +50,19 @@ describe('NetEase QR login', () => {
     await expect(checkQrStatus('k')).resolves.toEqual({ status: 803, message: '登录成功', cookie: 'MUSIC_U=x' })
   })
 
-  it('treats a failed or empty check as an expired code', async () => {
+  it.each([undefined, 'MUSIC_U= ', 'MUSIC_A=anonymous'])(
+    'expires a completed QR login without a session cookie (%j)',
+    async (cookie) => {
+      ncm.login_qr_check.mockResolvedValue({ body: { code: 803, cookie } })
+      await expect(checkQrStatus('k')).resolves.toEqual({ status: 800, message: '未获取到有效登录凭据，请重新扫码' })
+    },
+  )
+
+  it('keeps polling after a failed or empty check', async () => {
     ncm.login_qr_check.mockResolvedValueOnce({ body: {} })
-    await expect(checkQrStatus('k')).resolves.toMatchObject({ status: 800 })
+    await expect(checkQrStatus('k')).resolves.toMatchObject({ status: 801 })
     ncm.login_qr_check.mockRejectedValueOnce(new Error('down'))
-    await expect(checkQrStatus('k')).resolves.toMatchObject({ status: 800 })
+    await expect(checkQrStatus('k')).resolves.toMatchObject({ status: 801 })
   })
 })
 

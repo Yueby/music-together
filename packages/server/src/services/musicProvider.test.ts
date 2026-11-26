@@ -188,6 +188,44 @@ describe('stream URL lifetime caching', () => {
   const now = Date.parse('2026-07-20T00:00:00Z')
   const signedUrl = (timestamp: string) =>
     `https://m801.music.126.net/${timestamp}/fixture-signature/ymusic/fixture.mp3`
+  const song = (url: string, id: string | number = 42) => ({ id, code: 200, url, freeTrialInfo: null })
+  const neteaseResponse = (data: unknown[], code = 200) => JSON.stringify({ code, data })
+
+  it('reads raw NetEase responses and caches only the full song', async () => {
+    vi.spyOn(Date, 'now').mockReturnValue(now)
+    const url = signedUrl('20260720090000')
+    const format = vi.spyOn(Meting.prototype, 'format')
+    const request = vi.spyOn(Meting.prototype, 'url')
+      .mockResolvedValueOnce(neteaseResponse([song(url)], 500))
+      .mockResolvedValueOnce(neteaseResponse([{ ...song(url), code: 404 }]))
+      .mockResolvedValueOnce(neteaseResponse([{ ...song(url), freeTrialInfo: { start: 0, end: 30 } }]))
+      .mockResolvedValueOnce(neteaseResponse([song('https://')]))
+      .mockResolvedValueOnce(neteaseResponse([song('https://example.com/wrong.mp3', 41), song(url.replace('https:', 'http:'))]))
+
+    for (let i = 0; i < 4; i++) await expect(musicProvider.getStreamUrl('netease', '42')).resolves.toBeNull()
+    await expect(musicProvider.getStreamUrl('netease', '42')).resolves.toBe(url)
+    await expect(musicProvider.getStreamUrl('netease', '42')).resolves.toBe(url)
+    expect(format).toHaveBeenCalledWith(false)
+    expect(new Set(request.mock.instances).size).toBe(5)
+    expect(request).toHaveBeenCalledTimes(5)
+  })
+
+  it('invalidates all qualities for the requested platform track only', async () => {
+    const url = 'https://example.com/music.mp3'
+    const request = vi.spyOn(Meting.prototype, 'url').mockResolvedValue(JSON.stringify({ url }))
+    await musicProvider.getStreamUrl('tencent', 'invalidate-fixture', 320)
+    await musicProvider.getStreamUrl('tencent', 'invalidate-fixture', 128)
+    await musicProvider.getStreamUrl('tencent', 'invalidate-fixture-other', 320)
+    await musicProvider.getStreamUrl('kugou', 'invalidate-fixture', 320)
+    expect(request).toHaveBeenCalledTimes(4)
+
+    musicProvider.invalidateStreamUrl('tencent', 'invalidate-fixture')
+    await musicProvider.getStreamUrl('tencent', 'invalidate-fixture', 320)
+    await musicProvider.getStreamUrl('tencent', 'invalidate-fixture', 128)
+    await musicProvider.getStreamUrl('tencent', 'invalidate-fixture-other', 320)
+    await musicProvider.getStreamUrl('kugou', 'invalidate-fixture', 320)
+    expect(request).toHaveBeenCalledTimes(6)
+  })
 
   it('resolves concurrent requests for different qualities on separate Meting instances', async () => {
     const instances = new Set<unknown>()
@@ -213,8 +251,8 @@ describe('stream URL lifetime caching', () => {
     const fresh = signedUrl('20260720090000')
     const request = vi
       .spyOn(Meting.prototype, 'url')
-      .mockResolvedValueOnce(JSON.stringify({ url: first }))
-      .mockResolvedValueOnce(JSON.stringify({ url: fresh }))
+      .mockResolvedValueOnce(neteaseResponse([song(first)]))
+      .mockResolvedValueOnce(neteaseResponse([song(fresh)]))
     const set = vi.spyOn(LRUCache.prototype, 'set')
 
     await expect(musicProvider.getStreamUrl('netease', 'lifetime-cache-fixture')).resolves.toBe(first)
@@ -233,8 +271,8 @@ describe('stream URL lifetime caching', () => {
     vi.spyOn(Date, 'now').mockReturnValue(now)
     const request = vi
       .spyOn(Meting.prototype, 'url')
-      .mockResolvedValueOnce(JSON.stringify({ url: signedUrl('20260719080000') }))
-      .mockResolvedValueOnce(JSON.stringify({ url: signedUrl('20260720080030') }))
+      .mockResolvedValueOnce(neteaseResponse([song(signedUrl('20260719080000'))]))
+      .mockResolvedValueOnce(neteaseResponse([song(signedUrl('20260720080030'))]))
     const set = vi.spyOn(LRUCache.prototype, 'set')
 
     await expect(musicProvider.getStreamUrl('netease', 'lifetime-expired-fixture')).resolves.toBeNull()
@@ -247,7 +285,7 @@ describe('stream URL lifetime caching', () => {
     vi.spyOn(Date, 'now').mockReturnValue(now)
     const anonymous = signedUrl('20260720090000')
     const authorized = signedUrl('20260720100000')
-    const request = vi.spyOn(Meting.prototype, 'url').mockResolvedValue(JSON.stringify({ url: anonymous }))
+    const request = vi.spyOn(Meting.prototype, 'url').mockResolvedValue(neteaseResponse([song(anonymous)]))
     vi.mocked(getNeteasePlaybackUrl).mockResolvedValue(authorized)
     const cookie = vi.spyOn(Meting.prototype, 'cookie')
 
@@ -309,7 +347,7 @@ describe('stream URL lifetime caching', () => {
 
   it('uses five minutes for opaque NetEase URLs while preserving HTTPS normalization', async () => {
     vi.spyOn(Meting.prototype, 'url').mockResolvedValue(
-      JSON.stringify({ url: 'http://music.126.net/ymusic/fixture.mp3' }),
+      neteaseResponse([song('http://music.126.net/ymusic/fixture.mp3')]),
     )
     const set = vi.spyOn(LRUCache.prototype, 'set')
     await expect(musicProvider.getStreamUrl('netease', 'lifetime-opaque-fixture')).resolves.toBe(

@@ -95,6 +95,7 @@ export function registerAuthController(io: TypedServer, socket: TypedSocket) {
               userInfo.avatarUrl,
             )
             broadcastAuthStatus(io, socket, mapping)
+            void notifyRestoredPlaybackCookie(io, mapping.roomId, platform)
           }
           socket.emit(EVENTS.AUTH_SET_COOKIE_RESULT, {
             success: true,
@@ -112,9 +113,9 @@ export function registerAuthController(io: TypedServer, socket: TypedSocket) {
           })
         }
       }
-    } catch (err) {
-      logger.error('AUTH_CHECK_QR error', err, { socketId: socket.id })
-      socket.emit(EVENTS.AUTH_QR_STATUS, { status: QR_STATUS.EXPIRED, message: '检查登录状态失败，请重试' })
+    } catch {
+      logger.warn('AUTH_CHECK_QR error', { socketId: socket.id })
+      socket.emit(EVENTS.AUTH_QR_STATUS, { status: QR_STATUS.WAITING_SCAN, message: '暂时无法检查登录状态，请稍候' })
     }
   })
 
