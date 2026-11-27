@@ -1,10 +1,12 @@
 import { MAPP_METADATA_TARGETS } from '../../../../packages/shared/src/mappMetadataTargets.js'
 import type { WorkerEnv, WorkerRuntime } from '../types.js'
+import { setEdgeTiming, timedBypass } from './edgeTiming.js'
 
 const TTML_PATH = MAPP_METADATA_TARGETS.ttml.path
 const EDGE_TTL_HEADER = 'X-MT-Edge-TTL'
 const EDGE_FRESH_UNTIL_HEADER = 'X-MT-Edge-Fresh-Until'
 const ORIGIN_TIMEOUT_MS = 25_000
+const IDENTITY_COOKIE_PREFIX = 'mt_identity='
 const METADATA_TTLS = new Map<string, number>([
   [TTML_PATH, 21_600],
   [MAPP_METADATA_TARGETS.lyric.path, 1_800],
@@ -25,6 +27,7 @@ interface BufferedMetadata {
 }
 
 type MetadataResult = BufferedMetadata | 'unavailable'
+// Cross-request promise sharing has not been verified under workerd.
 const inFlight = new Map<string, Promise<MetadataResult | null>>()
 
 export function isPublicMetadataPath(pathname: string): boolean {
@@ -54,9 +57,11 @@ function addRequestVariance(headers: Headers): void {
 }
 
 function getCacheTtl(response: Response, pathname: string, defaultTtl: number): number | null {
-  if (response.status !== 200) return 0
+  if (response.status !== 200 || response.headers.has('Set-Cookie')) return 0
+  const vary = (response.headers.get('Vary') ?? '').toLowerCase().split(',').map((value) => value.trim())
+  if (vary.includes('cookie') || vary.includes('*')) return 0
   const directives = (response.headers.get('Cache-Control') ?? '').split(',').map((value) => value.trim())
-  if (directives.some((value) => /^(?:no-store|no-cache)(?:\s*=|$)/i.test(value))) return 0
+  if (directives.some((value) => /^(?:private|no-store|no-cache)(?:\s*=|$)/i.test(value))) return 0
   const maxAges = directives.flatMap((value) => {
     const match = /^max-age\s*=\s*(?:"(\d+)"|(\d+))$/i.exec(value)
     return match ? [Number(match[1] ?? match[2])] : []
@@ -80,13 +85,18 @@ async function readMetadata(
   refresh: boolean,
 ): Promise<MetadataResult | Response> {
   const headers = new Headers(request.headers)
+  // Match the VPS cookie parser's last-value semantics for duplicate names.
+  const identity = headers.get('Cookie')?.split(';').reverse().map((cookie) => cookie.trim())
+    .find((cookie) => cookie.startsWith(IDENTITY_COOKIE_PREFIX))
   headers.delete('Cookie')
+  if (identity) headers.set('Cookie', identity)
   if (refresh) {
     for (const name of ['If-Match', 'If-None-Match', 'If-Modified-Since', 'If-Unmodified-Since', 'If-Range', 'Range']) {
       headers.delete(name)
     }
   }
   try {
+    const started = Date.now()
     const upstream = await fetcher(request.url, {
       headers, redirect: 'manual', cache: 'no-store', signal: AbortSignal.timeout(ORIGIN_TIMEOUT_MS),
     })
@@ -95,6 +105,7 @@ async function readMetadata(
     stripEdgeHeaders(responseHeaders)
     responseHeaders.delete('Set-Cookie')
     responseHeaders.set('X-MT-Edge-Cache', 'MISS')
+    setEdgeTiming(responseHeaders, 'MISS', Date.now() - started)
     const { status, statusText } = upstream
     if (ttl === 0) return new Response(upstream.body, { status, statusText, headers: responseHeaders })
 
@@ -122,6 +133,7 @@ function storeMetadata(cache: WorkerRuntime['cache'], cacheKey: string, metadata
   const headers = new Headers(metadata.headers)
   headers.delete('Vary')
   headers.delete('X-MT-Edge-Cache')
+  headers.delete('Server-Timing')
   headers.set('Cache-Control', `public, s-maxage=${ttl * 2}, max-age=${ttl * 2}`)
   headers.set(EDGE_TTL_HEADER, String(ttl))
   headers.set(EDGE_FRESH_UNTIL_HEADER, String(nowSeconds() + ttl))
@@ -165,7 +177,7 @@ export async function handlePublicMetadata(
   if (
     request.method !== 'GET' || request.headers.has('Authorization') ||
     url.searchParams.has('mini_app_token') || (origin !== null && origin !== url.origin)
-  ) return fetcher(request)
+  ) return timedBypass(await fetcher(request))
 
   url.searchParams.sort()
   // Use a dedicated internal cache namespace so Worker-cached public entries never
@@ -213,6 +225,7 @@ export async function handlePublicMetadata(
     headers.set('Cache-Control', 'public, max-age=' + maxAge)
     addRequestVariance(headers)
     headers.set('X-MT-Edge-Cache', stale ? 'STALE' : 'HIT')
+    setEdgeTiming(headers, 'HIT')
     if (stale && !inFlight.has(cacheKey)) startRead(true, defaultTtl)
     return new Response(cached.body, { status: cached.status, headers })
   }

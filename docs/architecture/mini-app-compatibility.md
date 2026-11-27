@@ -101,6 +101,8 @@ SDK 0.3 的受控动态字节读取和 Web Audio 已在早期探针中实测（�
 
 当前曲目加载期间只记录最新的预取请求，成功解码后才开始下载。取消、卸载和关闭引擎都会清除待预取请求。
 
+**PCM 预算与解码超时**：每首歌的解码缓冲上限为 256 MiB，按 `AudioContext` 的采样率估算双声道 Float32 PCM，48 kHz 时约为 11.6 分钟。加载和预取在下载前检查已知时长，解码后再按实际采样数和声道数检查。超限返回 `AUDIO_TOO_LONG`，预取跳过下载，正式加载显示时长提示并向房间上报 `player:ready`（`failed: true`）。每个 `decodeAudioData` 任务最多等待 30 秒，超时走 `AUDIO_DECODE_FAILED`，继续处理最新待解码任务并丢弃迟到的解码结果。
+
 `MappPlaybackSoundFactory` 使用一个共享 MappAudioEngine/context；只以 roomId/trackId 加载，忽略 Track.streamUrl/options.src，关闭音频源自动重试与 HTML5 频谱分支。每个媒体对象有稳定 sound ID、owner/operation 守卫、异步 load/play/pause/end 回调和 once 监听；卸载曲目释放 buffer，但保留已解锁 context，退出应用才 dispose。加载期间 seek 排队、pause 不终止合法字节读取；加载回调不被同一对象的控制操作丢弃。
 
 共享 Hook 在延迟加载后采用最新的权威暂停/定位目标，避免初始化 seekTo 覆盖下载期间收到的状态。集成测试用真实 useHowl、Mapp factory/engine 及模拟 SDK/AudioContext，验证位置、调速、暂停、源拒绝不重试和跨曲目 context 复用。正式 Mapp 构建选择与页面入口仍待装配。
@@ -149,7 +151,7 @@ TTML 逐词歌词走第四个只读端点 `musicTtml`（`GET /api/music/ttml?sou
 
 ## 宿主能力与独立产物
 
-Web hostRuntime 保留全部原能力。`hostRuntime` 只记录**宿主确实做不到的事**，不是功能开关："一次制作，到处打包"，功能不得因宿主而被隐藏。Mapp 现在关闭的只有：系统 MediaSession、版本轮询、外链、PixiJS 背景（禁止 eval）。剪贴板已通过 `@/lib/clipboard` 桥接到 `sdk.clipboard.writeText()`（需 `clipboard.write`，未授权时隐藏复制入口，取消或失败不误报成功；房间分享链接使用审定服务域名 `${serverOrigin}/room/${roomId}`）。搜索、歌手、专辑/歌单详情和音乐账号登录（`platformAccounts` 为 true）已与网页端一致。封面不直连 CDN，而是经 `musicCover` 读字节转 Blob URL（所有列表、歌手头像都走同一个 `useArtworkUrl`）；封面读取失败时回退本地图标占位。
+Web hostRuntime 保留全部原能力。`hostRuntime` 只记录**宿主确实做不到的事**，不是功能开关："一次制作，到处打包"，功能不得因宿主而被隐藏。Mapp 现在关闭的只有：系统 MediaSession、版本轮询、外链。动态背景通过微应用入口引入 `@pixi/unsafe-eval` 已与主站一致支持 `PixiRenderer`（`pixiBackground: true`）与 `MeshGradientRenderer` 切换。剪贴板已通过 `@/lib/clipboard` 桥接到 `sdk.clipboard.writeText()`（需 `clipboard.write`，未授权时隐藏复制入口，取消或失败不误报成功；房间分享链接使用审定服务域名 `${serverOrigin}/room/${roomId}`）。搜索、歌手、专辑/歌单详情和音乐账号登录（`platformAccounts` 为 true）已与网页端一致。封面不直连 CDN，而是经 `musicCover` 读字节转 Blob URL（所有列表、歌手头像都走同一个 `useArtworkUrl`）；封面读取失败时回退本地图标占位。
 
 **音乐平台账号**（二维码/Cookie 登录、VIP 状态、个人歌单）在微应用里与网页端是同一套界面（房间顶栏的"音乐账号"，`AccountDialog`）。登录本来就在服务端完成（服务端调用网易云/QQ/酷狗，前端只显示二维码），因此走已有的 Socket.IO `auth:*` 事件，不新增 REST；个人歌单曲目走 `musicMyPlaylist`（`GET /api/music/playlist/mine`，必须带 `roomId`，服务端从验证过的身份查该用户在该房间账号池里的登录，没有登录则匿名读取；响应 `private, no-store`，缓存键按凭据隔离），公开歌单和专辑走匿名的 `musicPlaylist`。
 
@@ -169,12 +171,14 @@ Web hostRuntime 保留全部原能力。`hostRuntime` 只记录**宿主确实做
 
 ### 平台运行环境限制与兜底
 
-微应用运行在 `sandbox="allow-scripts"` 的 iframe 中，并受平台 CSP 与 Trusted Types 约束（`autoplay` 权限策略为 `none`，需用户手势后才能发声）。这对共享的网页前端造成两类实际问题，由 `bootstrapClient` 在微应用里安装两个兜底，网页端不受影响：
+微应用运行在 `sandbox="allow-scripts"` 的 iframe 中，并受平台 CSP 与 Trusted Types 约束（`autoplay` 权限策略为 `none`，需用户手势后才能发声）。这对共享的网页前端造成几类实际问题，由 `bootstrapClient` 与微应用挂载入口在微应用里安装兜底，网页端不受影响：
 
 - **没有 `allow-forms`**：浏览器在派发 `submit` 事件之前就拒绝原生表单提交，建房、昵称、密码等对话框的 `onSubmit` 永远不会执行。`formSubmitFallback` 把提交按钮点击与（无提交按钮表单中的）回车转换成同一表单上的普通 `submit` 事件，输入法组合期间不触发，不产生导航。
-- **禁止 eval**：歌词库的动画背景默认用 PixiJS 渲染器，它初始化时会 `new Function(...)`，被 CSP / Trusted Types 拒绝并抛错（`does not allow unsafe-eval` / `TrustedScript`）。微应用的 `hostRuntime.pixiBackground` 为 `false`，`usesMeshRenderer` 因此固定选用纯 WebGL 的 `MeshGradientRenderer`；背景外还包了局部错误边界，装饰性背景失败时静默降级为无背景，不影响播放器。网页端行为不变（仍按用户设置选择渲染器）。
+- **禁止 eval（PixiJS 流体背景）**：歌词库的默认动态背景 `PixiRenderer` 默认会在 `ShaderSystem` 中通过 `new Function(...)` 编译 uniform 同步函数，被无 `unsafe-eval` 的 CSP 拒绝。微应用在 `mountMappClient.tsx` 顶部引入 `@pixi/unsafe-eval`（纯 JS 实现 uniform 同步、不触发 `eval`/`new Function`，无需 `code.eval` 权限），`hostRuntime.pixiBackground` 保持 `true`，因此微应用默认即可获得与主站一致的 Pixi 流体背景（也支持在设置中切回 `MeshGradientRenderer`）；背景外仍保留局部错误边界，装饰性背景失败时静默降级为无背景，不影响播放器。
+- **禁止内联 `style` 属性（歌词间奏三点动画）**：严格 CSP（`style-src` 无 `'unsafe-inline'`）允许 CSSOM（`element.style.setProperty`），但会拦截 `element.setAttribute('style', ...)`。`@applemusic-like-lyrics/core` 的间奏等待三点 `InterludeDotsEl` 构造时用 CSSOM 隐藏，演出时改用 `setAttribute('style', ...)` 更新位置和透明度，导致三点在沙箱内一直不可见。`inlineStyleFallback` 在 `HTMLElement.prototype.setAttribute` 层将 `style` 属性写入等价转换为 CSSOM `setProperty`/`removeProperty`，其它属性原样透传。
 - **背景封面不能用 `blob:` 字符串**：歌词库 `setAlbum` 对字符串来源会先 `fetch()` 再解码，被 `connect-src 'none'` 拒绝（连 Blob URL 也不行），背景会保持纯色。`useBackgroundAlbum` 在需要读字节的宿主里把 Blob URL 先装进 `<img>`，加载完成后把元素交给 `BackgroundRender`（元素来源不经 `fetch`）；切歌时保留上一张直到新图加载完成（渲染器不随每首歌销毁重建 WebGL 上下文），新图加载失败则清除背景，歌曲没有封面则不渲染背景；网页端仍直接传 URL 字符串。
 - **Trusted Types**：任何 `innerHTML` 赋值都会抛错，而歌词库清理歌词行（`innerHTML = ''`，切歌/重建歌词时）和 Radix 滚动区/下拉选择（`<style dangerouslySetInnerHTML>`，成员列表、设置等面板）都会触发，错误边界会接管整个界面。`trustedTypesFallback` 只处理两种安全等价情形：空字符串改用 `replaceChildren()`，`<style>` 元素改写 `textContent`；其余非空值委托给平台原有的 setter（仍被拒绝）。兜底定义在 `HTMLElement.prototype` 上而不是 `Element.prototype`：平台可能把后者锁成不可配置，覆盖它会被静默跳过，而下一层原型链上的同名属性始终可以定义，并排在所有 HTML 元素的原型链最前。不创建 Trusted Types policy，不引入任何 HTML 解析，卸载时只移除自己的属性。`DOMParser.parseFromString`（PixiJS 适配器）同样受限；TTML 因此改在服务端解析，微应用不需要它。集合缓存隔离与额外权限能力可在之后单独验证。
+- **禁止内联 `<style>`**：`textContent` 改写避免了 Trusted Types 异常，CSP 仍会拦截内联样式块。微应用随包发布的 `client.css` 提供 Radix ScrollArea 的滚动条隐藏及内容尺寸规则，并在 `body[data-scroll-locked]` 上锁定模态框背后的页面滚动。滚动条间距由网页端的库动态计算，微应用只提供静态锁定规则。
 
 `pnpm --filter @music-together/mapp package` 构建并打包正式 UI，要求 `MAPP_ROOM_URL` 为审定的 WSS Socket.IO URL；mapp 不参与根目录 `pnpm build`，避免缺少该变量时拖垮主站构建。客户端复用 client workspace 已有 React/Tailwind/WASM 构建插件；Vite 8 的 IIFE 输出显式 `codeSplitting: false`，不生成运行时外部分包，CSS 单文件。客户端库模式显式构建 `process.env.NODE_ENV = "production"`，浏览器无需 Node 全局。定向构建和官方 SDK guard 已通过：ZIP 根目录仅五个必需文件，无外部分包。产物大小与 SHA-256 随代码变化，以 `dist/client-package/package.json` 为准；版本号取 manifest 的 `version`，沙箱构建由 ZIP 哈希区分，无需为每次测试升版本。
 

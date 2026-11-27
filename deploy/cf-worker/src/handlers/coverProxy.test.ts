@@ -5,7 +5,7 @@ import { fixture } from '../../test/runtime.js'
 const path = 'https://mt.agou.mom/api/music/cover-proxy'
 const imageUrl = 'https://p1.music.126.net/cover'
 const resized = imageUrl + '?param=600y600'
-const cacheKey = 'https://mt.agou.mom/__mt_edge_cache/cover?url=' + encodeURIComponent(resized)
+const cacheKey = (target: string) => 'https://mt.agou.mom/__mt_edge_cache/cover?url=' + encodeURIComponent(target)
 const origin = 'https://linux.do'
 const env = { ALLOWED_MAPP_ORIGIN: origin }
 const auth = { Origin: origin, Authorization: 'Bearer abc-_.123' }
@@ -42,21 +42,23 @@ describe('Web covers', () => {
   it('normalizes NetEase size, caches a clean MISS, and serves a reusable HIT', async () => {
     const { handler, runtime, ctx, pending, entries } = fixture()
     runtime.fetch.mockResolvedValueOnce(image())
-    const miss = await handler(coverRequest(imageUrl.replace('https:', 'http:')), {}, ctx)
+    const miss = await handler(coverRequest(resized.replace('https:', 'http:') + '&unused=one'), {}, ctx)
     expect(runtime.fetch).toHaveBeenCalledWith(resized, expect.objectContaining({
       redirect: 'manual', headers: { 'User-Agent': 'Mozilla/5.0' },
     }))
     expect(await miss.text()).toBe('image bytes')
     expect(miss.headers.get('X-MT-Edge-Cache')).toBe('MISS')
+    expect(miss.headers.get('Server-Timing')).toMatch(/^edge;desc="MISS", origin;dur=\d+$/)
     expect(ctx.waitUntil).toHaveBeenCalledOnce()
     await Promise.all(pending)
-    const stored = entries.get(cacheKey)
+    const stored = entries.get(cacheKey(resized))
     expect(Object.fromEntries(stored!.headers)).toEqual({
       'cache-control': 'public, max-age=86400', 'content-type': 'image/png', 'content-length': '11',
     })
-    const hit = await handler(new Request(path + '/?url=' + encodeURIComponent(resized)), {}, ctx)
+    const hit = await handler(new Request(path + '/?url=' + encodeURIComponent(resized + '&unused=two')), {}, ctx)
     expect(await hit.text()).toBe('image bytes')
     expect(hit.headers.get('X-MT-Edge-Cache')).toBe('HIT')
+    expect(hit.headers.get('Server-Timing')).toBe('edge;desc="HIT"')
     expect(hit.headers.get('Access-Control-Allow-Origin')).toBe('*')
     expect(hit.headers.get('Cache-Control')).toBe('public, max-age=86400')
     expect(hit.headers.get('Content-Security-Policy')).toBe("default-src 'none'; sandbox")
@@ -64,16 +66,35 @@ describe('Web covers', () => {
     expect(runtime.fetch).toHaveBeenCalledOnce()
   })
 
+  it.each([
+    [imageUrl, '?param=12345y9&extra=x'],
+    [imageUrl, '?param=3x9&extra=x'],
+    [imageUrl, '?extra=x'],
+    ['https://y.gtimg.cn/cover', '?param=90y90&extra=x'],
+    ['https://imgessl.kugou.com/cover', '?param=90y90&extra=x'],
+  ])('drops unsupported image query parameters for %s%s', async (target, query) => {
+    const { handler, runtime, ctx, pending } = fixture()
+    runtime.fetch.mockResolvedValueOnce(image())
+    const miss = await handler(coverRequest(target + query), {}, ctx)
+    expect(runtime.fetch.mock.calls[0][0]).toBe(target)
+    expect(await miss.text()).toBe('image bytes')
+    await Promise.all(pending)
+    const hit = await handler(coverRequest(target), {}, ctx)
+    expect(hit.headers.get('X-MT-Edge-Cache')).toBe('HIT')
+    expect(runtime.cache.match.mock.calls).toEqual([[cacheKey(target)], [cacheKey(target)]])
+    expect(runtime.fetch).toHaveBeenCalledOnce()
+  })
+
   it('follows up to three allowlisted HTTPS redirects', async () => {
     const { handler, runtime, ctx, pending } = fixture()
-    runtime.fetch.mockResolvedValueOnce(redirect('/next'))
-      .mockResolvedValueOnce(redirect('https://y.gtimg.cn/another'))
+    runtime.fetch.mockResolvedValueOnce(redirect('/next?param=90y90&extra=1'))
+      .mockResolvedValueOnce(redirect('https://y.gtimg.cn/another?extra=2'))
       .mockResolvedValueOnce(redirect('https://imgessl.kugou.com/final'))
       .mockResolvedValueOnce(image())
     const response = await handler(coverRequest(), {}, ctx)
     expect(response.status).toBe(200)
     expect(runtime.fetch.mock.calls.map(([url]) => url)).toEqual([
-      resized, 'https://p1.music.126.net/next', 'https://y.gtimg.cn/another', 'https://imgessl.kugou.com/final',
+      imageUrl, 'https://p1.music.126.net/next?param=90y90', 'https://y.gtimg.cn/another', 'https://imgessl.kugou.com/final',
     ])
     await Promise.all(pending)
   })
@@ -134,9 +155,24 @@ describe('Web covers', () => {
     const request = coverRequest()
     const fallback = new Response('fallback')
     runtime.fetch.mockResolvedValueOnce(new Response(null, { status })).mockResolvedValueOnce(fallback)
-    expect(await handler(request, {}, ctx)).toBe(fallback)
+    const response = await handler(request, {}, ctx)
+    expect(await response.text()).toBe('fallback')
+    expect(response.headers.get('Server-Timing')).toBe('edge;desc="BYPASS"')
     expect(runtime.fetch.mock.calls[1]).toEqual([request])
     expect(runtime.cache.put).not.toHaveBeenCalled()
+  })
+
+  it('uses the normalized image query in the VPS fallback and preserves request headers', async () => {
+    const { handler, runtime, ctx } = fixture()
+    const request = coverRequest(resized + '&extra=1', auth)
+    runtime.fetch.mockResolvedValueOnce(new Response(null, { status: 502 }))
+      .mockResolvedValueOnce(new Response('fallback'))
+    const response = await handler(request, env, ctx)
+    expect(await response.text()).toBe('fallback')
+    const upstream = runtime.fetch.mock.calls[1][0] as Request
+    expect(new URL(upstream.url).searchParams.get('url')).toBe(resized)
+    expect(upstream.headers.get('Authorization')).toBe(auth.Authorization)
+    expect(upstream.headers.get('Origin')).toBe(origin)
   })
 
   it('falls back after the fourth redirect response', async () => {
@@ -145,7 +181,7 @@ describe('Web covers', () => {
     for (let hop = 1; hop <= 4; hop++) runtime.fetch.mockResolvedValueOnce(redirect('/hop-' + hop))
     const fallback = new Response('fallback')
     runtime.fetch.mockResolvedValueOnce(fallback)
-    expect(await handler(request, {}, ctx)).toBe(fallback)
+    expect(await (await handler(request, {}, ctx)).text()).toBe('fallback')
     expect(runtime.fetch).toHaveBeenCalledTimes(5)
     expect(runtime.fetch.mock.calls[4]).toEqual([request])
   })
@@ -155,7 +191,7 @@ describe('Web covers', () => {
     const request = coverRequest()
     const fallback = new Response('fallback')
     runtime.fetch.mockResolvedValueOnce(image('')).mockResolvedValueOnce(fallback)
-    expect(await handler(request, {}, ctx)).toBe(fallback)
+    expect(await (await handler(request, {}, ctx)).text()).toBe('fallback')
     expect(runtime.fetch).toHaveBeenCalledTimes(2)
     expect(runtime.fetch.mock.calls[1]).toEqual([request])
 
@@ -189,7 +225,9 @@ describe('mini-app cover fast mode', () => {
     } })
     const upstream = new Response(null, { status: 204 })
     runtime.fetch.mockResolvedValueOnce(upstream)
-    expect(await handler(request, env, ctx)).toBe(upstream)
+    const response = await handler(request, env, ctx)
+    expect(response.status).toBe(204)
+    expect(response.headers.get('Server-Timing')).toBe('edge;desc="BYPASS"')
     expect(runtime.fetch.mock.calls).toEqual([[request]])
   })
 
@@ -206,7 +244,7 @@ describe('mini-app cover fast mode', () => {
       expect(response.headers.get('X-MT-Edge-Cache')).toBe(status)
       expect((await response.arrayBuffer()).byteLength).toBe(MAPP_COVER_MAX_BYTES)
     }
-    expect(entries.get(cacheKey)?.headers.has('Access-Control-Allow-Origin')).toBe(false)
+    expect(entries.get(cacheKey(imageUrl))?.headers.has('Access-Control-Allow-Origin')).toBe(false)
     expect(runtime.fetch).toHaveBeenCalledOnce()
   })
 
@@ -276,7 +314,9 @@ describe('mini-app cover fast mode', () => {
     const { handler, runtime, ctx } = fixture()
     const upstream = new Response('origin')
     runtime.fetch.mockResolvedValueOnce(upstream)
-    expect(await handler(request, environment, ctx)).toBe(upstream)
+    const response = await handler(request, environment, ctx)
+    expect(await response.text()).toBe('origin')
+    expect(response.headers.get('Server-Timing')).toBe('edge;desc="BYPASS"')
     expect(runtime.fetch.mock.calls).toEqual([[request]])
     expect(runtime.cache.match).not.toHaveBeenCalled()
   })

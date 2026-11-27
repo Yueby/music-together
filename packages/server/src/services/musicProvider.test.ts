@@ -210,6 +210,20 @@ describe('stream URL lifetime caching', () => {
     expect(request).toHaveBeenCalledTimes(5)
   })
 
+  it('asks NetEase as a mainland client when anonymous, so overseas hosts do not get 404', async () => {
+    vi.spyOn(Date, 'now').mockReturnValue(now)
+    const seen: Record<string, string>[] = []
+    vi.spyOn(Meting.prototype, 'url').mockImplementation(async function (this: { header: Record<string, string> }) {
+      seen.push({ ...this.header })
+      return neteaseResponse([song(signedUrl('20260720090000'), 'mainland-ip-fixture')])
+    })
+
+    await expect(musicProvider.getStreamUrl('netease', 'mainland-ip-fixture')).resolves.toMatch(/^https:/)
+    expect(seen).toHaveLength(1)
+    expect(seen[0]['X-Real-IP']).toMatch(/^112\.(88|89)\./)
+    expect(seen[0]['X-Forwarded-For']).toBe(seen[0]['X-Real-IP'])
+  })
+
   it('invalidates all qualities for the requested platform track only', async () => {
     const url = 'https://example.com/music.mp3'
     const request = vi.spyOn(Meting.prototype, 'url').mockResolvedValue(JSON.stringify({ url }))

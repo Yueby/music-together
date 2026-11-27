@@ -48,7 +48,7 @@ function environment(mode?: 'bytes' | 'stream') {
     getOutputLatencyMs: vi.fn(() => 45),
     crossfadeSeek: vi.fn(),
     loadRoomTrack: vi.fn(async (_input: LoadRoomTrackOptions) => true),
-    preloadRoomTrack: vi.fn((_input: { roomId: string; trackId: string; mode: 'bytes' | 'stream' }) => {}),
+    preloadRoomTrack: vi.fn((_input: { roomId: string; trackId: string; duration?: number; mode: 'bytes' | 'stream' }) => {}),
     play: vi.fn(async (_delay?: number, _position?: () => number) => {
       snapshot.audio.status = 'playing'
       emit()
@@ -126,6 +126,7 @@ describe('MappPlaybackSoundFactory preload', () => {
     expect(f.engine.preloadRoomTrack).toHaveBeenCalledExactlyOnceWith({
       roomId: 'AB12_-',
       trackId: 'netease:2',
+      duration: 42,
       mode: 'bytes',
     })
   })
@@ -443,6 +444,20 @@ describe('MappPlaybackSoundFactory shared engine handles', () => {
       expect(f.engine.unload).toHaveBeenCalledOnce()
     },
   )
+
+  it('forwards the engine PCM limit as a terminal load error', async () => {
+    const f = environment()
+    const options = callbacks()
+    f.engine.loadRoomTrack.mockResolvedValueOnce(false)
+    f.engine.snapshot.mockReturnValueOnce({ ...f.snapshot, trackId: null, errorCode: 'AUDIO_TOO_LONG' })
+
+    const sound = f.factory.create(track(), options)
+    await flush()
+
+    expect(sound.state()).toBe('unloaded')
+    expect(options.onloaderror).toHaveBeenCalledExactlyOnceWith(expect.any(Number), 'AUDIO_TOO_LONG')
+    expect(options.onload).not.toHaveBeenCalled()
+  })
 
   it('handles a missing room without loading, and unload cancels queued failures', async () => {
     const f = environment()

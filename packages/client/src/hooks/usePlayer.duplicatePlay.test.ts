@@ -21,7 +21,7 @@ const audio = vi.hoisted(() => {
         loaded = true
         options.onload?.()
       },
-      failLoad: () => options.onloaderror?.(1, 'LOAD_FAILED'),
+      failLoad: (code = 'LOAD_FAILED') => options.onloaderror?.(1, code),
       finishPlayback: () => options.onend?.(),
       state: vi.fn(() => loaded ? 'loaded' : 'loading'),
       playing: vi.fn(() => playing),
@@ -381,6 +381,22 @@ describe('a PLAYER_PLAY announcement delivered twice', () => {
       consoleError.mockRestore()
       consoleWarn.mockRestore()
     }
+  })
+
+  it('reports an over-length track to the room ready gate immediately without retrying', () => {
+    vi.spyOn(console, 'error').mockImplementation(() => {})
+    setRoom()
+    renderHook(() => usePlayer())
+
+    deliverPrepare()
+    act(() => audio.instances[0].failLoad('AUDIO_TOO_LONG'))
+
+    expect(audio.instances).toHaveLength(1)
+    expect(audio.socket.emit).toHaveBeenCalledExactlyOnceWith(EVENTS.PLAYER_READY, {
+      trackId: track.id,
+      revision: 1,
+      failed: true,
+    })
   })
 
   it('keeps a host stall local and recovers against the room timeline', () => {

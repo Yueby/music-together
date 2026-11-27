@@ -9,6 +9,7 @@ import { fetchLyric, type LyricResult } from './lyricFetch.js'
 import { fetchPlaylistTracks, type PlaylistKind } from './playlistFetchers.js'
 import * as tencentAuth from './tencentAuthService.js'
 import { toMetingKugouCookie } from '../utils/cookieUtils.js'
+import { randomMainlandIp } from '../utils/mainlandIp.js'
 import { logger } from '../utils/logger.js'
 import { withTimeoutOrNull } from '../utils/withTimeout.js'
 import { searchAlbums, searchPlaylists } from './catalogSearch.js'
@@ -517,6 +518,10 @@ class MusicProvider {
       if (source === 'netease') {
         meting = new Meting(source)
         meting.format(false)
+        // Overseas datacenter addresses get `code 404` for most free songs; look like a mainland client instead.
+        const clientIp = randomMainlandIp()
+        meting.header['X-Real-IP'] = clientIp
+        meting.header['X-Forwarded-For'] = clientIp
       } else if (cookie) {
         // Fresh instance with cookie — don't pollute the shared one
         meting = new Meting(source)
@@ -541,7 +546,13 @@ class MusicProvider {
         if (data?.code !== 200 || !Array.isArray(data.data)) return null
         const song = data.data.find((item) => item && String(item.id) === urlId)
           ?? (data.data.length === 1 ? data.data[0] : null)
-        if (song?.code !== 200 || song.freeTrialInfo != null) return null
+        if (song?.code !== 200 || song.freeTrialInfo != null) {
+          // The reason only (never the URL): a 404 means the platform refused this address, a trial means a VIP track.
+          logger.warn('NetEase stream unavailable', {
+            urlId, bitrate, code: song?.code ?? null, trial: song?.freeTrialInfo != null,
+          })
+          return null
+        }
         data = song
       }
 

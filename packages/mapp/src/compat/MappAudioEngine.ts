@@ -1,6 +1,6 @@
 import type { MiniAppSDK } from '@discourse-mini-app/sdk'
 import type { AudioLoadProgress } from '../../../client/src/lib/PlaybackSound.ts'
-import { WebAudioPlayer, type WebAudioPlayerSnapshot } from './WebAudioPlayer.ts'
+import { exceedsPcmBudget, WebAudioPlayer, WebAudioPlayerError, type WebAudioPlayerSnapshot } from './WebAudioPlayer.ts'
 import {
   readRoomAudio,
   RoomAudioError,
@@ -15,6 +15,7 @@ export type MappAudioEngineErrorCode =
   | 'AUDIO_PERMISSION_REQUIRED'
   | 'AUDIO_NOT_LOADED'
   | 'AUDIO_DECODE_FAILED'
+  | 'AUDIO_TOO_LONG'
   | 'AUDIO_PLAY_FAILED'
   | 'AUDIO_SEEK_FAILED'
   | 'AUDIO_VOLUME_FAILED'
@@ -43,10 +44,9 @@ export interface MappAudioEngineOptions {
   onChange?: (snapshot: MappAudioEngineSnapshot) => void
 }
 
-type PreloadRoomTrackOptions = Omit<ReadRoomAudioOptions, 'sdk' | 'signal' | 'onProgress'>
+type PreloadRoomTrackOptions = Omit<ReadRoomAudioOptions, 'sdk' | 'signal' | 'onProgress'> & { duration?: number }
 
 export type LoadRoomTrackOptions = PreloadRoomTrackOptions & {
-  duration?: number
   signal?: AbortSignal
   onLoadProgress?: (progress: AudioLoadProgress) => void
 }
@@ -129,6 +129,12 @@ export class MappAudioEngine {
       this.player.unload()
       this.notify()
       if (!this.current(generation)) return false
+      if (this.isTrackTooLong(options.duration)) {
+        if (this.preloaded?.roomId === options.roomId && this.preloaded.trackId === options.trackId) {
+          this.discardPreload()
+        }
+        throw new MappAudioEngineError('AUDIO_TOO_LONG')
+      }
       const reportProgress = (progress: AudioLoadProgress) => {
         if (this.current(generation)) options.onLoadProgress?.(progress)
       }
@@ -170,8 +176,13 @@ export class MappAudioEngine {
     } catch (error) {
       if (!this.current(generation)) return false
       this.loading = false
-      this.errorCode =
-        error instanceof RoomAudioError || error instanceof MappAudioEngineError ? error.code : 'AUDIO_DECODE_FAILED'
+      if (error instanceof RoomAudioError || error instanceof MappAudioEngineError) {
+        this.errorCode = error.code
+      } else if (error instanceof WebAudioPlayerError && error.code === 'AUDIO_BUFFER_TOO_LARGE') {
+        this.errorCode = 'AUDIO_TOO_LONG'
+      } else {
+        this.errorCode = 'AUDIO_DECODE_FAILED'
+      }
       this.notify()
       return false
     } finally {
@@ -190,6 +201,11 @@ export class MappAudioEngine {
     if (this.trackId === options.trackId) {
       this.pendingPreload = null
       return
+    }
+    if (this.isTrackTooLong(options.duration)) {
+      this.pendingPreload = null
+      this.discardPreload()
+      throw new MappAudioEngineError('AUDIO_TOO_LONG')
     }
     const known = this.preloaded
     const matches = known && known.roomId === options.roomId && known.trackId === options.trackId
@@ -381,6 +397,10 @@ export class MappAudioEngine {
   private assertAudio(): void {
     if (this.disposed) throw new MappAudioEngineError('DISPOSED')
     if (!this.sdk.permissions.has('audio.webAudio')) throw new MappAudioEngineError('AUDIO_PERMISSION_REQUIRED')
+  }
+
+  private isTrackTooLong(duration?: number): boolean {
+    return duration !== undefined && exceedsPcmBudget(duration, this.player.getSampleRate())
   }
 
   private async runAudio(operation: () => Promise<boolean>, code: MappAudioEngineErrorCode): Promise<boolean> {

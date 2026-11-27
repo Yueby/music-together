@@ -11,8 +11,9 @@ export const hostRuntime: HostRuntime = Object.freeze({
   platformAccounts: true,
   nativeMediaSession: false,
   versionCheck: false,
-  // The platform CSP forbids eval, which PixiJS needs; the mesh renderer is plain WebGL.
-  pixiBackground: false,
+  // `@pixi/unsafe-eval` patches PixiJS ShaderSystem to sync uniforms without `new Function`,
+  // so Pixi fluid backgrounds run cleanly under the mini-app sandbox's strict CSP.
+  pixiBackground: true,
   clipboard: true,
   externalLinks: false,
 })

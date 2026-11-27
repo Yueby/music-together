@@ -33,6 +33,7 @@ function environment(
   }
   const context = Object.assign(new EventTarget(), {
     currentTime: 10,
+    sampleRate: 48_000,
     state: 'suspended' as AudioContextState,
     destination: {},
     createGain: vi.fn(() => ({ gain: { value: 1 }, connect: vi.fn(), disconnect: vi.fn() })),
@@ -422,10 +423,50 @@ describe('MappAudioEngine thin WebAudioPlayer adapter', () => {
     await f.engine.dispose()
   })
 
-  it('reports a decode failure for over-length track metadata without invoking the native decoder', async () => {
+  it.each([900, 1_000])('rejects a %ss track before downloading at 48 kHz', async (duration) => {
     const f = environment()
-    expect(await f.engine.loadRoomTrack({ ...input(), duration: 1_801 })).toBe(false)
+    expect(await f.engine.loadRoomTrack({ ...input(), duration })).toBe(false)
+    expect(f.request).not.toHaveBeenCalled()
+    expect(f.stream).not.toHaveBeenCalled()
     expect(f.context.decodeAudioData).not.toHaveBeenCalled()
+    expect(f.engine.snapshot()).toMatchObject({ trackId: null, loading: false, errorCode: 'AUDIO_TOO_LONG' })
+    await f.engine.dispose()
+  })
+
+  it('downloads a 600s track and decodes it with the same context used for the estimate', async () => {
+    const f = environment()
+    expect(await f.engine.loadRoomTrack({ ...input(), duration: 600 })).toBe(true)
+    expect(f.request).toHaveBeenCalledOnce()
+    expect(f.context.decodeAudioData).toHaveBeenCalledOnce()
+    expect(f.createContext).toHaveBeenCalledOnce()
+    await f.engine.dispose()
+  })
+
+  it('reports the PCM limit when only the decoded size exceeds the budget', async () => {
+    const f = environment()
+    f.context.decodeAudioData.mockResolvedValueOnce({
+      duration: 900,
+      length: 900 * f.context.sampleRate,
+      numberOfChannels: 2,
+    } as AudioBuffer)
+    expect(await f.engine.loadRoomTrack(input())).toBe(false)
+    expect(f.request).toHaveBeenCalledOnce()
+    expect(f.engine.snapshot()).toMatchObject({ trackId: null, loading: false, errorCode: 'AUDIO_TOO_LONG' })
+    await f.engine.dispose()
+  })
+
+  it('maps a native decode timeout to a decode failure', async () => {
+    vi.useFakeTimers()
+    const f = environment()
+    const started = deferred<void>()
+    f.context.decodeAudioData.mockImplementationOnce(() => {
+      started.resolve()
+      return new Promise<AudioBuffer>(() => {})
+    })
+    const loading = f.engine.loadRoomTrack(input())
+    await started.promise
+    await vi.advanceTimersByTimeAsync(30_000)
+    expect(await loading).toBe(false)
     expect(f.engine.snapshot()).toMatchObject({ trackId: null, loading: false, errorCode: 'AUDIO_DECODE_FAILED' })
     await f.engine.dispose()
   })
@@ -612,6 +653,17 @@ describe('MappAudioEngine thin WebAudioPlayer adapter', () => {
 
 describe('MappAudioEngine preloading the announced next track', () => {
   const preload = (trackId: string) => ({ roomId: 'AB12_-', trackId, mode: 'bytes' as const })
+
+  it('rejects a 900s preload before downloading but downloads a 600s preload at 48 kHz', async () => {
+    const f = environment()
+    expect(() => f.engine.preloadRoomTrack({ ...preload('long'), duration: 900 })).toThrow('AUDIO_TOO_LONG')
+    expect(f.request).not.toHaveBeenCalled()
+    expect(f.stream).not.toHaveBeenCalled()
+    f.engine.preloadRoomTrack({ ...preload('normal'), duration: 600 })
+    expect(f.request).toHaveBeenCalledOnce()
+    expect(f.createContext).toHaveBeenCalledOnce()
+    await f.engine.dispose()
+  })
 
   it.each([{ tracks: ['next'] }, { tracks: ['next', 'newest'] }])(
     'defers preloading until the current load succeeds ($tracks)',

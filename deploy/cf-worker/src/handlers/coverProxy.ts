@@ -3,9 +3,9 @@ import {
   MAPP_COVER_MAX_BYTES,
   MAX_WEB_COVER_BYTES,
   RASTER_IMAGE_TYPES,
-  limitCoverSize,
 } from '../../../../packages/shared/src/mediaContracts.js'
 import type { WorkerEnv, WorkerRuntime } from '../types.js'
+import { setEdgeTiming, timedBypass } from './edgeTiming.js'
 
 export const COVER_PROXY_PATH = '/api/music/cover-proxy'
 const PUBLIC_CACHE = 'public, max-age=86400'
@@ -19,8 +19,10 @@ type CoverRejection =
 
 type CoverImage = { kind: 'image'; body: ArrayBuffer; contentType: string }
 type CoverResult = CoverImage | CoverRejection | { kind: 'upstream' }
+type CoverFetch = { result: CoverResult; maxBytes: number; originMs: number }
 
-const inFlight = new Map<string, Promise<{ result: CoverResult; maxBytes: number }>>()
+// Cross-request promise sharing has not been verified under workerd.
+const inFlight = new Map<string, Promise<CoverFetch>>()
 
 const HOST_REJECTED: CoverRejection = { kind: 'host', status: 403, error: 'Host not allowed' }
 const IMAGE_TOO_LARGE: CoverRejection = { kind: 'invalid', status: 413, error: 'Image too large' }
@@ -45,6 +47,12 @@ function readCoverTarget(url: URL, mapp: boolean): URL | null {
   } catch {
     return null
   }
+}
+
+function normalizeCoverQuery(target: URL): void {
+  const size = target.hostname.endsWith('.music.126.net') ? target.searchParams.get('param') : null
+  target.search = ''
+  if (size && /^\d{1,4}y\d{1,4}$/.test(size)) target.searchParams.set('param', size)
 }
 
 type BoundedImageResult = { ok: true; body: ArrayBuffer } | { ok: false; reason: 'empty' | 'too-large' }
@@ -112,6 +120,7 @@ async function fetchCover(
           next.protocol !== 'https:' || next.port || next.username || next.password ||
           (authority && /[:@]/.test(authority)) || !COVER_HOST_ALLOWLIST.includes(next.hostname)
         ) return HOST_REJECTED
+        normalizeCoverQuery(next)
         target = next
         continue
       }
@@ -153,7 +162,7 @@ function mappHeaders(origin: string): Headers {
   })
 }
 
-function coverResponse(cover: Response, edgeCache: 'HIT' | 'MISS', mappOrigin?: string): Response {
+function coverResponse(cover: Response, edgeCache: 'HIT' | 'MISS', mappOrigin?: string, originMs?: number): Response {
   const headers = mappOrigin ? mappHeaders(mappOrigin) : new Headers({
     'Access-Control-Allow-Origin': '*',
     'Content-Security-Policy': "default-src 'none'; sandbox",
@@ -165,6 +174,7 @@ function coverResponse(cover: Response, edgeCache: 'HIT' | 'MISS', mappOrigin?: 
   }
   headers.set('X-Content-Type-Options', 'nosniff')
   headers.set('X-MT-Edge-Cache', edgeCache)
+  setEdgeTiming(headers, edgeCache, originMs)
   return new Response(cover.body, { headers })
 }
 
@@ -199,9 +209,9 @@ export async function handleCoverProxy(
 ): Promise<Response> {
   const url = new URL(request.url)
   const exactPath = url.pathname === COVER_PROXY_PATH
-  if ((!exactPath && url.pathname !== COVER_PROXY_PATH + '/') || url.searchParams.has('mini_app_token')) {
-    return fetcher(request)
-  }
+  if (!exactPath && url.pathname !== COVER_PROXY_PATH + '/') return fetcher(request)
+  const bypass = async () => timedBypass(await fetcher(request))
+  if (url.searchParams.has('mini_app_token')) return bypass()
 
   const origin = request.headers.get('Origin')
   const allowedOrigin = env.ALLOWED_MAPP_ORIGIN?.trim()
@@ -217,7 +227,7 @@ export async function handleCoverProxy(
       return new Response(null, { status: 204, headers })
     }
   }
-  if (request.method !== 'GET') return fetcher(request)
+  if (request.method !== 'GET') return bypass()
 
   const authorization = request.headers.get('Authorization')
   let mappOrigin: string | undefined
@@ -225,18 +235,19 @@ export async function handleCoverProxy(
     if (
       !exactPath || !allowedOrigin || origin !== allowedOrigin ||
       authorization.length > 8199 || !/^Bearer [A-Za-z0-9_.-]+$/.test(authorization)
-    ) return fetcher(request)
+    ) return bypass()
     mappOrigin = allowedOrigin
   }
 
   const target = readCoverTarget(url, mappOrigin !== undefined)
   if (!target) {
-    if (mappOrigin) return fetcher(request)
+    if (mappOrigin) return bypass()
     return Response.json({ error: 'Missing url parameter' }, { status: 400, headers: { 'Cache-Control': 'no-store' } })
   }
   if (!COVER_HOST_ALLOWLIST.includes(target.hostname)) return coverError(HOST_REJECTED, mappOrigin)
   target.protocol = 'https:'
-  const normalized = limitCoverSize(target)
+  normalizeCoverQuery(target)
+  const normalized = target.href
   const cacheKey = new URL('/__mt_edge_cache/cover?url=' + encodeURIComponent(normalized), url.origin).href
   const cached = await cache.match(cacheKey).catch(() => undefined)
   if (cached) {
@@ -244,8 +255,14 @@ export async function handleCoverProxy(
     return cover ? coverResponse(cover, 'HIT', mappOrigin) : coverError(IMAGE_TOO_LARGE, mappOrigin)
   }
 
+  async function fetchTimed(maxBytes: number): Promise<CoverFetch> {
+    const started = Date.now()
+    const result = await fetchCover(normalized, maxBytes, fetcher)
+    return { result, maxBytes, originMs: Date.now() - started }
+  }
+
   function startFetch(maxBytes: number) {
-    const flight = fetchCover(normalized, maxBytes, fetcher).then((result) => ({ result, maxBytes }))
+    const flight = fetchTimed(maxBytes)
     inFlight.set(cacheKey, flight)
     // Keep the owning request alive if its client disconnects while other requests are waiting.
     ctx.waitUntil(flight.then(({ result }) => {
@@ -259,7 +276,7 @@ export async function handleCoverProxy(
     return flight
   }
 
-  async function awaitFlight(flight: Promise<{ result: CoverResult; maxBytes: number }>, isOwner: boolean) {
+  async function awaitFlight(flight: Promise<CoverFetch>, isOwner: boolean) {
     if (isOwner) return flight
     const timedOut = Symbol('timeout')
     let timer: ReturnType<typeof setTimeout> | undefined
@@ -267,7 +284,7 @@ export async function handleCoverProxy(
       flight,
       new Promise<typeof timedOut>((resolve) => { timer = setTimeout(() => resolve(timedOut), 11_000) }),
     ]).finally(() => clearTimeout(timer))
-    return raced === timedOut ? fetchCover(normalized, maxBytes, fetcher).then((res) => ({ result: res, maxBytes })) : raced
+    return raced === timedOut ? fetchTimed(maxBytes) : raced
   }
 
   const maxBytes = mappOrigin ? MAPP_COVER_MAX_BYTES : MAX_WEB_COVER_BYTES
@@ -281,12 +298,14 @@ export async function handleCoverProxy(
   const { result } = cover
   if (result.kind === 'image') {
     if (result.body.byteLength > maxBytes) return coverError(IMAGE_TOO_LARGE, mappOrigin)
-    return coverResponse(imageResponse(result), 'MISS', mappOrigin)
+    return coverResponse(imageResponse(result), 'MISS', mappOrigin, cover.originMs)
   }
   if (result.kind !== 'upstream') return coverError(result, mappOrigin)
 
   try {
-    return await fetcher(request)
+    if (url.searchParams.get('url') === normalized) return await bypass()
+    url.searchParams.set('url', normalized)
+    return timedBypass(await fetcher(new Request(url, request)))
   } catch {
     if (!mappOrigin) {
       return Response.json({ error: 'Cover proxy failed' }, { status: 503, headers: { 'Cache-Control': 'no-store' } })

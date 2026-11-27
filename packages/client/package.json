@@ -25,6 +25,7 @@
     "@pixi/filter-bulge-pinch": "^5.1.1",
     "@pixi/filter-color-matrix": "^7.4.3",
     "@pixi/sprite": "^7.4.3",
+    "@pixi/unsafe-eval": "^7.4.3",
     "@tanstack/query-core": "^5.108.4",
     "@tanstack/react-virtual": "^3.14.26",
     "class-variance-authority": "^0.7.1",

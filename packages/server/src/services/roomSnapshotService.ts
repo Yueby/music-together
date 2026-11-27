@@ -171,8 +171,9 @@ function captureRooms(now: number): SnapshotRoom[] {
   for (const [roomId, room] of roomRepo.getAll()) {
     try {
       rooms.push(roomSchema.parse(captureRoom(room, now)))
-    } catch {
-      logger.warn('Invalid room skipped during room snapshot capture', { roomId })
+    } catch (error) {
+      const issues = error instanceof z.ZodError ? error.issues.map(({ path, code }) => ({ path, code })) : []
+      logger.warn('Invalid room skipped during room snapshot capture', { roomId, issues })
     }
   }
   return rooms

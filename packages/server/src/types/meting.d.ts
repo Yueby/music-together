@@ -1,6 +1,8 @@
 declare module '@meting/core' {
   class Meting {
     constructor(site: string)
+    /** Request headers sent to the platform (mutable; replaced per instance). */
+    header: Record<string, string>
     format(enable: boolean): this
     site(site: string): this
     cookie(cookie: string): this

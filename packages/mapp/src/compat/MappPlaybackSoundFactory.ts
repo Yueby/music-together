@@ -104,7 +104,7 @@ export function createMappPlaybackSoundFactory(options: MappPlaybackSoundFactory
       const roomId = options.getRoomId()
       if (disposed || roomId === null) return
       try {
-        engine.preloadRoomTrack({ roomId, trackId: track.id, mode: options.mode ?? 'stream' })
+        engine.preloadRoomTrack({ roomId, trackId: track.id, duration: track.duration, mode: options.mode ?? 'stream' })
       } catch {
         // Best effort: the real load reads the track itself.
       }
@@ -263,13 +263,13 @@ export function createMappPlaybackSoundFactory(options: MappPlaybackSoundFactory
       }
       if (disposed) return handle
       owner = entry
-      const loadFailed = () => {
+      const loadFailed = (code: 'AUDIO_LOAD_FAILED' | 'AUDIO_TOO_LONG' = 'AUDIO_LOAD_FAILED') => {
         if (!current(entry)) return
         entry.state = 'unloaded'
         // Failure is terminal for loading; load() never retries the source.
         queueMicrotask(() => {
           if (current(entry) && entry.state === 'unloaded') {
-            entry.callbacks.onloaderror?.(entry.id, 'AUDIO_LOAD_FAILED')
+            entry.callbacks.onloaderror?.(entry.id, code)
           }
         })
       }
@@ -292,7 +292,7 @@ export function createMappPlaybackSoundFactory(options: MappPlaybackSoundFactory
           .then((loaded) => {
             if (!current(entry)) return
             if (!loaded) {
-              loadFailed()
+              loadFailed(engine.snapshot().errorCode === 'AUDIO_TOO_LONG' ? 'AUDIO_TOO_LONG' : 'AUDIO_LOAD_FAILED')
               return
             }
             try {
@@ -307,7 +307,7 @@ export function createMappPlaybackSoundFactory(options: MappPlaybackSoundFactory
             queueMicrotask(() => {
               if (current(entry) && entry.state === 'loaded') entry.callbacks.onload?.()
             })
-          }, loadFailed)
+          }, () => loadFailed())
       } catch {
         // Even synchronous permission/input errors cannot call back during create().
         queueMicrotask(loadFailed)

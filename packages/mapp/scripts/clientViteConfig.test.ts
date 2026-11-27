@@ -22,7 +22,6 @@ describe('explicit client build configuration', () => {
       '@/lib/hostRuntime',
       '@/lib/storageBackend',
       '@',
-      /^@pixi\/.+$/,
     ])
     expect(config.define).toMatchObject({
       __MAPP_ROOM_ENDPOINT__: '"roomSocket"',

@@ -17,7 +17,7 @@
 | 动画 | motion | ^14.14.0 | React 动画（`LazyMotion` + `m.*` 异步加载 `domMax`） |
 | 虚拟列表 | @tanstack/react-virtual | ^3.14.26 | 搜索和歌单大列表 |
 | 拖拽排序 | @dnd-kit/core / sortable / utilities | ^6.3.1 / ^10.0.0 / ^3.2.2 | 播放队列触摸/指针/键盘拖拽排序 |
-| 图形 | @pixi/* | 7.x | Web 端歌词背景渲染与滤镜（`mapp` 打包时通过 `pixiStub` 别名剔除） |
+| 图形 | @pixi/*（含 `@pixi/unsafe-eval`） | 7.x | 全端歌词流体背景渲染与滤镜（`mapp` 入口导入 `@pixi/unsafe-eval` 以兼容无 `unsafe-eval` 的 CSP） |
 | 工具 | sonner / lucide-react | 当前锁定版本 | 通知、图标 |
 
 ## Server 核心依赖

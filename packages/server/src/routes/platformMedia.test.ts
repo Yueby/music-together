@@ -443,7 +443,15 @@ describe('unmounted roomAudio/platform router', () => {
       expect(getStreamSlotsSnapshot().recentBypassCount).toBe(bypassesBefore)
     })
 
-    it('skips second rate-limit deduction and logs sanitized relay_fallback on valid fallback-v1', async () => {
+    it.each([
+      [undefined, 'network', true, true],
+      ['unknown-fixture-reason', 'network', true, true],
+      ['network', 'network', true, true],
+      ['origin', 'origin', true, true],
+      ['size', 'size', false, false],
+      ['length', 'length', false, false],
+      ['encoding', 'encoding', false, true],
+    ] as const)('handles fallback reason %s as %s without a second rate-limit deduction', async (header, reason, counts, reuse) => {
       log.warn.mockClear()
       const before = getStreamSlotsSnapshot().recentFallbackCount ?? 0
       const bypassesBefore = getStreamSlotsSnapshot().recentBypassCount
@@ -452,17 +460,23 @@ describe('unmounted roomAudio/platform router', () => {
         headers: {
           'x-mt-relay': 'fallback-v1',
           'x-mt-relay-secret': secret,
+          ...(header === undefined ? {} : { 'x-mt-relay-reason': header }),
         },
       })
       await f.run()
       expect(f.res.statusCode).toBe(200)
-      expect(getStreamSlotsSnapshot().recentFallbackCount).toBe(before + 1)
+      expect(getStreamSlotsSnapshot().recentFallbackCount).toBe(before + Number(counts))
       expect(getStreamSlotsSnapshot().recentBypassCount).toBe(bypassesBefore)
       expect(f.rateLimit).not.toHaveBeenCalled()
       expect(f.resolve).not.toHaveBeenCalled()
-      expect(f.stream).toHaveBeenCalledOnce()
+      expect(f.stream).toHaveBeenCalledExactlyOnceWith(
+        { roomId: 'ABC_-1', trackId: 'track', userId, ...(reuse ? { preferRelayCache: true } : {}) },
+        f.res,
+        expect.any(AbortSignal),
+      )
       expect(log.warn).toHaveBeenCalledWith('relay_fallback', {
         event: 'relay_fallback',
+        reason,
         roomId: 'ABC_-1',
         trackId: 'track',
         userId,
@@ -471,6 +485,7 @@ describe('unmounted roomAudio/platform router', () => {
       expect(logged).not.toContain('fixture-token')
       expect(logged).not.toContain(secret)
       expect(logged).not.toContain('http')
+      expect(logged).not.toContain('unknown-fixture-reason')
     })
 
     it('still enforces rate limit and does not log relay_fallback when fallback-v1 has invalid secret', async () => {

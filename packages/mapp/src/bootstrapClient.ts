@@ -4,6 +4,7 @@ import { createMappHost, type MappHost } from './compat/MappHost.ts'
 import { hydratePersistentStorage } from './compat/storageBackend.ts'
 import { installFormSubmitFallback } from './compat/formSubmitFallback.ts'
 import { installMappHost } from './compat/hostBinding.ts'
+import { installInlineStyleFallback } from './compat/inlineStyleFallback.ts'
 import { extractLaunchRoomId } from './compat/launchRoom.ts'
 import { installTrustedTypesFallback } from './compat/trustedTypesFallback.ts'
 
@@ -161,7 +162,9 @@ export function startMappClient(options: MappClientOptions): {
       const releaseHost = installMappHost(host)
       const releaseForms = installFormSubmitFallback()
       const releaseTrustedTypes = installTrustedTypesFallback()
+      const releaseInlineStyles = installInlineStyleFallback()
       unbind = () => {
+        releaseInlineStyles()
         releaseTrustedTypes()
         releaseForms()
         releaseHost()

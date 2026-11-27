@@ -494,8 +494,14 @@ describe('room-controlled media service', () => {
       await expect(f2.resolve()).rejects.toMatchObject({ code: 'MEDIA_ABORTED', status: 499 })
     })
 
-    it('uses relayMaxBitrate independently of VPS direct maxBitrate', async () => {
+    it.each([
+      { mode: 'direct or size/length fallback', preferRelayCache: false, expired: false, reuses: false },
+      { mode: 'fallback with a valid cached URL', preferRelayCache: true, expired: false, reuses: true },
+      { mode: 'fallback with an expired cache entry', preferRelayCache: true, expired: true, reuses: false },
+    ])('uses the expected bitrate for $mode', async ({ preferRelayCache, expired, reuses }) => {
       const f = fixture(128)
+      const now = Date.now()
+      const clock = vi.spyOn(Date, 'now').mockReturnValue(now)
       const service = createPlatformMediaService({
         rooms: f.rooms,
         request: f.request,
@@ -515,13 +521,14 @@ describe('room-controlled media service', () => {
         source: 'netease',
         url: 'https://m1.music.126.net/edge-320',
       })
+      if (expired) clock.mockReturnValue(now + 6 * 60_000)
       f.body.end(audio)
-      await service.stream(input, f.sink as unknown as Response, f.controller.signal)
+      await service.stream({ ...input, preferRelayCache }, f.sink as unknown as Response, f.controller.signal)
 
-      expect(f.provider.getStreamUrl.mock.calls.map((call) => call[2])).toEqual([320, 128])
+      expect(f.provider.getStreamUrl.mock.calls.map((call) => call[2])).toEqual(reuses ? [320] : [320, 128])
       expect(f.request).toHaveBeenCalledExactlyOnceWith(
         'netease',
-        'https://m1.music.126.net/vps-128',
+        reuses ? 'https://m1.music.126.net/edge-320' : 'https://m1.music.126.net/vps-128',
         expect.any(AbortSignal),
       )
     })

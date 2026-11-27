@@ -44,8 +44,9 @@ const envSchema = z.object({
   ),
   /**
    * Highest bitrate (kbps: 128, 192, 320 or 999 = lossless) used when resolving URLs for the Cloudflare Worker
-   * edge audio relay (`resolve-v1`). Edge transfers bypass VPS outbound bandwidth; defaults to at least 320 kbps
-   * (staying comfortably under the 32 MiB media cap) while VPS direct streaming / `fallback-v1` keeps `MAPP_AUDIO_MAX_BITRATE`.
+   * edge audio relay (`resolve-v1`). Defaults to at least 320 kbps.
+   * A 32 MiB file holds about 14 minutes at 320 kbps or about 5 minutes at a nominal 999 kbps (lossless varies).
+   * Oversize files fall back to VPS relay at the direct bitrate without marking the edge degraded.
    */
   MAPP_RELAY_AUDIO_MAX_BITRATE: z.preprocess(
     (value) => (value === '' ? undefined : value),

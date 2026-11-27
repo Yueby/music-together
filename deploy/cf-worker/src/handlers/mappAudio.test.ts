@@ -15,6 +15,12 @@ const cors = {
   Vary: 'Origin',
 }
 
+function expectRelayCors(response: Response) {
+  for (const [header, value] of Object.entries(cors)) {
+    expect(response.headers.get(header)).toBe(header === 'Access-Control-Expose-Headers' ? value + ', Server-Timing' : value)
+  }
+}
+
 function audioRequest(method = 'GET') {
   return new Request(requestUrl, { method, headers: { Origin: origin, Authorization: 'Bearer test', Cookie: 'ignored=1' } })
 }
@@ -64,7 +70,9 @@ describe('mini-app audio relay', () => {
     // workerd rejects combining `cache: 'no-store'` with `cf.cacheTtl !== -1`.
     expect(cdnInit?.cache).toBeUndefined()
     expect(response.status).toBe(200)
-    for (const [header, value] of Object.entries(cors)) expect(response.headers.get(header)).toBe(value)
+    expectRelayCors(response)
+    expect(response.headers.get('Timing-Allow-Origin')).toBe(origin)
+    expect(response.headers.get('Server-Timing')).toMatch(/^vps_resolve;dur=\d+, cdn_ttfb;dur=\d+, total;dur=\d+$/)
     expect(response.headers.get('Content-Type')).toBe('audio/mpeg')
     expect(response.headers.get('Content-Length')).toBe('3')
     expect(response.headers.get('Content-Encoding')).toBe('identity')
@@ -76,6 +84,41 @@ describe('mini-app audio relay', () => {
     await Promise.all(pending)
   })
 
+  it('streams valid audio without Content-Length', async () => {
+    const { handler, runtime, ctx, pending } = fixture()
+    runtime.fetch.mockResolvedValueOnce(resolution())
+      .mockResolvedValueOnce(new Response('chunked', { headers: { 'Content-Type': 'audio/mpeg' } }))
+    const response = await handler(audioRequest(), env, ctx)
+    expect(response.headers.get('Content-Length')).toBeNull()
+    expect(await response.text()).toBe('chunked')
+    await Promise.all(pending)
+    expect(runtime.createFixedLengthStream).not.toHaveBeenCalled()
+    expect(runtime.fetch).toHaveBeenCalledTimes(2)
+  })
+
+  it('allows exactly 32 MiB and errors the stream on the next byte', async () => {
+    const { handler, runtime, ctx, pending } = fixture()
+    const cancel = vi.fn()
+    const source = new ReadableStream({
+      start(controller) {
+        controller.enqueue(new Uint8Array(MAX_MEDIA_BYTES / 2))
+        controller.enqueue(new Uint8Array(MAX_MEDIA_BYTES / 2))
+        controller.enqueue(Uint8Array.of(1))
+      },
+      cancel,
+    })
+    runtime.fetch.mockResolvedValueOnce(resolution())
+      .mockResolvedValueOnce(new Response(source, { headers: { 'Content-Type': 'audio/mpeg' } }))
+    const response = await handler(audioRequest(), env, ctx)
+    const reader = response.body!.getReader()
+    expect((await reader.read()).value?.byteLength).toBe(MAX_MEDIA_BYTES / 2)
+    expect((await reader.read()).value?.byteLength).toBe(MAX_MEDIA_BYTES / 2)
+    await expect(reader.read()).rejects.toHaveProperty('reason', 'size')
+    await Promise.all(pending)
+    expect(cancel).toHaveBeenCalledOnce()
+    expect(runtime.fetch).toHaveBeenCalledTimes(2)
+  })
+
   it.each(['ab', 'abcd'])('fails the stream on invalid byte count (%j)', async (bytes) => {
     const { handler, runtime, ctx, pending } = fixture()
     runtime.fetch.mockResolvedValueOnce(resolution()).mockResolvedValueOnce(audio(bytes))
@@ -85,7 +128,7 @@ describe('mini-app audio relay', () => {
     expect(runtime.fetch).toHaveBeenCalledTimes(2)
   })
 
-  it('allows CDN body transfer to take longer than eight seconds', async () => {
+  it('allows CDN body transfer to take longer than the header timeout', async () => {
     vi.useFakeTimers()
     const { handler, runtime, ctx, pending } = fixture()
     let signal: AbortSignal | null | undefined
@@ -109,43 +152,63 @@ describe('mini-app audio relay', () => {
     await Promise.all(pending)
   })
 
-  it('times out on CDN headers and falls back without a request timeout', async () => {
+  it('times out on CDN headers at 6s and keeps the fallback body readable after its header timeout', async () => {
     vi.useFakeTimers()
     const { handler, runtime, ctx } = fixture()
     runtime.fetch.mockResolvedValueOnce(resolution()).mockImplementationOnce((_url, init) => rejectOnAbort(init?.signal))
       .mockResolvedValueOnce(new Response('fallback'))
     const response = handler(audioRequest(), env, ctx)
-    await vi.advanceTimersByTimeAsync(7_999)
+    await vi.advanceTimersByTimeAsync(5_999)
     expect(runtime.fetch).toHaveBeenCalledTimes(2)
     await vi.advanceTimersByTimeAsync(1)
-    expect(await (await response).text()).toBe('fallback')
-    expect(runtime.fetch.mock.calls[2][1]?.signal).toBeUndefined()
-    expect(new Headers(runtime.fetch.mock.calls[2][1]?.headers).get('X-MT-Relay')).toBe('fallback-v1')
+    const fallback = await response
+    await vi.advanceTimersByTimeAsync(25_000)
+    expect(await fallback.text()).toBe('fallback')
+    const init = runtime.fetch.mock.calls[2][1]
+    expect(init?.signal?.aborted).toBe(false)
+    expect(new Headers(init?.headers).get('X-MT-Relay-Reason')).toBe('network')
+    expect(fallback.headers.get('Server-Timing')).toBe('vps_resolve;dur=0, total;dur=6000, fallback;desc="network"')
+  })
+
+  it('returns 503 when the fallback has not returned headers after 25s', async () => {
+    vi.useFakeTimers()
+    const { handler, runtime, ctx } = fixture()
+    runtime.fetch.mockResolvedValueOnce(resolution(null))
+      .mockImplementationOnce((_url, init) => rejectOnAbort(init?.signal))
+    const response = handler(audioRequest(), env, ctx)
+    await vi.advanceTimersByTimeAsync(24_999)
+    expect(runtime.fetch.mock.calls[1][1]?.signal?.aborted).toBe(false)
+    await vi.advanceTimersByTimeAsync(1)
+    const failure = await response
+    expect(failure.status).toBe(503)
+    expect(failure.headers.get('Server-Timing')).toBe('vps_resolve;dur=0, total;dur=25000, fallback;desc="origin"')
   })
 
   it.each([
-    [302, 'audio/mpeg', '', '3'],
-    [200, 'text/html', '', '3'],
-    [200, 'audio/mpeg', 'gzip', '3'],
-    [200, 'audio/mpeg', '', null],
-    [200, 'audio/mpeg', '', '0'],
-    [200, 'audio/mpeg', '', '3e0'],
-    [200, 'audio/mpeg', '', String(MAX_MEDIA_BYTES + 1)],
-  ])('discards invalid upstream body (%s, %s, %s, %s) and retries once', async (status, type, encoding, length) => {
+    ['network', 302, 'audio/mpeg', '', '3'],
+    ['encoding', 200, 'text/html', '', '3'],
+    ['encoding', 200, 'audio/mpeg', 'gzip', '3'],
+    ['length', 200, 'audio/mpeg', '', '0'],
+    ['length', 200, 'audio/mpeg', '', '3e0'],
+    ['size', 200, 'audio/mpeg', '', String(MAX_MEDIA_BYTES + 1)],
+  ])('falls back with %s for CDN status %s, type %s, encoding %j and length %s', async (reason, status, type, encoding, length) => {
     const { handler, runtime, ctx } = fixture()
     const cancel = vi.fn()
-    const headers = new Headers({ 'Content-Type': type, 'Content-Encoding': encoding })
-    if (length !== null) headers.set('Content-Length', length)
+    const headers = new Headers({ 'Content-Type': type, 'Content-Encoding': encoding, 'Content-Length': length })
     const upstream = new Response(new ReadableStream({ cancel }), { status, headers })
     runtime.fetch.mockResolvedValueOnce(resolution()).mockResolvedValueOnce(upstream).mockResolvedValueOnce(audio())
-    expect((await handler(audioRequest(), env, ctx)).status).toBe(200)
+    const response = await handler(audioRequest(), env, ctx)
+    expect(response.status).toBe(200)
+    expect(response.headers.get('Server-Timing')).toMatch(new RegExp(`cdn_ttfb;dur=\\d+, total;dur=\\d+, fallback;desc="${reason}"$`))
+    expect(response.headers.get('Timing-Allow-Origin')).toBe(origin)
+    expect(response.headers.get('Access-Control-Expose-Headers')).toBe('Server-Timing')
     expect(cancel).toHaveBeenCalledOnce()
     expect(runtime.fetch).toHaveBeenCalledTimes(3)
     const [fallbackUrl, fallbackInit] = runtime.fetch.mock.calls[2]
     expect(fallbackUrl).toBe(requestUrl)
     expect(fallbackInit?.redirect).toBe('manual')
     expect(Object.fromEntries(new Headers(fallbackInit?.headers))).toEqual({
-      authorization: 'Bearer test', origin, 'x-mt-relay': 'fallback-v1', 'x-mt-relay-secret': 'test-secret',
+      authorization: 'Bearer test', origin, 'x-mt-relay': 'fallback-v1', 'x-mt-relay-reason': reason, 'x-mt-relay-secret': 'test-secret',
     })
   })
 
@@ -159,14 +222,17 @@ describe('mini-app audio relay', () => {
     runtime.fetch.mockResolvedValueOnce(makeResponse()).mockResolvedValueOnce(audio())
     expect((await handler(audioRequest(), env, ctx)).status).toBe(200)
     expect(runtime.fetch).toHaveBeenCalledTimes(2)
-    expect(new Headers(runtime.fetch.mock.calls[1][1]?.headers).get('X-MT-Relay')).toBe('fallback-v1')
+    expect(new Headers(runtime.fetch.mock.calls[1][1]?.headers).get('X-MT-Relay-Reason')).toBe('origin')
   })
 
   it.each([401, 200])('returns origin status %s without a relay resolution in one trip', async (status) => {
     const { handler, runtime, ctx } = fixture()
     const response = new Response('origin', { status })
     runtime.fetch.mockResolvedValueOnce(response)
-    expect(await handler(audioRequest(), env, ctx)).toBe(response)
+    const passthrough = await handler(audioRequest(), env, ctx)
+    expect(passthrough.status).toBe(status)
+    expect(await passthrough.text()).toBe('origin')
+    expect(passthrough.headers.get('Server-Timing')).toMatch(/^vps_resolve;dur=\d+, total;dur=\d+$/)
     expect(runtime.fetch).toHaveBeenCalledOnce()
   })
 
@@ -176,7 +242,8 @@ describe('mini-app audio relay', () => {
     const failure = await handler(audioRequest(), { MAPP_RELAY_SECRET: env.MAPP_RELAY_SECRET }, ctx)
     expect(failure.status).toBe(503)
     expect(failure.headers.get('Cache-Control')).toBe('no-store')
-    for (const [header, value] of Object.entries(cors)) expect(failure.headers.get(header)).toBe(value)
+    expectRelayCors(failure)
+    expect(new Headers(runtime.fetch.mock.calls[2][1]?.headers).get('X-MT-Relay-Reason')).toBe('network')
     expect(await failure.json()).toEqual({ code: 'MEDIA_RELAY_FAILED' })
   })
 
@@ -185,7 +252,7 @@ describe('mini-app audio relay', () => {
     const { handler, runtime, ctx } = fixture()
     runtime.fetch.mockImplementationOnce((_url, init) => rejectOnAbort(init?.signal))
     const response = handler(audioRequest(), env, ctx)
-    await vi.advanceTimersByTimeAsync(21_999)
+    await vi.advanceTimersByTimeAsync(14_999)
     expect(runtime.fetch.mock.calls[0][1]?.signal?.aborted).toBe(false)
     await vi.advanceTimersByTimeAsync(1)
     const failure = await response
@@ -194,7 +261,26 @@ describe('mini-app audio relay', () => {
     expect(await failure.json()).toEqual({ code: 'MEDIA_RELAY_FAILED' })
     expect(runtime.fetch).toHaveBeenCalledOnce()
   })
+
+  it('includes reading the resolve JSON in the 15s budget', async () => {
+    vi.useFakeTimers()
+    const { handler, runtime, ctx } = fixture()
+    runtime.fetch.mockImplementationOnce(async (_url, init) => resolutionWithStalledBody(init?.signal))
+    const response = handler(audioRequest(), env, ctx)
+    await vi.advanceTimersByTimeAsync(15_000)
+    expect((await response).status).toBe(503)
+    expect(runtime.fetch).toHaveBeenCalledOnce()
+  })
 })
+
+function resolutionWithStalledBody(signal: AbortSignal | null | undefined) {
+  const body = new ReadableStream({
+    start(controller) {
+      signal?.addEventListener('abort', () => controller.error(signal.reason), { once: true })
+    },
+  })
+  return new Response(body, { headers: { 'X-MT-Relay-Mode': 'resolve-v1' } })
+}
 
 describe('relay source profiles', () => {
   it.each([

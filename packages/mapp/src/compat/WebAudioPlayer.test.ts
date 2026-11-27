@@ -410,6 +410,35 @@ describe('micro-app Web Audio player', () => {
     await player.dispose()
   })
 
+  it.each([false, true])('unblocks the decode queue after a native timeout (superseded: %s)', async (superseded) => {
+    vi.useFakeTimers()
+    const { player, context } = environment()
+    let finish!: (buffer: AudioBuffer) => void
+    context.decodeAudioData.mockImplementationOnce(() => new Promise<AudioBuffer>((resolve) => {
+      finish = resolve
+    }))
+    try {
+      const first = player.load(new Uint8Array([1]))
+      const firstResult = superseded
+        ? expect(first).resolves.toBe(false)
+        : expect(first).rejects.toMatchObject({ name: 'WebAudioPlayerError', code: 'AUDIO_DECODE_TIMEOUT' })
+      const pending = superseded ? player.load(new Uint8Array([2])) : undefined
+      await vi.advanceTimersByTimeAsync(29_999)
+      expect(context.decodeAudioData).toHaveBeenCalledOnce()
+      await vi.advanceTimersByTimeAsync(1)
+      await firstResult
+      expect(await (pending ?? player.load(new Uint8Array([2])))).toBe(true)
+      expect(context.decodeAudioData).toHaveBeenCalledTimes(2)
+
+      finish({ duration: 99 } as AudioBuffer)
+      await Promise.resolve()
+      expect(player.snapshot().duration).toBe(8)
+    } finally {
+      await player.dispose()
+      vi.useRealTimers()
+    }
+  })
+
   it('does not adopt a decode after disposal', async () => {
     const { player, context, sources } = environment()
     let finish!: (buffer: AudioBuffer) => void

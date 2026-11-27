@@ -1,5 +1,6 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import { fixture } from '../../test/runtime.js'
+import { isPublicMetadataPath } from './publicMetadata.js'
 
 const zone = 'https://mt.agou.mom'
 const search = zone + '/api/music/search'
@@ -23,10 +24,12 @@ describe('public metadata edge cache', () => {
     runtime.fetch.mockResolvedValueOnce(Response.json({ lines: [] }))
     const miss = await handler(new Request(zone + path), {}, ctx)
     expect(miss.headers.get('X-MT-Edge-Cache')).toBe('MISS')
+    expect(miss.headers.get('Server-Timing')).toBe('edge;desc="MISS", origin;dur=0')
     expect(miss.headers.get('Cache-Control')).toBe('public, max-age=' + ttl)
     await Promise.all(pending)
     const hit = await handler(new Request(zone + path, { headers: { Origin: zone } }), {}, ctx)
     expect(hit.headers.get('X-MT-Edge-Cache')).toBe('HIT')
+    expect(hit.headers.get('Server-Timing')).toBe('edge;desc="HIT"')
     expect(hit.headers.get('Cache-Control')).toBe('public, max-age=' + ttl)
     expect(await miss.json()).toEqual({ lines: [] })
     expect(await hit.json()).toEqual({ lines: [] })
@@ -36,8 +39,8 @@ describe('public metadata edge cache', () => {
 
   it.each([
     [null, null, 600],
-    [null, 'private, max-age=600', 600],
-    [[{ start: 0 }], 'private, max-age=3600', 3600],
+    [null, 'public, max-age=600', 600],
+    [[{ start: 0 }], 'public, max-age=3600', 3600],
     [[{ start: 0 }], 'public, max-age=86400', 21_600],
   ])('chooses the TTML TTL for %j with %j', async (lines, cacheControl, ttl) => {
     const { handler, runtime, ctx, pending } = fixture()
@@ -60,9 +63,7 @@ describe('public metadata edge cache', () => {
     [302, 'public, max-age=300'],
   ])('keeps the origin cache policy and avoids cache writes for status %s and %s', async (status, cacheControl) => {
     const { handler, runtime, ctx, pending } = fixture()
-    runtime.fetch.mockResolvedValueOnce(Response.json({ lines: null }, { status, headers: {
-      'Cache-Control': cacheControl, 'Set-Cookie': 'ignored=1',
-    } }))
+    runtime.fetch.mockResolvedValueOnce(Response.json({ lines: null }, { status, headers: { 'Cache-Control': cacheControl } }))
     const response = await handler(new Request(zone + '/api/music/lyric'), {}, ctx)
     expect(response.status).toBe(status)
     expect(response.headers.get('Cache-Control')).toBe(cacheControl)
@@ -72,13 +73,32 @@ describe('public metadata edge cache', () => {
     await Promise.all(pending)
   })
 
+  it.each([
+    { 'Cache-Control': 'Private, max-age=300' },
+    { Vary: 'Accept-Encoding, cOoKiE' },
+    { Vary: '*' },
+    { 'Set-Cookie': 'ignored=1' },
+  ] as HeadersInit[])('does not edge-cache a response with %j', async (headers) => {
+    const { handler, runtime, ctx, pending } = fixture()
+    runtime.fetch.mockResolvedValueOnce(Response.json({ results: ['first'] }, { headers }))
+      .mockResolvedValueOnce(Response.json({ results: ['second'] }))
+    const req = new Request(search)
+    const miss = await handler(req, {}, ctx)
+    expect(miss.headers.get('Set-Cookie')).toBeNull()
+    expect(await miss.json()).toEqual({ results: ['first'] })
+    await Promise.all(pending)
+    expect(runtime.cache.put).not.toHaveBeenCalled()
+    expect(await (await handler(req, {}, ctx)).json()).toEqual({ results: ['second'] })
+    await Promise.all(pending)
+    expect(runtime.fetch).toHaveBeenCalledTimes(2)
+  })
+
   it('canonicalizes query order and isolates origin and cache headers', async () => {
     const { handler, runtime, ctx, pending, entries } = fixture()
     const request = new Request(search + '?source=netease&query=music&foo=2&foo=1', {
-      headers: { Cookie: 'ignored=1', Accept: 'application/json', Origin: zone },
+      headers: { Cookie: 'ignored=1; mt_identity=old; mt_identity=identity%2Etoken; ignored_again=2', Accept: 'application/json', Origin: zone },
     })
     runtime.fetch.mockResolvedValueOnce(Response.json({ results: [] }, { headers: {
-      'Set-Cookie': 'ignored=2',
       'Access-Control-Allow-Origin': zone,
       'Access-Control-Allow-Methods': 'GET',
       'Access-Control-Expose-Headers': 'X-Example',
@@ -91,7 +111,9 @@ describe('public metadata edge cache', () => {
     expect(upstreamUrl).toBe(request.url)
     expect(init?.redirect).toBe('manual')
     expect(init?.cache).toBe('no-store')
-    expect(Object.fromEntries(new Headers(init?.headers))).toEqual({ accept: 'application/json', origin: zone })
+    expect(Object.fromEntries(new Headers(init?.headers))).toEqual({
+      accept: 'application/json', cookie: 'mt_identity=identity%2Etoken', origin: zone,
+    })
     expect(miss.headers.has('Set-Cookie')).toBe(false)
     await Promise.all(pending)
     const key = zone + '/__mt_edge_cache/meta/api/music/search?foo=2&foo=1&query=music&source=netease'
@@ -102,13 +124,23 @@ describe('public metadata edge cache', () => {
       'x-mt-edge-ttl': '180',
     })
     expect(entries.has(search + '?foo=2&foo=1&query=music&source=netease')).toBe(false)
-    const hit = await handler(new Request(search + '?foo=2&query=music&foo=1&source=netease'), {}, ctx)
+    const hit = await handler(new Request(search + '?foo=2&query=music&foo=1&source=netease', {
+      headers: { Cookie: 'mt_identity=another' },
+    }), {}, ctx)
     expect(hit.headers.get('X-MT-Edge-Cache')).toBe('HIT')
     expect(hit.headers.get('X-MT-Edge-TTL')).toBeNull()
     expect(hit.headers.get('Cache-Control')).toBe('public, max-age=180')
     expect(hit.headers.get('Vary')).toBe('Origin, Authorization')
     expect(await hit.json()).toEqual({ results: [] })
     expect(runtime.fetch).toHaveBeenCalledOnce()
+  })
+
+  it('leaves Cookie absent on origin requests without an exact identity cookie name', async () => {
+    const { handler, runtime, ctx, pending } = fixture()
+    runtime.fetch.mockResolvedValueOnce(Response.json({ results: [] }))
+    await handler(new Request(search, { headers: { Cookie: 'ignored=1; mt_identity_other=2' } }), {}, ctx)
+    expect(new Headers(runtime.fetch.mock.calls[0][1]?.headers).has('Cookie')).toBe(false)
+    await Promise.all(pending)
   })
 
   it('also strips cookies and CORS headers from a preexisting cache entry on HIT', async () => {
@@ -160,11 +192,15 @@ describe('public metadata edge cache', () => {
     new Request(search + '?mini_app_token=', { headers: { Cookie: 'untouched=1' } }),
     new Request(search, { method: 'POST', body: 'unchanged' }),
     new Request(search, { method: 'OPTIONS' }),
-  ])('passes excluded requests through unchanged (%#)', async (request) => {
+  ])('passes excluded requests through without caching (%#)', async (request) => {
     const { handler, runtime, ctx } = fixture()
     const origin = new Response('origin')
     runtime.fetch.mockResolvedValueOnce(origin)
-    expect(await handler(request, {}, ctx)).toBe(origin)
+    const response = await handler(request, {}, ctx)
+    expect(await response.text()).toBe('origin')
+    expect(response.headers.get('Server-Timing')).toBe(
+      isPublicMetadataPath(new URL(request.url).pathname) ? 'edge;desc="BYPASS"' : null,
+    )
     expect(runtime.fetch.mock.calls).toEqual([[request]])
     expect(runtime.cache.match).not.toHaveBeenCalled()
   })

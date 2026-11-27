@@ -13,9 +13,21 @@ interface WebAudioPlayerOptions {
   onChange?: (snapshot: WebAudioPlayerSnapshot) => void
 }
 
-const MAX_DURATION_SECONDS = 1_800
 const MAX_PCM_BYTES = 256 * 1024 * 1024
 const BYTES_PER_SAMPLE = Float32Array.BYTES_PER_ELEMENT
+const DECODE_TIMEOUT_MS = 30_000
+
+export function exceedsPcmBudget(durationSeconds: number, sampleRate: number): boolean {
+  // decodeAudioData resamples to the context rate. Estimate stereo until the channel count is known.
+  return durationSeconds * sampleRate * 2 * BYTES_PER_SAMPLE > MAX_PCM_BYTES
+}
+
+export class WebAudioPlayerError extends Error {
+  constructor(readonly code: 'AUDIO_BUFFER_TOO_LARGE' | 'AUDIO_DECODE_TIMEOUT') {
+    super(code)
+    this.name = 'WebAudioPlayerError'
+  }
+}
 
 interface DecodeJob {
   generation: number
@@ -67,6 +79,11 @@ export class WebAudioPlayer {
     return this.storedVolume
   }
 
+  getSampleRate(): number {
+    this.assertOpen()
+    return this.getContext().sampleRate
+  }
+
   getOutputLatencyMs(): number {
     const latency = ((this.context?.baseLatency ?? 0) + (this.context?.outputLatency ?? 0)) * 1000
     return Number.isFinite(latency) && latency >= 0 ? latency : 0
@@ -109,10 +126,9 @@ export class WebAudioPlayer {
     this.status = 'empty'
     this.notify()
     if (generation !== this.generation) return false
-    // decodeAudioData resamples to the context rate, so budget for stereo at that rate.
-    if (duration !== undefined && (
-      duration > MAX_DURATION_SECONDS || duration * this.getContext().sampleRate * 2 * BYTES_PER_SAMPLE > MAX_PCM_BYTES
-    )) throw new Error('AUDIO_BUFFER_TOO_LARGE')
+    if (duration !== undefined && exceedsPcmBudget(duration, this.getSampleRate())) {
+      throw new WebAudioPlayerError('AUDIO_BUFFER_TOO_LARGE')
+    }
     return new Promise<boolean>((resolve, reject) => {
       this.pendingDecode = { generation, bytes, resolve, reject }
       void this.drainDecodes()
@@ -138,15 +154,21 @@ export class WebAudioPlayer {
   }
 
   private async decode({ bytes, generation }: DecodeJob): Promise<boolean> {
+    let timeout: ReturnType<typeof setTimeout> | undefined
     try {
       const context = this.getContext()
       // decodeAudioData can detach its input; never transfer SDK-owned bytes.
-      const buffer = await context.decodeAudioData(Uint8Array.from(bytes).buffer)
+      const decoding = context.decodeAudioData(Uint8Array.from(bytes).buffer)
+      const deadline = new Promise<never>((_, reject) => {
+        timeout = setTimeout(() => reject(new WebAudioPlayerError('AUDIO_DECODE_TIMEOUT')), DECODE_TIMEOUT_MS)
+      })
+      // The browser offers no cancellation for a native decode. A late result cannot win this race.
+      const buffer = await Promise.race([decoding, deadline])
       if (generation !== this.generation) return false
       if (!Number.isFinite(buffer.duration) || buffer.duration <= 0) throw new Error('INVALID_AUDIO_DURATION')
-      if (buffer.duration > MAX_DURATION_SECONDS ||
-        buffer.length * buffer.numberOfChannels * BYTES_PER_SAMPLE > MAX_PCM_BYTES
-      ) throw new Error('AUDIO_BUFFER_TOO_LARGE')
+      if (buffer.length * buffer.numberOfChannels * BYTES_PER_SAMPLE > MAX_PCM_BYTES) {
+        throw new WebAudioPlayerError('AUDIO_BUFFER_TOO_LARGE')
+      }
       this.buffer = buffer
       this.status = 'ready'
       this.notify()
@@ -154,6 +176,8 @@ export class WebAudioPlayer {
     } catch (error) {
       if (generation !== this.generation) return false
       throw error
+    } finally {
+      clearTimeout(timeout)
     }
   }
 
