@@ -1,6 +1,6 @@
 import { createHash, timingSafeEqual } from 'node:crypto'
 import { Router, type RequestHandler, type Response, type Router as RouterType } from 'express'
-import { MUSIC_SOURCES, mappRoomMediaQuerySchema, type MusicSource } from '@music-together/shared'
+import { MUSIC_SOURCES, mappRelayReasonSchema, mappRoomMediaQuerySchema, type MusicSource } from '@music-together/shared'
 import {
   createPlatformMediaService,
   recordEdgeRelayBypass,
@@ -148,6 +148,7 @@ export function createPlatformMediaRouter(options: Options): RouterType {
     try {
       const relayMode = (res.locals.relayMode ?? 'direct') as RelayMode
       const mediaInput = { ...res.locals.mediaQuery, userId: req.identityUserId! }
+      let preferRelayCache = false
       if (relayMode === RELAY_MODE_RESOLVE && service.resolve && allowedRelaySources.size > 0) {
         const resolved = await service.resolve(mediaInput, controller.signal)
         if (allowedRelaySources.has(resolved.source)) {
@@ -158,9 +159,12 @@ export function createPlatformMediaRouter(options: Options): RouterType {
           return
         }
       } else if (relayMode === RELAY_MODE_FALLBACK) {
-        recordEdgeRelayFallback()
+        const reason = mappRelayReasonSchema.catch('network').parse(req.get('X-MT-Relay-Reason'))
+        preferRelayCache = reason !== 'size' && reason !== 'length'
+        if (reason === 'network' || reason === 'origin') recordEdgeRelayFallback()
         logger.warn('relay_fallback', {
           event: 'relay_fallback',
+          reason,
           roomId: mediaInput.roomId,
           trackId: mediaInput.trackId,
           userId: mediaInput.userId,
@@ -169,7 +173,7 @@ export function createPlatformMediaRouter(options: Options): RouterType {
       if (options.relaySecret && allowedRelaySources.size > 0 && relayMode === 'direct') {
         recordEdgeRelayBypass()
       }
-      await service.stream(mediaInput, res, controller.signal)
+      await service.stream(preferRelayCache ? { ...mediaInput, preferRelayCache } : mediaInput, res, controller.signal)
     } catch (error) {
       sendError(res, error)
     }

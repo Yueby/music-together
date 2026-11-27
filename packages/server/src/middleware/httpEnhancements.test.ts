@@ -1,13 +1,22 @@
 import express from 'express'
 import { createServer } from 'node:http'
 import type { AddressInfo } from 'node:net'
-import { afterEach, describe, expect, it } from 'vitest'
+import { afterEach, describe, expect, it, vi } from 'vitest'
 import {
   createCompressionMiddleware,
   createHelmetMiddleware,
+  createHttpLoggerMiddleware,
   sanitizeUrlForLog,
   shouldCompressResponse,
 } from './httpEnhancements.js'
+
+const accessLogs = vi.hoisted(() => [] as Record<string, unknown>[])
+vi.mock('../utils/logger.js', async () => {
+  const { default: pino } = await import('pino')
+  return {
+    baseLogger: pino({}, { write: (line: string) => accessLogs.push(JSON.parse(line)) }),
+  }
+})
 
 async function startTestServer(configure: (app: express.Express) => void) {
   const app = express()
@@ -28,6 +37,26 @@ describe('httpEnhancements', () => {
     while (closers.length > 0) {
       await closers.pop()!()
     }
+  })
+
+  it.each([204, 503])('logs responseTime for status %i without logging headers or tokens', async (statusCode) => {
+    accessLogs.length = 0
+    const srv = await startTestServer((app) => {
+      app.use(createHttpLoggerMiddleware())
+      app.get('/api/test', (_req, res) => res.setHeader('Set-Cookie', 'private-cookie').status(statusCode).end())
+    })
+    closers.push(srv.close)
+
+    await fetch(`${srv.baseUrl}/api/test?mini_app_token=private-token`, { headers: { Cookie: 'private-request-cookie' } })
+
+    expect(accessLogs).toHaveLength(1)
+    expect(accessLogs[0]).toMatchObject({
+      responseTime: expect.any(Number),
+      req: { method: 'GET', url: '/api/test?mini_app_token=%5BREDACTED%5D' },
+      res: { statusCode },
+    })
+    expect(accessLogs[0].responseTime).toBeGreaterThanOrEqual(0)
+    expect(JSON.stringify(accessLogs)).not.toContain('private-')
   })
 
   describe('sanitizeUrlForLog', () => {

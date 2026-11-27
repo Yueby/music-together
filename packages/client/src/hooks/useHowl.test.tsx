@@ -1,6 +1,7 @@
 // @vitest-environment jsdom
 import { act } from 'react'
 import { createRoot } from 'react-dom/client'
+import { toast } from 'sonner'
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import type { Track } from '@music-together/shared'
 import type { PlaybackSoundOptions } from '@/lib/PlaybackSound'
@@ -146,6 +147,18 @@ describe('useHowl track loading', () => {
     act(() => playback.loadTrack(track))
     act(() => options.onloaderror?.(1, 'LOAD_FAILED'))
     expect(usePlayerStore.getState().audioLoadPhase).toBe('idle')
+  })
+
+  it('shows the mini-app duration limit and settles the load as failed', () => {
+    vi.spyOn(console, 'error').mockImplementation(() => {})
+    sound.state.mockReturnValue('loading')
+    const onLoadSettled = vi.fn()
+    act(() => playback.loadTrack(track, 0, false, onLoadSettled))
+    act(() => options.onloaderror?.(1, 'AUDIO_TOO_LONG'))
+
+    expect(toast.error).toHaveBeenCalledExactlyOnceWith('歌曲过长，微应用暂不支持播放（48 kHz 下约 11 分 39 秒上限）')
+    expect(usePlayerStore.getState().audioLoadPhase).toBe('idle')
+    expect(onLoadSettled).toHaveBeenCalledExactlyOnceWith(true)
   })
 
   it('unmutes a paused load at the volume chosen during loading, not the one captured at load start', async () => {

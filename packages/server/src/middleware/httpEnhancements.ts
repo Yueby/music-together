@@ -103,6 +103,7 @@ export function createHttpLoggerMiddleware(): RequestHandler {
         method: req.method,
         url: sanitizeUrlForLog(req.url),
       }),
+      // pino-http emits responseTime (ms) at the top level, separately from the serialized response.
       res: (res) => ({
         statusCode: res.statusCode,
       }),

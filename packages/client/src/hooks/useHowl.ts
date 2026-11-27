@@ -339,10 +339,10 @@ export function useHowl(onTrackEnd: () => void) {
           stopTimeUpdate()
           onTrackEnd()
         },
-        onloaderror: () => {
+        onloaderror: (_id, error) => {
           const active = desiredPlaybackRef.current
           if (active?.howl !== howl) return
-          if (playbackSoundFactory.allowLoadRetry && !retry) {
+          if (error !== 'AUDIO_TOO_LONG' && playbackSoundFactory.allowLoadRetry && !retry) {
             console.warn('Audio load/stream error, retrying')
             const resumeSeek = initialized ? usePlayerStore.getState().currentTime : seekTo
             loadTrack(track, resumeSeek, active.autoPlay, active.onLoadSettled, {
@@ -354,7 +354,9 @@ export function useHowl(onTrackEnd: () => void) {
           setAudioLoadState({ phase: 'idle' })
           setIsPlaying(false)
           console.error('Audio load/stream failed')
-          toast.error(`本机无法加载「${trackTitleRef.current}」`)
+          toast.error(error === 'AUDIO_TOO_LONG'
+            ? '歌曲过长，微应用暂不支持播放（48 kHz 下约 11 分 39 秒上限）'
+            : `本机无法加载「${trackTitleRef.current}」`)
           settleLoad(true)
           howlRef.current = null
           desiredPlaybackRef.current = null

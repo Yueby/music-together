@@ -55,4 +55,12 @@ describe('client stylesheet workspace source contract', () => {
     const webCss = await readFile(new URL('../../client/src/index.css', import.meta.url), 'utf8')
     expect(webCss).toMatch(/@import\s+['"]sonner\/dist\/styles\.css['"]/)
   })
+
+  it('ships static ScrollArea and modal scroll-lock rules in the Mapp stylesheet', async () => {
+    const css = await readFile(new URL('./client.css', import.meta.url), 'utf8')
+    expect(css).toMatch(/\[data-radix-scroll-area-viewport\]\s*\{\s*scrollbar-width: none;\s*-ms-overflow-style: none;\s*-webkit-overflow-scrolling: touch;\s*\}/)
+    expect(css).toMatch(/\[data-radix-scroll-area-viewport\]::-webkit-scrollbar\s*\{\s*display: none;\s*\}/)
+    expect(css).toMatch(/\[data-radix-scroll-area-viewport\]\s*>\s*div\s*\{\s*min-width: 100%;\s*display: table;\s*\}/)
+    expect(css).toMatch(/body\[data-scroll-locked\]\s*\{\s*overflow: hidden !important;\s*overscroll-behavior: contain;\s*\}/)
+  })
 })

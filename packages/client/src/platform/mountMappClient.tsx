@@ -1,3 +1,4 @@
+import '@pixi/unsafe-eval'
 import { StrictMode, useEffect } from 'react'
 import { createRoot } from 'react-dom/client'
 import type { MappHost } from '../../../mapp/src/compat/MappHost'

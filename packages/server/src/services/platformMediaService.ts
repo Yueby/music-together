@@ -314,24 +314,34 @@ export function createPlatformMediaService(dependencies: Partial<Dependencies> =
     source: MusicSource,
     urlId: string,
     bitrateCeiling: AudioQuality,
+    preferRelayCache: boolean,
   ): Promise<string | null> {
     // Cap bitrate according to the delivery path (VPS direct vs edge relay).
     const bitrate = Math.min(room.audioQuality, bitrateCeiling) as AudioQuality
     const cookie = deps.cookie(source, roomId)
     const cookieHash = cookie ? createHash('sha256').update(cookie).digest('hex').slice(0, 16) : 'anon'
-    const key = `${source}:${urlId}:${bitrate}:${cookieHash}`
+    const urlKey = (quality: AudioQuality) => `${source}:${urlId}:${quality}:${cookieHash}`
+    const key = urlKey(bitrate)
     let state = roomUrlState.get(room)
     if (!state) {
       state = { cache: new Map(), inFlight: new Map() }
       roomUrlState.set(room, state)
     }
     const { cache, inFlight } = state
-    const cached = cache.get(key)
     const now = Date.now()
-    if (cached && now < cached.expiresAt && !isStreamUrlExpired(source, cached.url, now)) {
-      return Promise.resolve(cached.url)
+    const getCachedUrl = (cacheKey: string) => {
+      const cached = cache.get(cacheKey)
+      if (!cached) return undefined
+      if (now < cached.expiresAt && !isStreamUrlExpired(source, cached.url, now)) return cached.url
+      cache.delete(cacheKey)
     }
-    cache.delete(key)
+    if (preferRelayCache) {
+      const relayBitrate = Math.min(room.audioQuality, deps.relayMaxBitrate) as AudioQuality
+      const relayUrl = getCachedUrl(urlKey(relayBitrate))
+      if (relayUrl) return Promise.resolve(relayUrl)
+    }
+    const cachedUrl = getCachedUrl(key)
+    if (cachedUrl) return Promise.resolve(cachedUrl)
     const pending = inFlight.get(key)
     if (pending) return pending
 
@@ -355,7 +365,7 @@ export function createPlatformMediaService(dependencies: Partial<Dependencies> =
     return work
   }
 
-  function prepareAccess(input: RoomMediaInput, bitrateCeiling: AudioQuality) {
+  function prepareAccess(input: RoomMediaInput, bitrateCeiling: AudioQuality, preferRelayCache = false) {
     const room = deps.rooms.get(input.roomId)
     // The caller must still be in the same room object and the track must still be playable there.
     const accessibleTrack = () => {
@@ -380,7 +390,7 @@ export function createPlatformMediaService(dependencies: Partial<Dependencies> =
     }
     const resolveUrl = async (signal: AbortSignal) => {
       const url = await abortable(
-        resolveRoomUrl(room!, input.roomId, source, urlId, bitrateCeiling),
+        resolveRoomUrl(room!, input.roomId, source, urlId, bitrateCeiling, preferRelayCache),
         AbortSignal.any([signal, AbortSignal.timeout(RESOLVE_TIMEOUT_MS)]),
       )
       check()
@@ -412,12 +422,16 @@ export function createPlatformMediaService(dependencies: Partial<Dependencies> =
     },
 
     /** Streams a track the caller may currently hear in the room. Throws only sanitized MediaErrors. */
-    async stream(input: RoomMediaInput, res: Response, parentSignal: AbortSignal): Promise<void> {
+    async stream(
+      input: RoomMediaInput & { preferRelayCache?: boolean },
+      res: Response,
+      parentSignal: AbortSignal,
+    ): Promise<void> {
       const signal = AbortSignal.any([parentSignal, AbortSignal.timeout(STREAM_TIMEOUT_MS)])
       let release: (() => void) | undefined
       try {
         if (signal.aborted) throw new MediaError('MEDIA_ABORTED', 499)
-        const { source, priority, check, resolveUrl } = prepareAccess(input, deps.maxBitrate)
+        const { source, priority, check, resolveUrl } = prepareAccess(input, deps.maxBitrate, input.preferRelayCache)
         let url = await resolveUrl(signal)
         release = await deps.slots.acquire(input.userId, signal, { priority })
         check()

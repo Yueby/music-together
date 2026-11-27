@@ -7,6 +7,7 @@ import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import { config } from '../config.js'
 import type { TypedServer, TypedSocket } from '../middleware/types.js'
 import { chatRepo } from '../repositories/chatRepository.js'
+import { logger } from '../utils/logger.js'
 import { roomRepo } from '../repositories/roomRepository.js'
 import { addCookie, cleanupRoom as cleanupAuthRoom, getAnyCookie } from './authService.js'
 import { musicProvider } from './musicProvider.js'
@@ -101,6 +102,30 @@ afterEach(async () => {
 })
 
 describe('room snapshot persistence', () => {
+  it('captures a room with a pending schedule calculated from a fractional RTT', () => {
+    const room = fixture()
+    vi.spyOn(roomRepo, 'getP90RTT').mockReturnValue(187.3)
+    pauseTrack(io, room.id)
+
+    saveSnapshotSync('shutdown')
+
+    expect(decryptSnapshot().rooms).toEqual([expect.objectContaining({
+      id: room.id, playState: expect.objectContaining({ serverTimestamp: now + 381 }),
+    })])
+  })
+
+  it('logs only paths and codes for invalid room fields', () => {
+    const room = fixture()
+    Object.assign(room.playState, { serverTimestamp: 'sensitive-invalid-timestamp' })
+
+    saveSnapshotSync('shutdown')
+
+    expect(logger.warn).toHaveBeenCalledWith('Invalid room skipped during room snapshot capture', {
+      roomId: room.id,
+      issues: [{ path: ['playState', 'serverTimestamp'], code: 'invalid_type' }],
+    })
+  })
+
   it('encrypts room state, keeps only useful stream URLs, and excludes runtime credentials', () => {
     const room = fixture()
     joinRoom('admin-socket', room.id, 'Admin', 'admin')

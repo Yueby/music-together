@@ -20,3 +20,24 @@
     padding: 0;
   }
 }
+
+/* Radix ScrollArea and modal scroll lock inject inline styles that the Mapp CSP blocks. */
+[data-radix-scroll-area-viewport] {
+  scrollbar-width: none;
+  -ms-overflow-style: none;
+  -webkit-overflow-scrolling: touch;
+}
+
+[data-radix-scroll-area-viewport]::-webkit-scrollbar {
+  display: none;
+}
+
+[data-radix-scroll-area-viewport] > div {
+  min-width: 100%;
+  display: table;
+}
+
+body[data-scroll-locked] {
+  overflow: hidden !important;
+  overscroll-behavior: contain;
+}

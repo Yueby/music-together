@@ -83,9 +83,9 @@ MAPP_RELAY_SOURCES
 | `CAPACITY_MAX_UNITS` | `300` | 动态容量上限（加权单位，至少为配置的下限） |
 | `CAPACITY_BASE_UNITS` | 自动估算 | 初始容量（加权单位），默认根据内存和 CPU 配额估算 |
 | `CAPACITY_MAPP_WEIGHT` | `3`（全音源边缘中转时自动 `1`） | 并发中转预算内每位微应用用户的总权重，最多对 `MAPP_MAX_STREAMS` 名听众收取额外权重。所有入房用户的基础权重为 1 |
-| `CAPACITY_MAPP_ROOM_BASE` | `2 × MAPP_MAX_STREAMS`（全音源边缘中转时自动对齐通用容量基线） | 微应用单房听众上限的初始值，可设置为 1–2000。直推模式运行时限制在中转并发槽位数与该槽位数加中转请求队列上限之间。全音源边缘中转模式的上限为 `max(中转并发槽位 + 中转请求队列上限, CAPACITY_MAX_UNITS)` |
+| `CAPACITY_MAPP_ROOM_BASE` | `2 × MAPP_MAX_STREAMS`（全音源边缘中转时自动对齐通用容量基线） | 微应用单房听众上限的初始值，可设置为 1–2000。两种模式的运行时下限均为中转并发槽位数。直推模式的上限为中转并发槽位数加中转请求队列上限。全音源边缘中转模式的上限为 `max(中转并发槽位 + 中转请求队列上限, CAPACITY_MAX_UNITS)` |
 | `MAPP_AUDIO_MAX_BITRATE` | `128` | 微应用经 VPS 直推或 `fallback-v1` 回退时的最高码率（`128` / `192` / `320` / `999`） |
-| `MAPP_RELAY_AUDIO_MAX_BITRATE` | `320`（不低于 `MAPP_AUDIO_MAX_BITRATE`） | 微应用经 Cloudflare Worker `resolve-v1` 边缘直转时的最高码率（`128` / `192` / `320` / `999`） |
+| `MAPP_RELAY_AUDIO_MAX_BITRATE` | `max(320, MAPP_AUDIO_MAX_BITRATE)` | 微应用经 Cloudflare Worker `resolve-v1` 边缘直转时的最高码率（`128` / `192` / `320` / `999`）。32 MiB 在 320 kbps 下约为 14 分钟，在标称 999 kbps 下约为 5 分钟，无损文件的实际码率会波动。 |
 | `CAPACITY_MAX_QUEUE` | `100` | 等候队列人数上限，设为 `0` 时满载请求直接被拒绝 |
 | `CAPACITY_MAX_SOCKETS` | `500` | Socket.IO 并发连接上限，包含未进入房间的连接 |
 | `CAPACITY_MEMORY_LIMIT_MB` | 自动检测 | 可选内存上限（MiB），存在有限 cgroup 配额时取两者较小值 |
@@ -155,9 +155,9 @@ curl -fsSI https://music.example.com/manifest.webmanifest
 
 插件包含三个可独立开关的模块（`ENABLE_MAPP_AUDIO` / `ENABLE_COVER_PROXY` / `ENABLE_PUBLIC_METADATA_CACHE`，设为 `"false"` 或 `"0"` 可单模块透传源站），通过精确的 **Workers Routes** 挂载（**严禁挂 `/*` 通配路由，严禁使用 Custom Domain**，以免拦截 WebSocket/SPA 或触发同域 `fetch` 循环）：
 
-1. **微应用音频边缘中转（`/api/mapp/audio*`）**：Worker 原样携带 `Origin`/`Authorization` 附加 `X-MT-Relay: resolve-v1` 与 `X-MT-Relay-Secret` 回源完成 Discourse JWT 与房间权限校验并获取签名 CDN URL（不占用 VPS `StreamSlots`），再由 Worker 直连白名单音频 CDN，通过 workerd 原生 `FixedLengthStream` 零拷贝流式转发给微应用（8 秒仅限响应头超时，拿到响应头即释放定时器）。任意校验/拉取失败时取消上游流并携带 `X-MT-Relay: fallback-v1` 回退 VPS 直推（跳过二次 `mediaStreamRateLimit` 扣减，保留 `StreamSlots` 并发控制）。
-2. **全站封面代理与边缘缓存（`/api/music/cover-proxy*`）**：Web 封面直接走 `caches.default` 与共享白名单图床抓取（含网易云 `600y600` 尺寸限制、最多 3 跳 `https` 白名单重定向、光栅图片校验与 3 MiB 上限），同一 Worker 实例中对同一封面的并发冷请求共用一次图床读取，异常回退 VPS。配置 `ALLOWED_MAPP_ORIGIN` 后，匹配来源且带 `Authorization` 的微应用封面请求可以使用边缘缓存与图床，仍受 2 MiB 上限及 `Cache-Control: private, no-store, no-transform` 约束。未配置时，带 `Authorization` 的封面请求透传源站。
-3. **公开只读元数据边缘缓存**：仅缓存同源 Web 无 `Authorization` 的 `GET` 请求，精确路径为 `/api/music/ttml`、`/api/music/lyric`、`/api/music/discover/radar`、`/api/music/artist`、`/api/music/artist/songs`、`/api/music/artist/albums`、`/api/music/playlist` 和 `/api/music/search`。微应用认证 `GET` 和个人元数据路由（如 `/api/music/playlist/mine`）继续回源。Worker 回源前剥离 `Cookie`，共享并发可缓存响应前移除 `Set-Cookie`、限流和 CORS 响应头。只有符合缓存策略的 `200` 响应会写入边缘缓存。同一 Worker 实例中的同键冷请求共用一次可缓存的回源读取。边缘缓存保留两倍 TTL，第一段 TTL 内返回 `HIT`，下一段返回 `STALE`，客户端最多缓存 30 秒，边缘后台合并同键刷新；刷新失败时保留旧条目直到边缘缓存过期。
+1. **微应用音频边缘中转（`/api/mapp/audio*`）**。Worker 携带 `Origin`、`Authorization`、`X-MT-Relay: resolve-v1` 和中转密钥回源，完成身份和房间权限校验并获取签名 CDN URL。回源解析超时或网络失败返回 Worker 生成的 `503`。源站非 `200` 响应直接透传。解析结果无效，或 CDN 请求在音频响应开始前发生大小、长度、编码、状态码校验失败或网络异常时，Worker 携带 `X-MT-Relay: fallback-v1` 和 `X-MT-Relay-Reason` 回退 VPS 直推。回退跳过二次限流扣减，仍受 `StreamSlots` 控制。回源解析时限为 15 秒，CDN 响应头时限为 6 秒。无 `Content-Length` 的 CDN 响应按 32 MiB 上限流式转发，超限时终止流。`Server-Timing` 记录已完成阶段的 `vps_resolve` 和 `cdn_ttfb`，以及生成响应前的 `total`，单位为毫秒。
+2. **全站封面代理与边缘缓存（`/api/music/cover-proxy*`）**。Web 封面直接走 `caches.default` 与共享白名单图床抓取（含网易云 `600y600` 尺寸限制、最多 3 跳 `https` 白名单重定向、光栅图片校验与 3 MiB 上限）。封面 URL 查询参数在抓取和生成缓存键前归一化，仅保留受支持的网易云尺寸参数。同一 Worker 实例中对同一封面的并发冷请求共用一次图床读取，异常回退 VPS。配置 `ALLOWED_MAPP_ORIGIN` 后，匹配来源且带 `Authorization` 的微应用封面请求可以使用边缘缓存与图床，仍受 2 MiB 上限及 `Cache-Control: private, no-store, no-transform` 约束。未配置时，带 `Authorization` 的封面请求透传源站。
+3. **公开只读元数据边缘缓存**。仅缓存同源 Web 无 `Authorization` 的 `GET` 请求，精确路径为 `/api/music/ttml`、`/api/music/lyric`、`/api/music/discover/radar`、`/api/music/artist`、`/api/music/artist/songs`、`/api/music/artist/albums`、`/api/music/playlist` 和 `/api/music/search`。微应用认证 `GET` 和个人元数据路由（如 `/api/music/playlist/mine`）继续回源。缓存 MISS 时 Worker 只转发 `mt_identity` Cookie 供源站验签和限流，公开路由跳过 Cookie 续签。符合缓存策略的 `200` 响应可写入边缘缓存，`private`、`Vary: Cookie` 或 `Set-Cookie` 响应会绕过缓存。共享响应前移除限流和 CORS 响应头。同一 Worker 实例中的同键冷请求共用一次可缓存的回源读取。边缘缓存保留两倍 TTL，第一段 TTL 内返回 `HIT`，下一段返回 `STALE`，客户端最多缓存 30 秒，边缘后台合并同键刷新。刷新失败时保留旧条目直到边缘缓存过期。
 
 配置 `ALLOWED_MAPP_ORIGIN` 后，符合各路由 CORS 校验的微应用 `OPTIONS` 预检由边缘返回 `204`，覆盖音频、封面和上述公开元数据路径。其他预检原样回源。边缘和源站均为通过的微应用预检返回 `Access-Control-Max-Age: 86400`，单容器部署也可使用浏览器的预检缓存。
 
@@ -204,8 +204,8 @@ curl -fsSI https://music.example.com/manifest.webmanifest
 当服务端配置了 `MAPP_RELAY_SECRET` 且 `MAPP_RELAY_SOURCES` 覆盖全部音源时，动态容量控制器自动进入**边缘中转感知模式**：
 
 - 未显式配置时，`CAPACITY_MAPP_WEIGHT` 自动默认 `1`，单房听众上限基线自动对齐通用容量基线、上限放开至 `max(中转并发槽位 + 中转请求队列上限, CAPACITY_MAX_UNITS)`（不再被直推槽位上限 `8 + 64 = 72` 截断）；
-- `resolve-v1` 边缘直转使用独立的 `MAPP_RELAY_AUDIO_MAX_BITRATE`（默认 `320` kbps），而 `fallback-v1` 回退与直推仍使用 `MAPP_AUDIO_MAX_BITRATE`（默认 `128` kbps）；
-- 服务端分别记录 Worker 主动发起的 `fallback-v1` 回退和 Cloudflare Fail Open（请求绕过 Worker 直连 VPS）。任一信号都会触发或延长 5 分钟降级窗口。窗口内退出边缘活跃态，逐步将高于直推容量的单房上限收回至 `MAPP_MAX_STREAMS + 64` 以内，并将自愈目标限制在该上限。发生中转拥塞时，以 `mapp_stream` 限制微应用入房，网页端仍可正常入房。连续 5 分钟无新的回退或绕过事件、观测到新的边缘解析恢复（`resolve-v1`）且中转压力降至低压阈值后，恢复边缘活跃态并逐步自愈至基线。
+- `resolve-v1` 使用 `MAPP_RELAY_AUDIO_MAX_BITRATE`。`size` 和 `length` 回退以及普通直推使用 `MAPP_AUDIO_MAX_BITRATE`（默认 `128` kbps），并受 32 MiB 上限约束。`network`、`origin` 和 `encoding` 回退优先复用有效的边缘解析 URL，缓存未命中时使用直推码率。
+- 服务端将 `X-MT-Relay-Reason` 的白名单值写入 `relay_fallback` 日志。只有 `network`（含缺失或未知的原因）、`origin` 和 Cloudflare Fail Open（绕过 Worker 直连 VPS）会触发或延长 5 分钟降级窗口。`size`、`length` 和 `encoding` 仅记录原因。窗口内退出边缘活跃态，逐步将高于直推容量的单房上限收回至 `MAPP_MAX_STREAMS + 64` 以内，并将自愈目标限制在该上限。发生中转拥塞时，以 `mapp_stream` 限制微应用入房，网页端仍可正常入房。降级信号停止至少 5 分钟、观测到新的边缘解析（`resolve-v1`）且中转压力降至低压阈值后，恢复边缘活跃态并逐步自愈至基线。
 
 如需显式锁定更低单房上限，仍可手动配置 `CAPACITY_MAPP_WEIGHT` / `CAPACITY_MAPP_ROOM_BASE` 覆盖默认值。
 
@@ -224,6 +224,7 @@ curl -fsSI https://music.example.com/manifest.webmanifest
 - 显式设置来源：严格白名单模式，适合前后端分离。
 - `IDENTITY_COOKIE_SECURE` 未设置时，根据生产环境和当前请求协议自动判断。
 - HTTPS 反向代理必须透传 `X-Forwarded-Proto`。
+- 服务端 HTTP 访问日志的顶层 `responseTime` 字段记录请求耗时，单位为毫秒。
 - 按 IP 的限流（如 `POST /api/auth/identity/bootstrap`）需要拿到真实客户端 IP：反向代理必须透传 `X-Forwarded-For`，服务端通过 `TRUST_PROXY` 决定信任几层代理。默认 `1`（前面有一层反向代理，即本文的部署方式）；端口 3001 直接暴露、没有反向代理时设为 `false`，否则客户端可伪造该请求头；多层代理设为实际层数：Cloudflare 橙云 + Nginx/openresty 是两层，设为 `2`；Cloudflare Tunnel（`cloudflared`）直接指到 `127.0.0.1:3001` 只有 `cloudflared` 一层，用默认 `1`，Tunnel 先指到 Nginx/openresty 再转发则是两层，设为 `2`（部署后看 `Identity bootstrap issued` 日志里的 `ip`：应是访客自己的出口 IP，显示 `127.0.0.1` 就是少算了一层）。也可填 `loopback`、`10.0.0.0/8` 等 Express 支持的值。
 
 ## 部署示例

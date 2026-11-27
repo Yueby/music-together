@@ -1,6 +1,7 @@
 import { afterEach, describe, expect, it, vi } from 'vitest'
 import { MAPP_COVER_MAX_BYTES } from '../../../packages/shared/src/mediaContracts.js'
 import { fixture } from './runtime.js'
+import { isPublicMetadataPath } from '../src/handlers/publicMetadata.js'
 
 const site = 'https://mt.agou.mom'
 const origin = 'https://linux.do'
@@ -37,7 +38,8 @@ describe('edge preflights', () => {
       'access-control-allow-methods': 'GET, OPTIONS',
       'access-control-allow-headers': 'Authorization, Content-Type',
       ...(path === audio && {
-        'access-control-expose-headers': 'Content-Length, Content-Type, Content-Encoding',
+        'access-control-expose-headers': 'Content-Length, Content-Type, Content-Encoding, Server-Timing',
+        'timing-allow-origin': origin,
       }),
       'access-control-max-age': '86400',
       'cache-control': 'no-store',
@@ -63,11 +65,15 @@ describe('edge preflights', () => {
     [preflight(lyric, 'GET', 'Authorization'), { ...env, ENABLE_PUBLIC_METADATA_CACHE: 'false' }],
     [preflight('/api/music/playlist/mine', 'GET', 'Authorization'), env],
     [new Request(site + lyric, { headers: { Origin: origin, Authorization: 'Bearer test' } }), env],
-  ])('passes ineligible requests through unchanged (%#)', async (request, environment) => {
+  ])('passes ineligible requests through without caching (%#)', async (request, environment) => {
     const { handler, runtime, ctx } = fixture()
     const upstream = new Response(null, { status: 403 })
     runtime.fetch.mockResolvedValueOnce(upstream)
-    expect(await handler(request, environment, ctx)).toBe(upstream)
+    const response = await handler(request, environment, ctx)
+    expect(response.status).toBe(403)
+    const bypassesMetadataCache = environment.ENABLE_PUBLIC_METADATA_CACHE !== 'false' &&
+      isPublicMetadataPath(new URL(request.url).pathname)
+    expect(response.headers.get('Server-Timing')).toBe(bypassesMetadataCache ? 'edge;desc="BYPASS"' : null)
     expect(runtime.fetch.mock.calls).toEqual([[request]])
     expect(runtime.cache.match).not.toHaveBeenCalled()
   })

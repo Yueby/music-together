@@ -1,10 +1,15 @@
 import type { Request, Response, NextFunction } from 'express'
+import { MAPP_METADATA_TARGETS } from '@music-together/shared'
 import { getIdentityFromRequest, issueIdentityCookie } from '../services/identityService.js'
 import { logger } from '../utils/logger.js'
 
 const RENEWAL_LOG_INTERVAL_MS = 5 * 60 * 1000
 const RENEWAL_MAP_MAX_SIZE = 10_000
 const renewalLogAt = new Map<string, number>()
+const PUBLIC_METADATA_PATHS = new Set<string>(
+  (['artist', 'artistSongs', 'artistAlbums', 'radar', 'search', 'playlist', 'lyric', 'ttml'] as const)
+    .map((target) => MAPP_METADATA_TARGETS[target].path.slice('/api'.length)),
+)
 
 // 定时清理过期条目，防止 Map 无限增长
 const RENEWAL_CLEANUP_INTERVAL_MS = 10 * 60 * 1000
@@ -36,8 +41,9 @@ export function identityHttpMiddleware(req: Request, res: Response, next: NextFu
   const identity = getIdentityFromRequest(req)
   if (identity) {
     req.identityUserId = identity.userId
-    // Match the cover route's case-insensitive path and optional trailing slash.
-    if (/^\/music\/cover-proxy\/?$/i.test(req.path)) {
+    const path = req.path.toLowerCase().replace(/\/$/, '')
+    // Public cacheable reads use the verified identity for limits without setting a cookie.
+    if (path === '/music/cover-proxy' || ((req.method === 'GET' || req.method === 'HEAD') && PUBLIC_METADATA_PATHS.has(path))) {
       next()
       return
     }

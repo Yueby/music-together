@@ -80,6 +80,22 @@ afterEach(() => {
 })
 
 describe('playerService state transitions', () => {
+  it('schedules playback at an integer millisecond with a fractional P90 RTT', () => {
+    vi.useFakeTimers()
+    const data = room()
+    roomRepo.set(data.id, data)
+    vi.spyOn(roomRepo, 'getP90RTT').mockReturnValue(187.3)
+    const { io, emit } = ioMock()
+    const scheduledAt = Date.now() + 381
+
+    pauseTrack(io as never, data.id)
+
+    expect(data.pendingPlayback?.playState.serverTimestamp).toBe(scheduledAt)
+    expect(emit).toHaveBeenCalledWith(EVENTS.PLAYER_PAUSE, {
+      playState: expect.objectContaining({ serverTimeToExecute: scheduledAt }),
+    })
+  })
+
   it('uses the replacement metadata in the queue and playback after automatic fallback', async () => {
     vi.useFakeTimers()
     const data = room()

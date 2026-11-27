@@ -37,6 +37,10 @@ import {
 
 const router: RouterType = Router()
 
+/** Public catalog responses are caller-independent and eligible for the Worker's shared cache. */
+const PUBLIC_CACHE = (seconds: number) => `public, max-age=${seconds}`
+const ACCOUNT_CACHE = 'private, no-store'
+
 /**
  * Wrap an async route handler with validation + error handling.
  * Eliminates repeated try/catch + Zod boilerplate in each route.
@@ -75,7 +79,7 @@ router.get(
   validated(lyricQuerySchema, 'Get lyric', async (data, _req, res) => {
     const result = await getMusicLyricMetadata(data)
     res.vary('Authorization')
-    res.setHeader('Cache-Control', result.cacheable ? 'private, max-age=1800' : 'no-store')
+    res.setHeader('Cache-Control', result.cacheable ? PUBLIC_CACHE(1800) : 'no-store')
     res.json(result)
   }),
 )
@@ -89,14 +93,10 @@ router.get(
       return
     }
     // A song without a library entry is a normal answer (`lines: null`), not an error the browser would log.
-    res.setHeader('Cache-Control', `private, max-age=${result.lines ? 3600 : 600}`)
+    res.setHeader('Cache-Control', PUBLIC_CACHE(result.lines ? 3600 : 600))
     res.json({ lines: result.lines })
   }),
 )
-
-/** Cache policies of the catalog endpoints. Whatever depends on the caller's account is never shared or cached. */
-const PUBLIC_CACHE = (seconds: number) => `private, max-age=${seconds}`
-const ACCOUNT_CACHE = 'private, no-store'
 
 /**
  * Catalog endpoints (artists, discovery, own playlists) answer with a sanitized status and a fixed error code instead of
@@ -125,8 +125,7 @@ function catalogRoute<T>(
   })
 }
 
-// No cache policy of its own (as before); a search that could not run answers 503 `SEARCH_UPSTREAM`, not an empty list.
-router.get('/search', catalogRoute(searchQuerySchema, 'Search', null, (data) => searchMusicMetadata(data)))
+router.get('/search', catalogRoute(searchQuerySchema, 'Search', PUBLIC_CACHE(180), (data) => searchMusicMetadata(data)))
 router.get('/artist', catalogRoute(artistQuerySchema, 'Get artist', PUBLIC_CACHE(300), getArtistMetadata))
 router.get(
   '/artist/songs',
@@ -156,7 +155,9 @@ router.get(
   '/playlist',
   validated(playlistQuerySchema, 'Get playlist', async (data, _req, res) => {
     // Public lists only: this route never selects a music account.
-    res.json(await getPlaylistPageMetadata(data, null))
+    const result = await getPlaylistPageMetadata(data, null)
+    res.setHeader('Cache-Control', PUBLIC_CACHE(300))
+    res.json(result)
   }),
 )
 

@@ -292,3 +292,5 @@ export const mappRoomMediaQuerySchema = z.strictObject({
   roomId: z.string().regex(/^[A-Z0-9_-]{6}$/),
   trackId: z.string().min(1).max(200),
 })
+
+export const mappRelayReasonSchema = z.enum(['size', 'length', 'encoding', 'network', 'origin'])

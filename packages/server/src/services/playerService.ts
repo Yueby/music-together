@@ -149,7 +149,7 @@ function withPlayMutex<T>(roomId: string, fn: () => Promise<T>): Promise<T> {
 function getScheduleTime(roomId: string): number {
   const maxRTT = roomRepo.getP90RTT(roomId)
   const delay = Math.min(Math.max(maxRTT * 1.5 + 100, NTP.MIN_SCHEDULE_DELAY_MS), NTP.MAX_SCHEDULE_DELAY_MS)
-  return Date.now() + delay
+  return Date.now() + Math.round(delay)
 }
 
 /** Build a ScheduledPlayState from a plain PlayState.
